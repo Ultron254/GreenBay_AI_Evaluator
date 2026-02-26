@@ -1,0 +1,102 @@
+"""
+Evaluator-specific configuration and constants.
+
+Defect deduction lookup tables and helper utilities used by the offer engine.
+All monetary values are in KES.
+"""
+
+# ---------------------------------------------------------------------------
+# Defect deduction table — category → defect_type → KES deduction
+# ---------------------------------------------------------------------------
+DEFECT_DEDUCTIONS: dict[str, dict[str, float]] = {
+    "refrigerator": {
+        "broken_seal": 2000,
+        "missing_seal": 2000,
+        "missing_shelf": 500,
+        "missing_tray": 500,
+        "no_interior_light": 1000,
+        "broken_thermostat": 2500,
+        "dented_door": 1500,
+        "compressor_noise": 3000,
+        "cosmetic_scratch": 300,
+        "cosmetic_dent": 500,
+        "rust": 1000,
+    },
+    "washing_machine": {
+        "noisy_drum": 2000,
+        "missing_hoses": 500,
+        "moldy_seal": 1000,
+        "broken_door_lock": 1500,
+        "water_leak": 2000,
+        "broken_control_panel": 2500,
+        "cosmetic_scratch": 300,
+        "cosmetic_dent": 500,
+        "rust": 1000,
+    },
+    "tv": {
+        "dead_pixels": 2000,
+        "screen_crack": 5000,
+        "no_sound": 2000,
+        "broken_stand": 800,
+        "missing_remote": 500,
+        "backlight_issue": 3000,
+        "cosmetic_scratch": 300,
+    },
+    "cooker": {
+        "missing_knob": 300,
+        "non_working_burner": 1500,
+        "broken_oven": 3000,
+        "broken_glass_top": 2500,
+        "missing_tray": 400,
+        "broken_hinge": 800,
+        "cosmetic_scratch": 300,
+        "cosmetic_dent": 500,
+        "rust": 800,
+    },
+    "microwave": {
+        "no_turntable": 500,
+        "broken_door": 1500,
+        "display_fault": 1000,
+        "magnetron_weak": 3000,
+        "cosmetic_scratch": 200,
+        "cosmetic_dent": 400,
+        "rust": 600,
+    },
+    "air_conditioner": {
+        "low_cooling": 3000,
+        "compressor_noise": 3500,
+        "missing_remote": 500,
+        "refrigerant_leak": 4000,
+        "dirty_filter": 300,
+        "broken_louver": 800,
+        "cosmetic_scratch": 300,
+        "cosmetic_dent": 500,
+    },
+    "water_dispenser": {
+        "no_cooling": 2000,
+        "no_heating": 1500,
+        "water_leak": 1500,
+        "broken_tap": 800,
+        "cosmetic_scratch": 200,
+        "cosmetic_dent": 400,
+    },
+}
+
+# Fallback deduction when defect type is not in the lookup
+DEFAULT_DEFECT_DEDUCTION: float = 500.0
+
+
+# ---------------------------------------------------------------------------
+# Default condition grade mapping (text → letter)
+# ---------------------------------------------------------------------------
+CONDITION_GRADE_MAP: dict[str, str] = {
+    "excellent": "A",
+    "good": "B",
+    "fair": "C",
+    "poor": "D",
+    # Already-letter inputs
+    "a": "A",
+    "b": "B",
+    "c": "C",
+    "d": "D",
+}

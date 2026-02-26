@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GreenBay AI Evaluator — Instant Appliance Valuations</title>
+  <meta name="description" content="Get an instant, AI-powered valuation for your secondhand appliance. Free pickup in Nairobi, same-day M-Pesa payment.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ==================== HEADER ==================== -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="#" class="logo">
+        <div class="logo-icon">🌿</div>
+        GreenBay
+      </a>
+      <nav class="header-nav">
+        <a href="#how-it-works">How It Works</a>
+        <a href="#categories">Categories</a>
+        <a href="#evaluate">Get Valuation</a>
+      </nav>
+      <div class="header-cta">
+        <a href="#evaluate" class="btn btn-primary btn-sm">Sell My Appliance</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== HERO ==================== -->
+  <section class="hero" id="hero">
+    <div class="container">
+      <div class="hero-content">
+        <div class="hero-text">
+          <div class="hero-badge">
+            <span>🟢</span> AI-Powered Valuations
+          </div>
+          <h1>Turn Your Old Appliances into <em>Cash</em></h1>
+          <p class="hero-description">
+            Upload photos of your appliance and get an instant, AI-powered valuation. 
+            Free pickup anywhere in Nairobi and same-day M-Pesa payment.
+          </p>
+          <div class="hero-actions">
+            <a href="#evaluate" class="btn btn-primary btn-lg">Get Free Valuation →</a>
+            <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20want%20to%20sell%20an%20appliance" target="_blank" class="btn btn-whatsapp btn-lg">💬 Continue on WhatsApp</a>
+          </div>
+          <div class="hero-stats">
+            <div class="stat-item">
+              <div class="stat-number" id="stat-valuations">3,500+</div>
+              <div class="stat-label">Valuations Done</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-number">24hr</div>
+              <div class="stat-label">Pickup & Payment</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-number">90%+</div>
+              <div class="stat-label">Accuracy Rate</div>
+            </div>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="hero-mockup">
+            <div class="hero-mockup-header">
+              <div class="mockup-avatar">K</div>
+              <div>
+                <div class="mockup-name">Kay — GreenBay</div>
+                <div class="mockup-status">● Online</div>
+              </div>
+            </div>
+            <div class="mockup-messages">
+              <div class="mockup-msg bot">Hey! 👋 I'm Kay. Send me photos of your appliance and I'll give you an instant offer!</div>
+              <div class="mockup-msg user">I have a Samsung fridge, 2 years old</div>
+              <div class="mockup-msg bot">Great choice! Samsung fridges hold value well. Let me analyze your photos...</div>
+              <div class="mockup-msg user">📸 <em>[5 photos sent]</em></div>
+            </div>
+            <div class="mockup-offer">
+              <div class="mockup-offer-label">Your GreenBay Offer</div>
+              <div class="mockup-offer-amount">KES 28,500</div>
+              <div class="mockup-offer-label">Valid for 7 days</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== BRAND MARQUEE ==================== -->
+  <section class="brand-marquee">
+    <div class="marquee-label">We accept all major brands</div>
+    <div class="marquee-track" id="marqueeTrack">
+      <div class="marquee-item">Samsung</div>
+      <div class="marquee-item">LG</div>
+      <div class="marquee-item">Hisense</div>
+      <div class="marquee-item">Hotpoint</div>
+      <div class="marquee-item">Ramtons</div>
+      <div class="marquee-item">Von</div>
+      <div class="marquee-item">TCL</div>
+      <div class="marquee-item">Beko</div>
+      <div class="marquee-item">Sony</div>
+      <div class="marquee-item">Mika</div>
+      <div class="marquee-item">Bruhm</div>
+      <div class="marquee-item">Whirlpool</div>
+      <div class="marquee-item">Bosch</div>
+      <div class="marquee-item">Haier</div>
+      <div class="marquee-item">Syinix</div>
+      <!-- Duplicate for seamless loop -->
+      <div class="marquee-item">Samsung</div>
+      <div class="marquee-item">LG</div>
+      <div class="marquee-item">Hisense</div>
+      <div class="marquee-item">Hotpoint</div>
+      <div class="marquee-item">Ramtons</div>
+      <div class="marquee-item">Von</div>
+      <div class="marquee-item">TCL</div>
+      <div class="marquee-item">Beko</div>
+      <div class="marquee-item">Sony</div>
+      <div class="marquee-item">Mika</div>
+      <div class="marquee-item">Bruhm</div>
+      <div class="marquee-item">Whirlpool</div>
+      <div class="marquee-item">Bosch</div>
+      <div class="marquee-item">Haier</div>
+      <div class="marquee-item">Syinix</div>
+    </div>
+  </section>
+
+  <!-- ==================== HOW IT WORKS ==================== -->
+  <section class="how-it-works" id="how-it-works">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Simple Process</div>
+        <h2 class="section-title">How It Works</h2>
+        <p class="section-subtitle">Four simple steps to turn your appliance into cash — no hassle, no waiting.</p>
+      </div>
+      <div class="steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-icon">📸</div>
+          <h3>Upload Photos</h3>
+          <p>Take 5+ clear photos of your appliance — front, back, model label, and any damage areas.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-icon">🤖</div>
+          <h3>AI Analysis</h3>
+          <p>Our AI identifies the brand, model, condition, and searches current Kenya market prices.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-icon">💰</div>
+          <h3>Instant Offer</h3>
+          <p>Get a fair, data-backed offer within minutes. Negotiate if you'd like — we're flexible!</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-icon">🚚</div>
+          <h3>Get Paid</h3>
+          <p>Free pickup anywhere in Nairobi and same-day payment via M-Pesa. Done!</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== CATEGORIES ==================== -->
+  <section class="categories" id="categories">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">What We Buy</div>
+        <h2 class="section-title">Appliance Categories</h2>
+        <p class="section-subtitle">Select your appliance type to start the valuation process.</p>
+      </div>
+      <div class="category-grid" id="categoryGrid">
+        <div class="category-card" data-category="refrigerator" onclick="selectCategoryFromLanding('refrigerator')">
+          <div class="category-icon">🧊</div>
+          <h4>Refrigerator</h4>
+          <p>Fridges & freezers</p>
+        </div>
+        <div class="category-card" data-category="washing_machine" onclick="selectCategoryFromLanding('washing_machine')">
+          <div class="category-icon">🧺</div>
+          <h4>Washing Machine</h4>
+          <p>Top & front loaders</p>
+        </div>
+        <div class="category-card" data-category="tv_monitor" onclick="selectCategoryFromLanding('tv_monitor')">
+          <div class="category-icon">📺</div>
+          <h4>TV / Monitor</h4>
+          <p>Smart TVs, screens</p>
+        </div>
+        <div class="category-card" data-category="cooker_oven" onclick="selectCategoryFromLanding('cooker_oven')">
+          <div class="category-icon">🍳</div>
+          <h4>Cooker / Oven</h4>
+          <p>Gas & electric</p>
+        </div>
+        <div class="category-card" data-category="microwave" onclick="selectCategoryFromLanding('microwave')">
+          <div class="category-icon">🔥</div>
+          <h4>Microwave</h4>
+          <p>All types</p>
+        </div>
+        <div class="category-card" data-category="air_conditioner" onclick="selectCategoryFromLanding('air_conditioner')">
+          <div class="category-icon">❄️</div>
+          <h4>Air Conditioner</h4>
+          <p>Split & portable</p>
+        </div>
+        <div class="category-card" data-category="water_dispenser" onclick="selectCategoryFromLanding('water_dispenser')">
+          <div class="category-icon">💧</div>
+          <h4>Water Dispenser</h4>
+          <p>Hot & cold</p>
+        </div>
+        <div class="category-card" data-category="other" onclick="selectCategoryFromLanding('other')">
+          <div class="category-icon">📱</div>
+          <h4>Other</h4>
+          <p>Tell us what you have</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== TRUST BAR ==================== -->
+  <section class="trust-bar">
+    <div class="container">
+      <div class="trust-grid">
+        <div class="trust-item">
+          <div class="trust-icon">⏰</div>
+          <h4>24/7 Availability</h4>
+          <p>Get a valuation anytime, day or night</p>
+        </div>
+        <div class="trust-item">
+          <div class="trust-icon">🚚</div>
+          <h4>FREE Pickup</h4>
+          <p>We collect anywhere in Nairobi</p>
+        </div>
+        <div class="trust-item">
+          <div class="trust-icon">⚡</div>
+          <h4>Same-Day M-Pesa</h4>
+          <p>Get paid instantly via mobile money</p>
+        </div>
+        <div class="trust-item">
+          <div class="trust-icon">🎯</div>
+          <h4>90%+ Accuracy</h4>
+          <p>AI-powered market-based pricing</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== EVALUATION TOOL ==================== -->
+  <section class="evaluation-section" id="evaluate">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">AI Evaluator</div>
+        <h2 class="section-title">Get Your Instant Valuation</h2>
+        <p class="section-subtitle">Answer a few questions, upload photos, and let our AI do the rest.</p>
+      </div>
+
+      <div class="eval-layout">
+        <!-- LEFT: Wizard Panel -->
+        <div class="wizard-panel" id="wizardPanel">
+          <div class="wizard-progress">
+            <div class="progress-info">
+              <span class="progress-step-label" id="progressLabel">Step 1: Category</span>
+              <span class="progress-count" id="progressCount">1 / 9</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill" style="width: 11%"></div>
+            </div>
+          </div>
+
+          <div class="wizard-body" id="wizardBody">
+            <!-- STEP 1: Category -->
+            <div class="wizard-step active" data-step="1" id="step1">
+              <h3>What type of appliance are you selling?</h3>
+              <p class="step-description">Select the category that best matches your appliance.</p>
+              <div class="option-grid" id="categoryOptions">
+                <div class="option-card" data-value="refrigerator" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">🧊</span>
+                  <span class="option-label">Refrigerator</span>
+                </div>
+                <div class="option-card" data-value="washing_machine" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">🧺</span>
+                  <span class="option-label">Washing Machine</span>
+                </div>
+                <div class="option-card" data-value="tv_monitor" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">📺</span>
+                  <span class="option-label">TV / Monitor</span>
+                </div>
+                <div class="option-card" data-value="cooker_oven" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">🍳</span>
+                  <span class="option-label">Cooker / Oven</span>
+                </div>
+                <div class="option-card" data-value="microwave" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">🔥</span>
+                  <span class="option-label">Microwave</span>
+                </div>
+                <div class="option-card" data-value="air_conditioner" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">❄️</span>
+                  <span class="option-label">Air Conditioner</span>
+                </div>
+                <div class="option-card" data-value="water_dispenser" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">💧</span>
+                  <span class="option-label">Water Dispenser</span>
+                </div>
+                <div class="option-card" data-value="other" onclick="selectOption(this, 'category')">
+                  <span class="option-icon">📱</span>
+                  <span class="option-label">Other</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 2: Brand -->
+            <div class="wizard-step" data-step="2" id="step2">
+              <h3>What brand is it?</h3>
+              <p class="step-description">Select your appliance brand, or type it if not listed.</p>
+              <div class="option-grid cols-3" id="brandOptions">
+                <div class="option-card" data-value="Samsung" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Samsung</span>
+                </div>
+                <div class="option-card" data-value="LG" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">LG</span>
+                </div>
+                <div class="option-card" data-value="Hisense" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Hisense</span>
+                </div>
+                <div class="option-card" data-value="Hotpoint" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Hotpoint</span>
+                </div>
+                <div class="option-card" data-value="Ramtons" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Ramtons</span>
+                </div>
+                <div class="option-card" data-value="Von" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Von</span>
+                </div>
+                <div class="option-card" data-value="TCL" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">TCL</span>
+                </div>
+                <div class="option-card" data-value="Beko" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Beko</span>
+                </div>
+                <div class="option-card" data-value="Sony" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Sony</span>
+                </div>
+                <div class="option-card" data-value="Mika" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Mika</span>
+                </div>
+                <div class="option-card" data-value="Bruhm" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Bruhm</span>
+                </div>
+                <div class="option-card" data-value="Whirlpool" onclick="selectOption(this, 'brand')">
+                  <span class="option-label">Whirlpool</span>
+                </div>
+              </div>
+              <div class="form-group" style="margin-top: 16px;">
+                <label class="form-label">Or type your brand:</label>
+                <input type="text" class="form-input" id="brandCustom" placeholder="e.g. Bosch, Haier, Syinix..." 
+                       oninput="handleCustomBrand(this.value)">
+              </div>
+            </div>
+
+            <!-- STEP 3: Model -->
+            <div class="wizard-step" data-step="3" id="step3">
+              <h3>What is the exact model number?</h3>
+              <p class="step-description">Check the sticker/plate on the back or inside door of your appliance.</p>
+              <div class="form-group">
+                <label class="form-label">Type the model number</label>
+                <input type="text" class="form-input" id="modelInput" placeholder="e.g. RT34K5532S8, WF-T7000" oninput="updateAnswer('model', this.value)">
+                <p class="form-hint">📸 You'll also upload a photo of the model label in Step 8.</p>
+              </div>
+            </div>
+
+            <!-- STEP 4: Age -->
+            <div class="wizard-step" data-step="4" id="step4">
+              <h3>How old is the product?</h3>
+              <p class="step-description">Select the approximate age of your appliance.</p>
+              <div class="option-grid" id="ageOptions">
+                <div class="option-card" data-value="0" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">✨</span>
+                  <span class="option-label">Brand New</span>
+                  <span class="option-desc">Unused</span>
+                </div>
+                <div class="option-card" data-value="0.5" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">🌟</span>
+                  <span class="option-label">Under 1 Year</span>
+                </div>
+                <div class="option-card" data-value="1.5" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">📅</span>
+                  <span class="option-label">1-2 Years</span>
+                </div>
+                <div class="option-card" data-value="2.5" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">📆</span>
+                  <span class="option-label">2-3 Years</span>
+                </div>
+                <div class="option-card" data-value="4" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">⏳</span>
+                  <span class="option-label">3-5 Years</span>
+                </div>
+                <div class="option-card" data-value="6.5" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">🕰️</span>
+                  <span class="option-label">5-8 Years</span>
+                </div>
+                <div class="option-card" data-value="10" onclick="selectOption(this, 'age')">
+                  <span class="option-icon">🏚️</span>
+                  <span class="option-label">8+ Years</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 5: Condition -->
+            <div class="wizard-step" data-step="5" id="step5">
+              <h3>What condition is the product in?</h3>
+              <p class="step-description">Be honest — it helps us give you the most accurate price!</p>
+              <div class="option-grid cols-1" id="conditionOptions">
+                <div class="option-card" data-value="new" data-grade="A" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">✨</span>
+                  <span class="option-label">New — Sealed, never used</span>
+                </div>
+                <div class="option-card" data-value="like_new" data-grade="A" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">🌟</span>
+                  <span class="option-label">Like New — Barely used, no visible wear</span>
+                </div>
+                <div class="option-card" data-value="open_box" data-grade="A" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">📦</span>
+                  <span class="option-label">Open Box — Unboxed, minimal use</span>
+                </div>
+                <div class="option-card" data-value="slightly_used" data-grade="B" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">👍</span>
+                  <span class="option-label">Slightly Used — Minor cosmetic wear, fully functional</span>
+                </div>
+                <div class="option-card" data-value="used" data-grade="B" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">✅</span>
+                  <span class="option-label">Used — Noticeable wear, fully functional</span>
+                </div>
+                <div class="option-card" data-value="working_issues" data-grade="C" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">⚠️</span>
+                  <span class="option-label">Working with Issues — Functions but has problems</span>
+                </div>
+                <div class="option-card" data-value="partially_working" data-grade="D" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">🔧</span>
+                  <span class="option-label">Partially Working — Some features broken</span>
+                </div>
+                <div class="option-card" data-value="not_working" data-grade="D" onclick="selectOption(this, 'condition')">
+                  <span class="option-icon">❌</span>
+                  <span class="option-label">Not Working — Does not turn on</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 6: Ownership -->
+            <div class="wizard-step" data-step="6" id="step6">
+              <h3>How long have you owned this product?</h3>
+              <p class="step-description">This helps us assess the product's provenance.</p>
+              <div class="option-grid" id="ownershipOptions">
+                <div class="option-card" data-value="under_1_month" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">🆕</span>
+                  <span class="option-label">Just got it</span>
+                  <span class="option-desc">&lt; 1 month</span>
+                </div>
+                <div class="option-card" data-value="1_6_months" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">📅</span>
+                  <span class="option-label">1-6 Months</span>
+                </div>
+                <div class="option-card" data-value="6_12_months" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">📆</span>
+                  <span class="option-label">6-12 Months</span>
+                </div>
+                <div class="option-card" data-value="1_2_years" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">⏳</span>
+                  <span class="option-label">1-2 Years</span>
+                </div>
+                <div class="option-card" data-value="2_5_years" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">🕰️</span>
+                  <span class="option-label">2-5 Years</span>
+                </div>
+                <div class="option-card" data-value="5_plus_years" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">🏠</span>
+                  <span class="option-label">5+ Years</span>
+                </div>
+                <div class="option-card" data-value="not_original_owner" onclick="selectOption(this, 'ownership')">
+                  <span class="option-icon">🔄</span>
+                  <span class="option-label">Not original owner</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 7: Issues -->
+            <div class="wizard-step" data-step="7" id="step7">
+              <h3>Any specific issues or damage?</h3>
+              <p class="step-description">Describe any problems — dents, scratches, missing parts, strange noises. The more detail, the better your offer.</p>
+              <div class="form-group">
+                <textarea class="form-input" id="issuesInput" placeholder="e.g. Small dent on left side, one shelf missing, compressor makes slight noise..." oninput="updateAnswer('issues', this.value)"></textarea>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="updateAnswer('issues', 'No issues'); document.getElementById('issuesInput').value = 'No issues';" style="margin-top: 8px;">
+                ✅ No issues at all
+              </button>
+            </div>
+
+            <!-- STEP 8: Photos -->
+            <div class="wizard-step" data-step="8" id="step8">
+              <h3>Upload photos of your appliance</h3>
+              <p class="step-description">We need at least <strong>5 clear photos</strong>: front view, back/side, model label (close-up), interior, and any damage areas.</p>
+              <div class="photo-upload-zone" id="photoUploadZone">
+                <div class="upload-icon">📸</div>
+                <h4>Drag & drop photos here</h4>
+                <p>or click to browse • JPEG/PNG • Max 10MB each</p>
+                <input type="file" id="photoFileInput" accept="image/*" multiple onchange="handlePhotoUpload(this.files)">
+              </div>
+              <div class="photo-grid" id="photoGrid"></div>
+              <div class="photo-count" id="photoCount">
+                <span class="count-num">0</span> / 5 minimum photos uploaded
+              </div>
+            </div>
+
+            <!-- STEP 9: Price -->
+            <div class="wizard-step" data-step="9" id="step9">
+              <h3>What price are you hoping to get?</h3>
+              <p class="step-description">This is the big one! Tell us your ideal selling price in KES, or let us make the first offer.</p>
+              <div class="form-group">
+                <div class="price-input-wrapper">
+                  <span class="currency-label">KES</span>
+                  <input type="text" class="form-input" id="priceInput" placeholder="e.g. 25000" 
+                         oninput="handlePriceInput(this.value)">
+                </div>
+                <p class="form-hint">Type a number, or use the buttons below</p>
+              </div>
+              <div class="price-alt-buttons">
+                <button class="btn btn-secondary btn-sm" onclick="updateAnswer('price', null); document.getElementById('priceInput').value = ''; addChatMessage('bot', `No problem! Based on my analysis, I\\'ll make you the best offer I can. 💰`);">
+                  💡 Make me an offer
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="updateAnswer('price', null); document.getElementById('priceInput').value = ''; addChatMessage('bot', `That\\'s totally fine! I\\'ll calculate a fair market price for you. 📊`);">
+                  🤷 I'm not sure
+                </button>
+              </div>
+            </div>
+
+            <!-- Results Step (hidden initially) -->
+            <div class="wizard-step" data-step="results" id="stepResults">
+              <!-- Populated by JS after analysis -->
+            </div>
+          </div>
+
+          <div class="wizard-footer" id="wizardFooter">
+            <button class="btn btn-ghost" id="prevBtn" onclick="prevStep()" style="visibility: hidden;">← Back</button>
+            <button class="btn btn-primary" id="nextBtn" onclick="nextStep()" disabled>Next →</button>
+          </div>
+        </div>
+
+        <!-- RIGHT: Chat Panel -->
+        <div class="chat-panel" id="chatPanel">
+          <div class="chat-header" onclick="toggleChatMobile()">
+            <div class="chat-avatar">K</div>
+            <div>
+              <div class="chat-name">Kay</div>
+              <div class="chat-status">● AI Evaluator Online</div>
+            </div>
+            <span class="chat-toggle-icon">▲</span>
+          </div>
+
+          <div class="chat-messages" id="chatMessages">
+            <!-- Messages populated by JS -->
+          </div>
+
+          <div class="chat-input-area" id="chatInputArea">
+            <input type="text" id="chatInput" placeholder="Type a message..." 
+                   onkeydown="if(event.key==='Enter') sendChatMessage()">
+            <button class="chat-send-btn" onclick="sendChatMessage()">➤</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="logo">
+            <div class="logo-icon">🌿</div>
+            GreenBay
+          </div>
+          <p>Kenya's marketplace for pre-loved appliances. AI-powered valuations with free pickup and same-day M-Pesa payment.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Quick Links</h4>
+          <a href="#how-it-works">How It Works</a>
+          <a href="#categories">Categories</a>
+          <a href="#evaluate">Get Valuation</a>
+        </div>
+        <div class="footer-col">
+          <h4>Categories</h4>
+          <a href="#">Refrigerators</a>
+          <a href="#">Washing Machines</a>
+          <a href="#">TVs & Monitors</a>
+          <a href="#">Cookers & Ovens</a>
+        </div>
+        <div class="footer-col">
+          <h4>Contact</h4>
+          <a href="https://wa.me/254700000000" target="_blank">💬 WhatsApp</a>
+          <a href="tel:+254700000000">📞 Call Us</a>
+          <a href="mailto:hello@greenbay.market">📧 Email</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 GreenBay Market. All rights reserved.</span>
+        <span>Made with 💚 in Nairobi</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

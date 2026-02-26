@@ -1,0 +1,77 @@
+# Core Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# LangChain & LangGraph
+langchain
+langchain-openai
+langgraph
+langchain-community
+
+# LangSmith Monitoring
+langsmith>=0.1.0
+sentence-transformers>=2.2.0
+
+# Tavily Search (for retail price lookup)
+tavily-python
+
+# Database
+sqlalchemy
+alembic
+psycopg2-binary # PostgreSQL adapter
+
+# Vector Database
+qdrant-client
+
+# HTTP & API
+httpx
+requests
+aiohttp
+
+# WhatsApp Business API
+python-multipart
+
+# M-Pesa Daraja API
+requests-oauthlib
+
+# Image Processing
+Pillow
+python-magic
+
+# PDF Generation (for receipts)
+reportlab
+weasyprint
+
+# AWS S3 (for image storage)
+boto3
+botocore
+
+# Utilities
+python-dotenv
+loguru
+redis
+celery
+
+# Development & Testing
+pytest
+pytest-asyncio
+httpx # For testing FastAPI
+black
+isort
+flake8
+
+# Security
+python-jose[cryptography]
+passlib[bcrypt]
+cryptography
+
+# Date/Time
+python-dateutil
+pytz
+
+# Environment
+python-decouple
+
+schedule

@@ -1,0 +1,102 @@
+{
+  "service_started": "2025-12-04T21:06:48.422811",
+  "last_sync": "2025-12-07T15:54:17.517655",
+  "total_syncs": 15,
+  "successful_syncs": 12,
+  "failed_syncs": 3,
+  "sync_history": [
+    {
+      "timestamp": "2025-12-04T21:06:48.422822",
+      "success": true,
+      "duration_seconds": 41.4,
+      "duration_minutes": 0.7
+    },
+    {
+      "timestamp": "2025-12-04T21:12:07.032166",
+      "success": true,
+      "duration_seconds": 26.8,
+      "duration_minutes": 0.4
+    },
+    {
+      "timestamp": "2025-12-04T22:04:50.168491",
+      "success": true,
+      "duration_seconds": 333.1,
+      "duration_minutes": 5.6
+    },
+    {
+      "timestamp": "2025-12-04T22:29:28.933746",
+      "success": true,
+      "duration_seconds": 323.2,
+      "duration_minutes": 5.4
+    },
+    {
+      "timestamp": "2025-12-04T22:41:46.183183",
+      "success": true,
+      "duration_seconds": 325.8,
+      "duration_minutes": 5.4
+    },
+    {
+      "timestamp": "2025-12-05T03:35:44.209877",
+      "success": false,
+      "duration_seconds": 4973.3,
+      "duration_minutes": 82.9,
+      "error": "Exit code 1"
+    },
+    {
+      "timestamp": "2025-12-05T05:21:56.074257",
+      "success": false,
+      "duration_seconds": 121.6,
+      "duration_minutes": 2.0,
+      "error": "Exit code 1"
+    },
+    {
+      "timestamp": "2025-12-05T11:27:38.365862",
+      "success": true,
+      "duration_seconds": 324.0,
+      "duration_minutes": 5.4
+    },
+    {
+      "timestamp": "2025-12-05T17:33:06.231166",
+      "success": true,
+      "duration_seconds": 325.7,
+      "duration_minutes": 5.4
+    },
+    {
+      "timestamp": "2025-12-06T08:15:04.876952",
+      "success": true,
+      "duration_seconds": 27290.2,
+      "duration_minutes": 454.8
+    },
+    {
+      "timestamp": "2025-12-06T08:21:18.698831",
+      "success": true,
+      "duration_seconds": 313.8,
+      "duration_minutes": 5.2
+    },
+    {
+      "timestamp": "2025-12-06T19:27:59.616389",
+      "success": true,
+      "duration_seconds": 16788.4,
+      "duration_minutes": 279.8
+    },
+    {
+      "timestamp": "2025-12-07T03:05:41.982922",
+      "success": false,
+      "duration_seconds": 4936.7,
+      "duration_minutes": 82.3,
+      "error": "Exit code 1"
+    },
+    {
+      "timestamp": "2025-12-07T10:24:25.597482",
+      "success": true,
+      "duration_seconds": 19230.2,
+      "duration_minutes": 320.5
+    },
+    {
+      "timestamp": "2025-12-07T15:54:17.517658",
+      "success": true,
+      "duration_seconds": 16121.2,
+      "duration_minutes": 268.7
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# OS files
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Test/cache
+.pytest_cache/
+
+# Database files
+*.db
+
+# Receipts uploads
+greenbay-bot-backend/receipts/
+
+# Node modules (if any)
+node_modules/

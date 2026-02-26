@@ -1,0 +1,162 @@
+version: '3.8'
+
+services:
+  # Main GreenBay Bot application
+  app:
+    build: .
+    container_name: greenbay-bot
+    ports:
+      - "8888:8888"
+    environment:
+      # Database connection for the app (use env var or fallback)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:CHANGE_ME@postgres:5432/greenbay_market}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_URL=http://qdrant:6333
+      - SHOPIFY_SHOP_DOMAIN=${SHOPIFY_SHOP_DOMAIN:-your-shop-domain.myshopify.com}
+      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN:-CHANGE_ME}
+      - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2025-07}
+      # Database
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=greenbay_market
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-CHANGE_ME}
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    volumes:
+      - ./temp_images:/app/temp_images
+      - ./logs:/app/logs
+      - ./receipts:/app/receipts
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: greenbay-postgres
+    environment:
+      POSTGRES_DB: greenbay_market
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d greenbay_market"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: greenbay-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: greenbay-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - SHOPIFY_SHOP_DOMAIN=${SHOPIFY_SHOP_DOMAIN:-your-shop-domain.myshopify.com}
+      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN:-CHANGE_ME}
+      - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2025-07}
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+
+  # Nginx reverse proxy (for production)
+  nginx:
+    image: nginx:alpine
+    container_name: greenbay-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+
+  # Shopify Product Auto-Sync Service
+  shopify-sync:
+    build: .
+    container_name: greenbay-shopify-sync
+    command: python scripts/auto_sync_service.py
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - SHOPIFY_SHOP_DOMAIN=${SHOPIFY_SHOP_DOMAIN:-greenbay.market}
+      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN}
+      - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2025-07}
+    env_file:
+      - .env
+    depends_on:
+      - qdrant
+    volumes:
+      - ./scripts:/app/scripts  # Changed from :ro to writable for sync_history.json
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - greenbay-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  greenbay-network:
+    driver: bridge
+    name: greenbay-network
