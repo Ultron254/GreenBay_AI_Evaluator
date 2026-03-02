@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     whatsapp_version: str = Field(default="v23.0", env="VERSION")
     
     # Qdrant Vector Database Configuration
-    qdrant_url: str = Field(default="http://localhost:6333", env="QDRANT_URL")
+    qdrant_url: str = Field(default="http://localhost:9400", env="QDRANT_URL")
     qdrant_api_key: Optional[str] = Field(default=None, env="QDRANT_API_KEY")
     qdrant_collection_name: str = Field(default="products", env="QDRANT_COLLECTION")
     embedding_dim: int = Field(default=768, env="EMBEDDING_DIM")
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     
     # Redis Configuration
     redis_host: str = Field(default="localhost", env="REDIS_HOST")
-    redis_port: int = Field(default=6379, env="REDIS_PORT")
+    redis_port: int = Field(default=9300, env="REDIS_PORT")
     redis_db: int = Field(default=0, env="REDIS_DB")
     redis_password: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
     
