@@ -26,7 +26,7 @@ META_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 CATALOG_ID = os.getenv("CATALOG_ID")
 
 # Qdrant config
-QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:9400")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "products")
 
 # Initialize clients
