@@ -461,3 +461,64 @@ def get_session_detail(session_id: str, db: Session = Depends(get_db)):
             for entry in ledger
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /model-lookup
+# ---------------------------------------------------------------------------
+from pydantic import BaseModel as PydanticBaseModel
+
+
+class ModelLookupRequest(PydanticBaseModel):
+    image_data: str  # base64 data URL of model label photo
+    typed_model: str = ""
+    category: str = ""
+    brand: str = ""
+
+
+class ModelLookupResponse(PydanticBaseModel):
+    model_verified: bool = False
+    model_number: str | None = None
+    specs_summary: str | None = None
+    retail_price: float | None = None
+    release_year: int | None = None
+
+
+@evaluator_router.post("/model-lookup", response_model=ModelLookupResponse)
+def model_lookup(req: ModelLookupRequest):
+    """
+    Accept a photo of a model label, OCR the model number,
+    and look up specs, retail price, and release date.
+    """
+    try:
+        from greenbay_ai_evaluator.services.vision_service import analyze_model_label
+
+        result = analyze_model_label(
+            image_data=req.image_data,
+            typed_model=req.typed_model,
+            category=req.category,
+            brand=req.brand,
+        )
+
+        logger.info(
+            f"Model lookup: typed={req.typed_model}, "
+            f"verified={result.get('model_verified')}, "
+            f"found={result.get('model_number')}"
+        )
+
+        return ModelLookupResponse(
+            model_verified=result.get("model_verified", False),
+            model_number=result.get("model_number"),
+            specs_summary=result.get("specs_summary"),
+            retail_price=result.get("retail_price"),
+            release_year=result.get("release_year"),
+        )
+
+    except Exception as e:
+        logger.warning(f"Model lookup failed (non-critical): {e}")
+        # Non-critical endpoint: return unverified response
+        return ModelLookupResponse(
+            model_verified=False,
+            model_number=req.typed_model or None,
+            specs_summary=None,
+        )

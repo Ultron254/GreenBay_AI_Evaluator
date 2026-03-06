@@ -14,8 +14,12 @@ import sys
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database.db import SessionLocal
+from app.database.db import SessionLocal, Base, engine
+import app.database.models  # noqa: F401 — register all ORM models first
 from greenbay_ai_evaluator.models.evaluator_models import PricingPolicy
+
+# Ensure tables exist
+Base.metadata.create_all(bind=engine)
 
 
 # Shared brand premiums

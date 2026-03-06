@@ -1,15 +1,15 @@
 /**
- * GreenBay AI Evaluator — Web Application
+ * GreenBay AI Evaluator , Web Application
  * 
  * Wizard state machine, photo upload with validation,
  * chat panel mirroring, API integration, and negotiation UI.
  */
 
 /* ============================================================
-   STATE
-   ============================================================ */
+ STATE
+ ============================================================ */
 const API_BASE = window.location.origin;
-const TOTAL_STEPS = 9;
+const TOTAL_STEPS = 10;
 
 const state = {
     currentStep: 1,
@@ -18,12 +18,14 @@ const state = {
         category: null,
         brand: null,
         model: '',
+        modelPhoto: null, // { file, dataUrl }
         age: null,
         condition: null,
         conditionGrade: null,
         ownership: null,
         issues: '',
-        photos: [],         // { file, dataUrl, id }
+        otherDescription: '',
+        photos: [], // { file, dataUrl, id }
         price: null,
     },
     evaluation: null,
@@ -40,30 +42,32 @@ try {
             Object.assign(state, parsed);
             // Photos can't survive localStorage (blobs), so reset
             state.answers.photos = [];
+            state.answers.modelPhoto = null;
         }
     }
 } catch (_) { /* ignore */ }
 
 function saveState() {
     try {
-        const toSave = { ...state, answers: { ...state.answers, photos: [] } };
+        const toSave = { ...state, answers: { ...state.answers, photos: [], modelPhoto: null } };
         localStorage.setItem('gb_eval_state', JSON.stringify(toSave));
     } catch (_) { /* ignore */ }
 }
 
 /* ============================================================
-   STEP LABELS & CHAT MESSAGES
-   ============================================================ */
+ STEP LABELS & CHAT MESSAGES
+ ============================================================ */
 const STEP_LABELS = {
     1: 'Category',
     2: 'Brand',
     3: 'Model Number',
-    4: 'Product Age',
-    5: 'Condition',
-    6: 'Ownership',
-    7: 'Issues & Damage',
-    8: 'Photos',
-    9: 'Your Price',
+    4: 'Model Label Photo',
+    5: 'Product Age',
+    6: 'Condition',
+    7: 'Ownership',
+    8: 'Issues & Damage',
+    9: 'Photos',
+    10: 'Your Price',
 };
 
 const CATEGORY_NAMES = {
@@ -72,8 +76,8 @@ const CATEGORY_NAMES = {
     tv_monitor: 'TV / Monitor',
     cooker_oven: 'Cooker / Oven',
     microwave: 'Microwave',
-    air_conditioner: 'Air Conditioner',
-    water_dispenser: 'Water Dispenser',
+    small_kitchen: 'Small Kitchen Appliance',
+    smartphone: 'Smartphone',
     other: 'Other Appliance',
 };
 
@@ -89,13 +93,13 @@ const CONDITION_LABELS = {
 };
 
 /* ============================================================
-   INITIALIZATION
-   ============================================================ */
+ INITIALIZATION
+ ============================================================ */
 document.addEventListener('DOMContentLoaded', () => {
     // Greet in chat
-    addChatMessage('bot', 'Hey! 👋 I\'m Kay, your GreenBay AI evaluator. Let\'s get your appliance valued — just follow the steps on the left, and I\'ll guide you through!');
+    addChatMessage('bot', 'Hey! I\'m Kay, your GreenBay AI evaluator. Let\'s get your appliance valued , just follow the steps on the left, and I\'ll guide you through!');
     setTimeout(() => {
-        addChatMessage('bot', 'Start by selecting what type of appliance you\'re selling. 🏷️');
+        addChatMessage('bot', 'Start by selecting what type of appliance you\'re selling. ');
     }, 800);
 
     // Set up photo drag & drop
@@ -104,6 +108,14 @@ document.addEventListener('DOMContentLoaded', () => {
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
         zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
         zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag-over'); handlePhotoUpload(e.dataTransfer.files); });
+    }
+
+    // Set up model photo drag & drop
+    const modelZone = document.getElementById('modelPhotoZone');
+    if (modelZone) {
+        modelZone.addEventListener('dragover', (e) => { e.preventDefault(); modelZone.classList.add('drag-over'); });
+        modelZone.addEventListener('dragleave', () => modelZone.classList.remove('drag-over'));
+        modelZone.addEventListener('drop', (e) => { e.preventDefault(); modelZone.classList.remove('drag-over'); handleModelPhotoUpload(e.dataTransfer.files); });
     }
 
     // If we have saved state, try to restore the wizard position
@@ -115,8 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ============================================================
-   WIZARD NAVIGATION
-   ============================================================ */
+ WIZARD NAVIGATION
+ ============================================================ */
 function goToStep(stepNum) {
     // Hide all steps
     document.querySelectorAll('.wizard-step').forEach(el => el.classList.remove('active'));
@@ -134,7 +146,7 @@ function updateWizardUI() {
     const label = STEP_LABELS[step] || 'Results';
     const fill = step <= TOTAL_STEPS ? ((step / TOTAL_STEPS) * 100) : 100;
 
-    document.getElementById('progressLabel').textContent = step <= TOTAL_STEPS ? `Step ${step}: ${label}` : '✅ Analysis Complete';
+    document.getElementById('progressLabel').textContent = step <= TOTAL_STEPS ? `Step ${step}: ${label}` : ' Analysis Complete';
     document.getElementById('progressCount').textContent = step <= TOTAL_STEPS ? `${step} / ${TOTAL_STEPS}` : 'Done!';
     document.getElementById('progressFill').style.width = `${fill}%`;
 
@@ -145,12 +157,12 @@ function updateWizardUI() {
     // Next button
     const nextBtn = document.getElementById('nextBtn');
     if (step === TOTAL_STEPS) {
-        nextBtn.textContent = '🔍 Analyze My Appliance';
+        nextBtn.textContent = ' Analyze My Appliance';
         nextBtn.classList.add('btn-lg');
     } else if (step > TOTAL_STEPS) {
         nextBtn.classList.add('hidden');
     } else {
-        nextBtn.textContent = 'Next →';
+        nextBtn.textContent = 'Next ';
         nextBtn.classList.remove('btn-lg');
     }
 
@@ -166,12 +178,13 @@ function isStepValid(step) {
         case 1: return !!state.answers.category;
         case 2: return !!state.answers.brand;
         case 3: return state.answers.model.trim().length > 0;
-        case 4: return state.answers.age !== null;
-        case 5: return !!state.answers.condition;
-        case 6: return !!state.answers.ownership;
-        case 7: return true; // issues can be empty
-        case 8: return state.answers.photos.length >= 5;
-        case 9: return true; // price can be null ("make me an offer")
+        case 4: return !!state.answers.modelPhoto;
+        case 5: return state.answers.age !== null;
+        case 6: return !!state.answers.condition;
+        case 7: return !!state.answers.ownership;
+        case 8: return true; // issues can be empty
+        case 9: return state.answers.photos.length >= 5;
+        case 10: return true; // price can be null ("make me an offer")
         default: return true;
     }
 }
@@ -222,8 +235,8 @@ function restoreSelections() {
 }
 
 /* ============================================================
-   OPTION SELECTION HANDLERS
-   ============================================================ */
+ OPTION SELECTION HANDLERS
+ ============================================================ */
 function selectOption(el, field) {
     // Deselect siblings
     el.parentElement.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
@@ -262,7 +275,7 @@ function updateAnswer(field, value) {
 }
 
 function handlePriceInput(raw) {
-    // Parse Kenyan price expressions: "25k" → 25000, "25,000" → 25000
+    // Parse Kenyan price expressions: "25k" 25000, "25,000" 25000
     let cleaned = raw.replace(/[,\s]/g, '').toLowerCase();
     cleaned = cleaned.replace(/^kes\s*/i, '');
 
@@ -291,8 +304,80 @@ function selectCategoryFromLanding(cat) {
 }
 
 /* ============================================================
-   PHOTO UPLOAD
-   ============================================================ */
+ MODEL LABEL PHOTO UPLOAD
+ ============================================================ */
+function handleModelPhotoUpload(files) {
+    const file = files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+        addChatMessage('bot', 'That file does not look like a photo. Please upload a JPEG or PNG image of the model label.');
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        addChatMessage('bot', `That photo is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 10MB please!`);
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        compressImage(e.target.result, 1024, 0.85, (compressedDataUrl) => {
+            state.answers.modelPhoto = { file, dataUrl: compressedDataUrl };
+
+            // Show preview
+            const placeholder = document.getElementById('modelPhotoPlaceholder');
+            const preview = document.getElementById('modelPhotoPreview');
+            const img = document.getElementById('modelPhotoImg');
+            if (placeholder) placeholder.style.display = 'none';
+            if (preview) { preview.style.display = 'block'; }
+            if (img) img.src = compressedDataUrl;
+
+            document.getElementById('nextBtn').disabled = false;
+            saveState();
+
+            // Chat feedback
+            addChatMessage('bot', 'Model label photo received! I can see the model details. This will help me look up exact specifications and pricing data.');
+
+            // Send to backend for OCR/verification (non-blocking)
+            lookupModelFromPhoto(compressedDataUrl);
+        });
+    };
+    reader.readAsDataURL(file);
+}
+
+async function lookupModelFromPhoto(dataUrl) {
+    try {
+        const response = await fetch(`${API_BASE}/api/evaluator/model-lookup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_data: dataUrl,
+                typed_model: state.answers.model,
+                category: state.answers.category,
+                brand: state.answers.brand,
+            }),
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            if (result.model_verified) {
+                addChatMessage('bot', `Model <strong>${result.model_number || state.answers.model}</strong> verified! ${result.specs_summary || ''}`);
+                // Update model if OCR found a better match
+                if (result.model_number && result.model_number !== state.answers.model) {
+                    state.answers.model = result.model_number;
+                    const modelInput = document.getElementById('modelInput');
+                    if (modelInput) modelInput.value = result.model_number;
+                    saveState();
+                }
+            }
+        }
+    } catch (_) {
+        // Non-critical: model lookup is nice-to-have
+    }
+}
+
+/* ============================================================
+ PHOTO UPLOAD
+ ============================================================ */
 function handlePhotoUpload(files) {
     const maxPhotos = 10;
     const maxSizeMB = 10;
@@ -301,7 +386,7 @@ function handlePhotoUpload(files) {
     Array.from(files).forEach(file => {
         if (state.answers.photos.length >= maxPhotos) return;
         if (!file.type.startsWith('image/')) {
-            addChatMessage('bot', `That file doesn't look like an image. Please upload JPEG or PNG photos. 📸`);
+            addChatMessage('bot', `That file doesn't look like an image. Please upload JPEG or PNG photos. `);
             return;
         }
         if (file.size > maxSizeMB * 1024 * 1024) {
@@ -317,19 +402,19 @@ function handlePhotoUpload(files) {
                 state.answers.photos.push({ file, dataUrl: compressedDataUrl, id });
                 renderPhotoGrid();
                 updatePhotoCount();
-                document.getElementById('nextBtn').disabled = !isStepValid(8);
+                document.getElementById('nextBtn').disabled = !isStepValid(9);
                 saveState();
 
                 // Chat feedback
                 const count = state.answers.photos.length;
                 if (count === 1) {
-                    addChatMessage('bot', `Got it! 📸 That's 1/${5} photos — keep them coming!`);
+                    addChatMessage('bot', `Got it! That's 1/${5} photos , keep them coming!`);
                 } else if (count === 3) {
-                    addChatMessage('bot', `Looking good! I can already spot some details. ${count}/5 photos received. 👀`);
+                    addChatMessage('bot', `Looking good! I can already spot some details. ${count}/5 photos received. `);
                 } else if (count === 5) {
-                    addChatMessage('bot', `All 5 photos received! ✅ Add more if you have them, or move to the next step.`);
+                    addChatMessage('bot', `All 5 photos received! Add more if you have them, or move to the next step.`);
                 } else if (count > 5) {
-                    addChatMessage('bot', `Nice — extra photos help me give a more accurate valuation! ${count} photos total. 📷`);
+                    addChatMessage('bot', `Nice , extra photos help me give a more accurate valuation! ${count} photos total. `);
                 }
             });
         };
@@ -358,9 +443,9 @@ function renderPhotoGrid() {
     const grid = document.getElementById('photoGrid');
     grid.innerHTML = state.answers.photos.map(p =>
         `<div class="photo-thumb" id="${p.id}">
-       <img src="${p.dataUrl}" alt="Appliance photo">
-       <div class="remove-photo" onclick="removePhoto('${p.id}')">✕</div>
-     </div>`
+ <img src="${p.dataUrl}" alt="Appliance photo">
+ <div class="remove-photo" onclick="removePhoto('${p.id}')"></div>
+ </div>`
     ).join('');
 }
 
@@ -368,7 +453,7 @@ function removePhoto(id) {
     state.answers.photos = state.answers.photos.filter(p => p.id !== id);
     renderPhotoGrid();
     updatePhotoCount();
-    document.getElementById('nextBtn').disabled = !isStepValid(8);
+    document.getElementById('nextBtn').disabled = !isStepValid(9);
     saveState();
 }
 
@@ -380,8 +465,8 @@ function updatePhotoCount() {
 }
 
 /* ============================================================
-   CHAT PANEL
-   ============================================================ */
+ CHAT PANEL
+ ============================================================ */
 function addChatMessage(sender, html, extraClass) {
     const container = document.getElementById('chatMessages');
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -389,9 +474,9 @@ function addChatMessage(sender, html, extraClass) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `msg ${sender} ${extraClass || ''}`;
     msgDiv.innerHTML = `
-    <div class="msg-bubble">${html}</div>
-    <div class="msg-time">${time}</div>
-  `;
+ <div class="msg-bubble">${html}</div>
+ <div class="msg-time">${time}</div>
+ `;
     container.appendChild(msgDiv);
     container.scrollTop = container.scrollHeight;
 
@@ -434,14 +519,14 @@ function sendChatMessage() {
         if (parsed) {
             submitCounterOffer(parsed);
         } else {
-            addChatMessage('bot', 'Please type a price in KES (e.g. "25000" or "25k") to make a counter-offer. 💰');
+            addChatMessage('bot', 'Please type a price in KES (e.g. "25000" or "25k") to make a counter-offer. ');
         }
         return;
     }
 
-    // Generic chat — just acknowledge
+    // Generic chat , just acknowledge
     setTimeout(() => {
-        addChatMessage('bot', 'Thanks for that! Please continue filling in the form on the left — I\'m watching your progress. 😊');
+        addChatMessage('bot', 'Thanks for that! Please continue filling in the form on the left , I\'m watching your progress. ');
     }, 600);
 }
 
@@ -470,22 +555,23 @@ function toggleChatMobile() {
 }
 
 /* ============================================================
-   CHAT MIRRORING — Steps → Chat
-   ============================================================ */
+ CHAT MIRRORING , Steps Chat
+ ============================================================ */
 function mirrorStepToChat(step) {
     const a = state.answers;
     const messages = {
-        1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>` : null,
-        2: () => a.brand ? `Brand: <strong>${a.brand}</strong> — nice choice! 👍` : null,
-        3: () => a.model ? `Model: <strong>${a.model}</strong> — got it!` : null,
-        4: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
-        5: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
-        6: () => a.ownership ? `Ownership: <strong>${a.ownership.replace(/_/g, ' ')}</strong>` : null,
-        7: () => a.issues ? (a.issues === 'No issues'
-            ? 'No issues — that\'s great! ✅'
+        1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}` : null,
+        2: () => a.brand ? `Brand: <strong>${a.brand}</strong>, nice choice!` : null,
+        3: () => a.model ? `Model: <strong>${a.model}</strong>, got it!` : null,
+        4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : null,
+        5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
+        6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
+        7: () => a.ownership ? `Ownership: <strong>${a.ownership.replace(/_/g, ' ')}</strong>` : null,
+        8: () => a.issues ? (a.issues === 'No issues'
+            ? 'No issues, that\'s great!'
             : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
-        8: () => `📸 ${a.photos.length} photos uploaded`,
-        9: () => a.price ? `Your asking price: <strong>KES ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        9: () => `${a.photos.length} photos uploaded`,
+        10: () => a.price ? `Your asking price: <strong>KES ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
     };
 
     const fn = messages[step];
@@ -497,15 +583,24 @@ function mirrorStepToChat(step) {
 
 function promptNextStep(step) {
     const prompts = {
-        2: 'Great choice! Now, what brand is your appliance? 🏷️',
-        3: 'Next up — the model number. Check the sticker on the back or inside the door! 🔍',
-        4: 'How old is this product? Younger appliances hold more value! 📅',
-        5: 'And what condition is it in? Be honest — it helps me be accurate! 😊',
-        6: 'How long have you personally owned it? This helps with provenance. 🕰️',
-        7: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts? 🔧',
-        8: 'Now for the important part — photos! 📸 I need at least <strong>5 clear photos</strong>. Good lighting makes a big difference!',
-        9: 'Last question — the big one! 💰 What price are you hoping for? Or let me make you an offer.',
+        2: 'Great choice! Now, what brand is your appliance?',
+        3: 'Next up, the model number. Check the sticker on the back or inside the door!',
+        4: 'Now please upload a clear photo of the model number label. This helps me verify the exact model, look up its release date, retail price, and specifications for a more accurate offer.',
+        5: 'How old is this product? Younger appliances hold more value!',
+        6: 'And what condition is it in? Be honest, it helps me be accurate!',
+        7: 'How long have you personally owned it? This helps with provenance.',
+        8: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
+        9: 'Now for the important part, photos! I need at least <strong>5 clear photos</strong>. Good lighting makes a big difference!',
+        10: 'Last question, the big one! What price are you hoping for? Or let me make you an offer.',
     };
+
+    // Show/hide Other description field based on category
+    if (step === 3) {
+        const descGroup = document.getElementById('otherDescriptionGroup');
+        if (descGroup) {
+            descGroup.style.display = state.answers.category === 'other' ? 'block' : 'none';
+        }
+    }
 
     const msg = prompts[step];
     if (msg) {
@@ -514,8 +609,8 @@ function promptNextStep(step) {
 }
 
 /* ============================================================
-   ANALYSIS FLOW
-   ============================================================ */
+ ANALYSIS FLOW
+ ============================================================ */
 async function startAnalysis() {
     const a = state.answers;
 
@@ -528,7 +623,7 @@ async function startAnalysis() {
     goToStep('results');
 
     // Chat
-    addChatMessage('bot', `Thanks for all that info! Let me analyze your <strong>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</strong>... 🔍`);
+    addChatMessage('bot', `Thanks for all that info! Let me analyze your <strong>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</strong>... `);
 
     // Animate analysis steps
     const steps = ['step-brand', 'step-condition', 'step-market', 'step-valuation'];
@@ -540,7 +635,7 @@ async function startAnalysis() {
         if (el) {
             el.classList.remove('active');
             el.classList.add('complete');
-            el.querySelector('.analysis-step-icon').textContent = '✅';
+            el.querySelector('.analysis-step-icon').textContent = '';
         }
         if (i + 1 < steps.length) {
             const next = document.getElementById(steps[i + 1]);
@@ -549,10 +644,10 @@ async function startAnalysis() {
 
         // Chat updates
         const chatMsgs = [
-            `✅ Brand verified: <strong>${a.brand}</strong>`,
-            `✅ Condition: Grade <strong>${a.conditionGrade}</strong> — ${CONDITION_LABELS[a.condition]}`,
-            '✅ Market data found — checking Jiji, Jumia, and Facebook Marketplace',
-            '✅ Calculating your offer...',
+            ` Brand verified: <strong>${a.brand}</strong>`,
+            ` Condition: Grade <strong>${a.conditionGrade}</strong> , ${CONDITION_LABELS[a.condition]}`,
+            ' Market data found , checking Jiji, Jumia, and Facebook Marketplace',
+            ' Calculating your offer...',
         ];
         addChatMessage('bot', chatMsgs[i]);
     }
@@ -563,26 +658,26 @@ async function startAnalysis() {
 
 function buildAnalysisProgressHTML() {
     return `
-    <div class="analysis-progress">
-      <h3 style="margin-bottom:20px;">🔍 Analyzing Your Appliance</h3>
-      <div class="analysis-step active" id="step-brand">
-        <div class="analysis-step-icon">⏳</div>
-        <span>Checking brand and model...</span>
-      </div>
-      <div class="analysis-step" id="step-condition">
-        <div class="analysis-step-icon">⏳</div>
-        <span>Assessing condition from photos...</span>
-      </div>
-      <div class="analysis-step" id="step-market">
-        <div class="analysis-step-icon">⏳</div>
-        <span>Searching current market prices...</span>
-      </div>
-      <div class="analysis-step" id="step-valuation">
-        <div class="analysis-step-icon">⏳</div>
-        <span>Calculating your offer...</span>
-      </div>
-    </div>
-  `;
+ <div class="analysis-progress">
+ <h3 style="margin-bottom:20px;"> Analyzing Your Appliance</h3>
+ <div class="analysis-step active" id="step-brand">
+ <div class="analysis-step-icon"></div>
+ <span>Checking brand and model...</span>
+ </div>
+ <div class="analysis-step" id="step-condition">
+ <div class="analysis-step-icon"></div>
+ <span>Assessing condition from photos...</span>
+ </div>
+ <div class="analysis-step" id="step-market">
+ <div class="analysis-step-icon"></div>
+ <span>Searching current market prices...</span>
+ </div>
+ <div class="analysis-step" id="step-valuation">
+ <div class="analysis-step-icon"></div>
+ <span>Calculating your offer...</span>
+ </div>
+ </div>
+ `;
 }
 
 async function callEvaluationAPI() {
@@ -649,7 +744,7 @@ async function callEvaluationAPI() {
         saveState();
         await sleep(800);
         showResults(demo);
-        addChatMessage('bot', '<em style="opacity:.7">(Demo mode — connect to the backend API for live valuations)</em>');
+        addChatMessage('bot', '<em style="opacity:.7">(Demo mode , connect to the backend API for live valuations)</em>');
     }
 }
 
@@ -693,8 +788,8 @@ function generateDemoResults(answers) {
 }
 
 /* ============================================================
-   RESULTS DISPLAY
-   ============================================================ */
+ RESULTS DISPLAY
+ ============================================================ */
 function showResults(data) {
     const a = state.answers;
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
@@ -703,67 +798,67 @@ function showResults(data) {
     // Update wizard panel with results
     const resultsStep = document.getElementById('stepResults');
     resultsStep.innerHTML = `
-    <div class="offer-card">
-      <div class="offer-card-header">🎯 Your GreenBay Valuation</div>
-      <div class="offer-grade ${gradeClass}">
-        ⭐ Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
-      </div>
-      <div class="offer-amount">KES ${formatKES(offer)}</div>
-      <div class="offer-validity">Valid for 7 days</div>
-      
-      <div class="offer-breakdown">
-        <div class="offer-breakdown-row">
-          <span class="label">Estimated resale value</span>
-          <span class="value">KES ${formatKES(data.estimated_resale_value)}</span>
-        </div>
-        <div class="offer-breakdown-row">
-          <span class="label">Confidence score</span>
-          <span class="value">${data.confidence_score?.toFixed(0) || '—'}%</span>
-        </div>
-        <div class="offer-breakdown-row">
-          <span class="label">Comparable sales found</span>
-          <span class="value">${data.comparable_count || 0}</span>
-        </div>
-      </div>
-      
-      <div class="offer-actions">
-        <button class="btn btn-accept" onclick="acceptOffer(${offer})">✅ Accept KES ${formatKES(offer)}</button>
-        <button class="btn btn-counter" onclick="showCounterUI()">💬 Counter</button>
-      </div>
-    </div>
-    
-    <div class="whatsapp-bridge">
-      <div class="whatsapp-bridge-icon">💬</div>
-      <div class="whatsapp-bridge-text">
-        <h4>Prefer WhatsApp?</h4>
-        <p>Continue this conversation on WhatsApp for a more personal experience.</p>
-      </div>
-      <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}%20valued%20at%20KES%20${offer}" 
-         target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
-    </div>
-  `;
+ <div class="offer-card">
+ <div class="offer-card-header"> Your GreenBay Valuation</div>
+ <div class="offer-grade ${gradeClass}">
+ Grade ${data.condition_grade} , ${CONDITION_LABELS[a.condition] || a.condition}
+ </div>
+ <div class="offer-amount">KES ${formatKES(offer)}</div>
+ <div class="offer-validity">Valid for 7 days</div>
+ 
+ <div class="offer-breakdown">
+ <div class="offer-breakdown-row">
+ <span class="label">Estimated resale value</span>
+ <span class="value">KES ${formatKES(data.estimated_resale_value)}</span>
+ </div>
+ <div class="offer-breakdown-row">
+ <span class="label">Confidence score</span>
+ <span class="value">${data.confidence_score?.toFixed(0) || ', '}%</span>
+ </div>
+ <div class="offer-breakdown-row">
+ <span class="label">Comparable sales found</span>
+ <span class="value">${data.comparable_count || 0}</span>
+ </div>
+ </div>
+ 
+ <div class="offer-actions">
+ <button class="btn btn-accept" onclick="acceptOffer(${offer})"> Accept KES ${formatKES(offer)}</button>
+ <button class="btn btn-counter" onclick="showCounterUI()"> Counter</button>
+ </div>
+ </div>
+ 
+ <div class="whatsapp-bridge">
+ <div class="whatsapp-bridge-icon"></div>
+ <div class="whatsapp-bridge-text">
+ <h4>Prefer WhatsApp?</h4>
+ <p>Continue this conversation on WhatsApp for a more personal experience.</p>
+ </div>
+ <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}%20valued%20at%20KES%20${offer}" 
+ target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
+ </div>
+ `;
 
-    // Chat panel — show the offer
+    // Chat panel , show the offer
     hideTypingIndicator();
 
     const decisionMessages = {
-        accept: `🎉 <strong>Your GreenBay Offer</strong><br><br>
-      📋 ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
-      ⭐ Condition: Grade ${data.condition_grade}<br>
-      💰 <strong>KES ${formatKES(offer)}</strong><br><br>
-      Your price works perfectly for us! We'd love to proceed. 🤝`,
+        accept: ` <strong>Your GreenBay Offer</strong><br><br>
+ ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
+ Condition: Grade ${data.condition_grade}<br>
+ <strong>KES ${formatKES(offer)}</strong><br><br>
+ Your price works perfectly for us! We'd love to proceed. `,
 
-        negotiate: `🎯 <strong>Your GreenBay Valuation</strong><br><br>
-      📋 ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
-      ⭐ Condition: Grade ${data.condition_grade}<br><br>
-      ${a.price ? `I appreciate the KES ${formatKES(a.price)} ask. ` : ''}After checking current market prices and assessing the condition, I can offer:<br><br>
-      💰 <strong>KES ${formatKES(data.opening_offer)}</strong><br><br>
-      This factors in the current market and the condition I've assessed. Would this work for you?`,
+        negotiate: ` <strong>Your GreenBay Valuation</strong><br><br>
+ ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
+ Condition: Grade ${data.condition_grade}<br><br>
+ ${a.price ? `I appreciate the KES ${formatKES(a.price)} ask. ` : ''}After checking current market prices and assessing the condition, I can offer:<br><br>
+ <strong>KES ${formatKES(data.opening_offer)}</strong><br><br>
+ This factors in the current market and the condition I've assessed. Would this work for you?`,
 
         decline: `I appreciate you sharing your price. Based on current market data and the condition assessment, the most we could offer is <strong>KES ${formatKES(data.opening_offer)}</strong>.<br><br>
-      I know there's a gap — if you'd like to reconsider, our offer stands for 7 days. 💚`,
+ I know there's a gap , if you'd like to reconsider, our offer stands for 7 days. `,
 
-        review: `Based on my analysis, I'd like a human team member to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. Our preliminary offer is <strong>KES ${formatKES(data.opening_offer)}</strong>, but we want to make sure we get this right! A specialist will be in touch shortly. 📞`,
+        review: `Based on my analysis, I'd like a human team member to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. Our preliminary offer is <strong>KES ${formatKES(data.opening_offer)}</strong>, but we want to make sure we get this right! A specialist will be in touch shortly. `,
     };
 
     setTimeout(() => {
@@ -785,8 +880,8 @@ function showResults(data) {
 }
 
 /* ============================================================
-   NEGOTIATION
-   ============================================================ */
+ NEGOTIATION
+ ============================================================ */
 function showCounterUI() {
     const resultsStep = document.getElementById('stepResults');
 
@@ -797,18 +892,18 @@ function showCounterUI() {
     const counterDiv = document.createElement('div');
     counterDiv.className = 'counter-input-area';
     counterDiv.innerHTML = `
-    <h4>💬 Make a Counter-Offer</h4>
-    <div class="counter-row">
-      <input type="text" class="form-input" id="counterInput" placeholder="e.g. 25000">
-      <button class="btn btn-primary btn-sm" onclick="submitCounterFromInput()">Send</button>
-    </div>
-    <div class="round-tracker" id="roundTracker">
-      Round <strong>${state.negotiation.round + 1}</strong> of 3
-    </div>
-  `;
+ <h4> Make a Counter-Offer</h4>
+ <div class="counter-row">
+ <input type="text" class="form-input" id="counterInput" placeholder="e.g. 25000">
+ <button class="btn btn-primary btn-sm" onclick="submitCounterFromInput()">Send</button>
+ </div>
+ <div class="round-tracker" id="roundTracker">
+ Round <strong>${state.negotiation.round + 1}</strong> of 3
+ </div>
+ `;
     resultsStep.appendChild(counterDiv);
 
-    addChatMessage('bot', 'What price did you have in mind? Type your counter-offer below. 💬');
+    addChatMessage('bot', 'What price did you have in mind? Type your counter-offer below. ');
     state.negotiation.status = 'active';
 
     // Focus the input
@@ -820,7 +915,7 @@ function submitCounterFromInput() {
     if (!input) return;
     const price = parsePrice(input.value);
     if (!price) {
-        addChatMessage('bot', 'Please enter a valid price in KES (e.g. "25000" or "25k"). 💰');
+        addChatMessage('bot', 'Please enter a valid price in KES (e.g. "25000" or "25k"). ');
         return;
     }
     input.value = '';
@@ -905,23 +1000,23 @@ function handleNegotiationResponse(data) {
 
     if (data.decision === 'accept') {
         neg.status = 'accepted';
-        addChatMessage('bot', `KES ${formatKES(data.system_offer)} works! You've got a deal. 🤝<br><br>
-      <strong>Next steps:</strong><br>
-      📍 Free pickup anywhere in Nairobi<br>
-      ⚡ Payment via M-Pesa — same day<br>
-      📞 Our team will call within 24 hours`);
+        addChatMessage('bot', `KES ${formatKES(data.system_offer)} works! You've got a deal. <br><br>
+ <strong>Next steps:</strong><br>
+ Free pickup anywhere in Nairobi<br>
+ Payment via M-Pesa , same day<br>
+ Our team will call within 24 hours`);
         showDealClosed(data.system_offer);
 
     } else if (data.decision === 'decline') {
         neg.status = 'declined';
-        addChatMessage('bot', `Unfortunately we can't go above KES ${formatKES(data.system_offer)} for this unit at this time. Our offer stands for 7 days if you change your mind. 💚<br><br>
-      Thanks for your time — you're welcome to come back anytime!`);
+        addChatMessage('bot', `Unfortunately we can't go above KES ${formatKES(data.system_offer)} for this unit at this time. Our offer stands for 7 days if you change your mind. <br><br>
+ Thanks for your time , you're welcome to come back anytime!`);
         showNoDeal(data.system_offer);
 
     } else {
         // Counter
         const incentive = data.rounds_remaining <= 1
-            ? `<br><br>💡 <strong>Bonus:</strong> At this price, you'll get a <strong>15% trade-in discount</strong> on your next GreenBay purchase!`
+            ? `<br><br> <strong>Bonus:</strong> At this price, you'll get a <strong>15% trade-in discount</strong> on your next GreenBay purchase!`
             : '';
 
         const urgency = data.rounds_remaining === 0
@@ -929,7 +1024,7 @@ function handleNegotiationResponse(data) {
             : '';
 
         addChatMessage('bot', `I understand you'd like more. The best I can do is <strong>KES ${formatKES(data.system_offer)}</strong>. ${data.reason}${incentive}${urgency}<br><br>
-      What do you think?`);
+ What do you think?`);
 
         // Update round tracker
         const tracker = document.getElementById('roundTracker');
@@ -950,33 +1045,33 @@ function updateOfferCard(newOffer, roundsRemaining) {
 
     const acceptBtn = document.querySelector('.btn-accept');
     if (acceptBtn) {
-        acceptBtn.textContent = `✅ Accept KES ${formatKES(newOffer)}`;
+        acceptBtn.textContent = ` Accept KES ${formatKES(newOffer)}`;
         acceptBtn.setAttribute('onclick', `acceptOffer(${newOffer})`);
     }
 }
 
 async function acceptOffer(amount) {
     state.negotiation.status = 'accepted';
-    addChatMessage('user', `I accept KES ${formatKES(amount)} ✅`);
+    addChatMessage('user', `I accept KES ${formatKES(amount)} `);
 
     showTypingIndicator();
     await sleep(1000);
     hideTypingIndicator();
 
-    addChatMessage('bot', `Wonderful! 🎉 Deal confirmed!<br><br>
-    ━━━━━━━━━━━━━━━━━━━━━━<br>
-    📋 <strong>ACQUISITION SUMMARY</strong><br>
-    ━━━━━━━━━━━━━━━━━━━━━━<br><br>
-    Appliance: ${state.answers.brand} ${state.answers.model || ''} ${CATEGORY_NAMES[state.answers.category]}<br>
-    Condition: Grade ${state.evaluation.condition_grade}<br>
-    Agreed Price: <strong>KES ${formatKES(amount)}</strong><br>
-    Reference: GB-${state.sessionId || Date.now()}<br><br>
-    📍 <strong>What happens next:</strong><br>
-    1. Our team calls you within 24 hours<br>
-    2. We schedule a FREE pickup at your location<br>
-    3. Quick 5-minute verification at pickup<br>
-    4. <strong>Same-day payment via M-Pesa</strong><br><br>
-    Thanks for choosing GreenBay! 💚`);
+    addChatMessage('bot', `Wonderful! Deal confirmed!<br><br>
+ <br>
+ <strong>ACQUISITION SUMMARY</strong><br>
+ <br><br>
+ Appliance: ${state.answers.brand} ${state.answers.model || ''} ${CATEGORY_NAMES[state.answers.category]}<br>
+ Condition: Grade ${state.evaluation.condition_grade}<br>
+ Agreed Price: <strong>KES ${formatKES(amount)}</strong><br>
+ Reference: GB-${state.sessionId || Date.now()}<br><br>
+ <strong>What happens next:</strong><br>
+ 1. Our team calls you within 24 hours<br>
+ 2. We schedule a FREE pickup at your location<br>
+ 3. Quick 5-minute verification at pickup<br>
+ 4. <strong>Same-day payment via M-Pesa</strong><br><br>
+ Thanks for choosing GreenBay! `);
 
     showDealClosed(amount);
     saveState();
@@ -986,72 +1081,72 @@ function showDealClosed(amount) {
     const a = state.answers;
     const resultsStep = document.getElementById('stepResults');
     resultsStep.innerHTML = `
-    <div class="deal-result">
-      <div class="result-icon">🎉</div>
-      <h3>Deal Confirmed!</h3>
-      <p>Your ${a.brand} ${CATEGORY_NAMES[a.category]} has been accepted.</p>
-      
-      <div class="deal-summary">
-        <div class="deal-summary-row">
-          <span>Appliance</span>
-          <span>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</span>
-        </div>
-        <div class="deal-summary-row">
-          <span>Condition</span>
-          <span>Grade ${state.evaluation.condition_grade}</span>
-        </div>
-        <div class="deal-summary-row">
-          <span>Reference</span>
-          <span>GB-${state.sessionId || Date.now()}</span>
-        </div>
-        <div class="deal-summary-row total">
-          <span>Agreed Price</span>
-          <span>KES ${formatKES(amount)}</span>
-        </div>
-      </div>
-      
-      <button class="btn btn-primary" onclick="resetEvaluator()">
-        🔄 Evaluate Another Appliance
-      </button>
-      
-      <div class="whatsapp-bridge" style="margin-top:20px;">
-        <div class="whatsapp-bridge-icon">💬</div>
-        <div class="whatsapp-bridge-text">
-          <h4>Track on WhatsApp</h4>
-          <p>Get pickup updates and payment confirmation via WhatsApp.</p>
-        </div>
-        <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
-           target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
-      </div>
-    </div>
-  `;
+ <div class="deal-result">
+ <div class="result-icon"></div>
+ <h3>Deal Confirmed!</h3>
+ <p>Your ${a.brand} ${CATEGORY_NAMES[a.category]} has been accepted.</p>
+ 
+ <div class="deal-summary">
+ <div class="deal-summary-row">
+ <span>Appliance</span>
+ <span>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Condition</span>
+ <span>Grade ${state.evaluation.condition_grade}</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Reference</span>
+ <span>GB-${state.sessionId || Date.now()}</span>
+ </div>
+ <div class="deal-summary-row total">
+ <span>Agreed Price</span>
+ <span>KES ${formatKES(amount)}</span>
+ </div>
+ </div>
+ 
+ <button class="btn btn-primary" onclick="resetEvaluator()">
+ Evaluate Another Appliance
+ </button>
+ 
+ <div class="whatsapp-bridge" style="margin-top:20px;">
+ <div class="whatsapp-bridge-icon"></div>
+ <div class="whatsapp-bridge-text">
+ <h4>Track on WhatsApp</h4>
+ <p>Get pickup updates and payment confirmation via WhatsApp.</p>
+ </div>
+ <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
+ target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
+ </div>
+ </div>
+ `;
 }
 
 function showNoDeal(lastOffer) {
     const a = state.answers;
     const resultsStep = document.getElementById('stepResults');
     resultsStep.innerHTML = `
-    <div class="deal-result">
-      <div class="result-icon">💚</div>
-      <h3>Offer Stands for 7 Days</h3>
-      <p>Our offer of <strong>KES ${formatKES(lastOffer)}</strong> for your ${a.brand} ${CATEGORY_NAMES[a.category]} is still available.</p>
-      
-      <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;">
-        <button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept KES ${formatKES(lastOffer)}</button>
-        <button class="btn btn-secondary" onclick="resetEvaluator()">New Valuation</button>
-      </div>
-      
-      <div class="whatsapp-bridge" style="margin-top:20px;">
-        <div class="whatsapp-bridge-icon">💬</div>
-        <div class="whatsapp-bridge-text">
-          <h4>Continue on WhatsApp</h4>
-          <p>Chat with our team for a more personal experience.</p>
-        </div>
-        <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20KES%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}" 
-           target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
-      </div>
-    </div>
-  `;
+ <div class="deal-result">
+ <div class="result-icon"></div>
+ <h3>Offer Stands for 7 Days</h3>
+ <p>Our offer of <strong>KES ${formatKES(lastOffer)}</strong> for your ${a.brand} ${CATEGORY_NAMES[a.category]} is still available.</p>
+ 
+ <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;">
+ <button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept KES ${formatKES(lastOffer)}</button>
+ <button class="btn btn-secondary" onclick="resetEvaluator()">New Valuation</button>
+ </div>
+ 
+ <div class="whatsapp-bridge" style="margin-top:20px;">
+ <div class="whatsapp-bridge-icon"></div>
+ <div class="whatsapp-bridge-text">
+ <h4>Continue on WhatsApp</h4>
+ <p>Chat with our team for a more personal experience.</p>
+ </div>
+ <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20KES%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}" 
+ target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
+ </div>
+ </div>
+ `;
 }
 
 function resetEvaluator() {
@@ -1085,14 +1180,14 @@ function resetEvaluator() {
     document.getElementById('wizardFooter').classList.remove('hidden');
 
     goToStep(1);
-    addChatMessage('bot', 'Let\'s start fresh! 🌟 What type of appliance are you selling?');
+    addChatMessage('bot', 'Let\'s start fresh! What type of appliance are you selling?');
 }
 
 /* ============================================================
-   UTILITY FUNCTIONS
-   ============================================================ */
+ UTILITY FUNCTIONS
+ ============================================================ */
 function formatKES(num) {
-    if (!num && num !== 0) return '—';
+    if (!num && num !== 0) return 'N/A';
     return Math.round(num).toLocaleString('en-KE');
 }
 

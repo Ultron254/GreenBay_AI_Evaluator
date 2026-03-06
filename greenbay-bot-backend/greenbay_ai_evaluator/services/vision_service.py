@@ -168,8 +168,130 @@ def _stub_analysis(
         "completeness_score": 80,
         "authenticity_signals": [],
         "photo_quality_score": 60,
-        "photo_quality_notes": "Analysis unavailable — using defaults",
+        "photo_quality_notes": "Analysis unavailable, using defaults",
         "estimated_age_years": None,
         "key_observations": ["Automated vision analysis not configured"],
         "recommended_retail_price_kes": None,
     }
+
+
+MODEL_LABEL_PROMPT = """You are an expert at reading appliance model labels and stickers.
+Analyze this photo of an appliance model label/sticker and extract:
+
+1. The model number exactly as printed
+2. Any serial number visible
+3. The brand name
+4. Manufacturing date or year if visible
+5. Power specifications (voltage, wattage) if visible
+6. Any other relevant technical specifications
+
+The seller says the model is: "{typed_model}"
+The seller says the brand is: "{brand}"
+The seller says the category is: "{category}"
+
+Return ONLY valid JSON:
+{{
+  "model_number": "exact model number from label or null",
+  "model_verified": true if the label matches the typed model (case-insensitive),
+  "brand_from_label": "brand as printed or null",
+  "serial_number": "serial if visible or null",
+  "manufacture_date": "date/year if visible or null",
+  "power_specs": "wattage/voltage if visible or null",
+  "other_specs": "any other specs visible or null",
+  "specs_summary": "one-line summary of what was found",
+  "retail_price": null,
+  "release_year": year as integer or null
+}}"""
+
+
+def analyze_model_label(
+    image_data: str,
+    typed_model: str = "",
+    category: str = "",
+    brand: str = "",
+    api_key: str | None = None,
+    model: str = "claude-sonnet-4-20250514",
+) -> dict[str, Any]:
+    """
+    Analyze a model label photo to extract and verify the model number.
+
+    Args:
+        image_data: base64-encoded data URL of the model label photo
+        typed_model: The model number the seller typed in
+        category: Product category
+        brand: Product brand
+        api_key: Anthropic API key (auto-detected if not provided)
+
+    Returns:
+        Dict with model_verified, model_number, specs_summary, etc.
+    """
+    import os
+
+    if not api_key:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if not HAS_ANTHROPIC or not api_key:
+        logger.info("Anthropic not configured, returning stub model label analysis")
+        return {
+            "model_verified": bool(typed_model),
+            "model_number": typed_model or None,
+            "specs_summary": f"Model {typed_model} recorded (vision verification unavailable)" if typed_model else None,
+            "retail_price": None,
+            "release_year": None,
+        }
+
+    try:
+        # Parse the data URL
+        media_type = "image/jpeg"
+        img_b64 = image_data
+        if image_data.startswith("data:"):
+            header, img_b64 = image_data.split(",", 1)
+            if "png" in header:
+                media_type = "image/png"
+
+        prompt = MODEL_LABEL_PROMPT.format(
+            typed_model=typed_model or "not provided",
+            brand=brand or "not provided",
+            category=category or "not provided",
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": img_b64,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        # Parse response
+        text = response.content[0].text
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+
+        result = json.loads(text.strip())
+        logger.info(f"Model label analysis complete: {result.get('model_number')}")
+        return result
+
+    except Exception as e:
+        logger.warning(f"Model label analysis failed: {e}")
+        return {
+            "model_verified": bool(typed_model),
+            "model_number": typed_model or None,
+            "specs_summary": f"Model {typed_model} recorded (label analysis failed)" if typed_model else None,
+            "retail_price": None,
+            "release_year": None,
+        }
