@@ -148,13 +148,22 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             except Exception as ve:
                 logger.warning(f"Vision analysis skipped: {ve}")
 
-        # 4. Score images
-        iq_result = score_images(image_urls=req.image_urls)
+        # 4. Score images (OpenCV if base64 data available)
+        iq_result = score_images(
+            image_urls=req.image_urls,
+            image_data=req.image_data,
+        )
 
-        # 5. Assess risk
+        # 5. Assess risk (rule-based fraud detection)
         risk_result = assess_risk(
             category=req.category,
             image_urls=req.image_urls,
+            image_data=req.image_data,
+            seller_asking_price=req.seller_asking_price,
+            retail_price=req.retail_price,
+            condition_grade=req.condition_grade,
+            age_years=req.age_years,
+            db_session=db,
         )
 
         # 5b. Merge vision results into scoring if available

@@ -8,3 +8,4 @@
 *.py[cod]
 *.pyo
 *.pyd
+logs/

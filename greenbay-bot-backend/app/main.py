@@ -11,6 +11,20 @@ from contextlib import asynccontextmanager
 import uvicorn
 from loguru import logger
 
+# Configure structured file logging with rotation
+_log_dir = Path(__file__).resolve().parent.parent / "logs"
+_log_dir.mkdir(exist_ok=True)
+logger.add(
+    str(_log_dir / "greenbay.log"),
+    rotation="10 MB",
+    retention="30 days",
+    compression="gz",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} | {message}",
+    level="INFO",
+    backtrace=True,
+    diagnose=True,
+)
+
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
