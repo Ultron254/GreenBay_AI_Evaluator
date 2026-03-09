@@ -220,6 +220,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             },
         )
         db.add(vs)
+        db.flush()  # Populate vs.id before creating ledger entries
 
         # 8. Decision ledger entry
         ledger = DecisionLedger(
@@ -289,8 +290,13 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Evaluation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+        import traceback
+        tb = traceback.format_exc()
+        # Write to file for debugging since console is truncated
+        with open("/tmp/eval_error.log", "w") as f:
+            f.write(tb)
+        logger.opt(raw=True).error(f"Evaluation failed: {tb}\n")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
