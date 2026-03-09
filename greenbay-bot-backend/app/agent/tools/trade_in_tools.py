@@ -71,24 +71,36 @@ def _format_valuation_reasoning(reasoning_text: str) -> str:
 
 
 def _extract_category_from_name(name: str) -> str:
-    """Extract broad category from product name."""
+    """Extract broad category from product name.
+    
+    Returns category keys that match the pricing_policy DB table:
+    refrigerator, washing_machine, tv_monitor, cooker_oven,
+    microwave, small_kitchen, smartphone, other
+    """
     name_lower = name.lower()
     categories = {
-        "mouse": ["mouse", "mice"],
-        "keyboard": ["keyboard"],
-        "laptop": ["laptop", "notebook", "macbook"],
-        "phone": ["phone", "smartphone", "iphone", "samsung"],
         "refrigerator": ["refrigerator", "fridge", "freezer"],
-        "stove": ["stove", "cooker", "oven", "cooking"],
-        "washing machine": ["washing machine", "washer"],
-        "tv": ["tv", "television", "monitor"],
-        "speaker": ["speaker", "soundbar"],
-        "tablet": ["tablet", "ipad"]
+        "washing_machine": ["washing machine", "washer", "dryer", "laundry"],
+        "tv_monitor": ["tv", "television", "monitor", "screen", "display"],
+        "cooker_oven": ["stove", "cooker", "oven", "cooking", "range", "hob"],
+        "microwave": ["microwave"],
+        "small_kitchen": ["blender", "mixer", "toaster", "kettle", "iron",
+                          "juicer", "coffee maker", "air fryer", "food processor",
+                          "vacuum", "fan", "dispenser", "speaker", "soundbar",
+                          "keyboard", "mouse", "mice", "headphone", "earphone",
+                          "tablet", "ipad"],
+        "smartphone": ["phone", "smartphone", "iphone", "galaxy", "pixel",
+                       "redmi", "tecno", "infinix", "oppo", "vivo", "realme"],
     }
     
     for category, keywords in categories.items():
         if any(keyword in name_lower for keyword in keywords):
             return category
+    
+    # Check for laptop/computer (map to other for now)
+    laptop_kw = ["laptop", "notebook", "macbook", "computer", "desktop", "pc"]
+    if any(kw in name_lower for kw in laptop_kw):
+        return "other"
     
     return "other"
 

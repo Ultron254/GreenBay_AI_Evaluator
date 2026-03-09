@@ -2,13 +2,14 @@
 Chat router for the GreenBay AI Evaluator web app.
 
 Endpoints:
-  POST /tradein/chat    — Conversational AI (text + optional images)
-  POST /tradein/upload  — Photo upload with validation
+  POST /tradein/chat    - Conversational AI (text + optional images)
+  POST /tradein/upload  - Photo upload with validation
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from datetime import datetime
 from typing import Any
@@ -48,23 +49,79 @@ class UploadResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# In-memory session store (swap with Redis in production)
+# Session store: Redis with in-memory fallback
 # ---------------------------------------------------------------------------
-_sessions: dict[str, dict] = {}
+_SESSION_TTL = 86400  # 24 hours
+_redis_client = None
+_redis_warned = False
+_memory_sessions: dict[str, dict] = {}  # fallback
+
+
+def _get_redis():
+    """Get or create Redis client. Returns None if unavailable."""
+    global _redis_client, _redis_warned
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        import redis
+        settings = get_settings()
+        _redis_client = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            db=settings.redis_db,
+            password=settings.redis_password,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+        _redis_client.ping()
+        logger.info(f"Chat sessions using Redis at {settings.redis_host}:{settings.redis_port}")
+        return _redis_client
+    except Exception as e:
+        if not _redis_warned:
+            logger.warning(f"Redis unavailable ({e}), using in-memory sessions")
+            _redis_warned = True
+        _redis_client = None
+        return None
 
 
 def _get_or_create_session(session_id: str | None) -> tuple[str, dict]:
-    if session_id and session_id in _sessions:
-        return session_id, _sessions[session_id]
+    r = _get_redis()
+    if r:
+        # Redis path
+        if session_id:
+            data = r.get(f"chat_session:{session_id}")
+            if data:
+                return session_id, json.loads(data)
 
-    sid = session_id or f"web_{uuid.uuid4().hex[:12]}"
-    _sessions[sid] = {
-        "created_at": datetime.utcnow().isoformat(),
-        "channel": "web",
-        "history": [],
-        "context": {},
-    }
-    return sid, _sessions[sid]
+        sid = session_id or f"web_{uuid.uuid4().hex[:12]}"
+        session = {
+            "created_at": datetime.utcnow().isoformat(),
+            "channel": "web",
+            "history": [],
+            "context": {},
+        }
+        r.setex(f"chat_session:{sid}", _SESSION_TTL, json.dumps(session))
+        return sid, session
+    else:
+        # In-memory fallback
+        if session_id and session_id in _memory_sessions:
+            return session_id, _memory_sessions[session_id]
+
+        sid = session_id or f"web_{uuid.uuid4().hex[:12]}"
+        _memory_sessions[sid] = {
+            "created_at": datetime.utcnow().isoformat(),
+            "channel": "web",
+            "history": [],
+            "context": {},
+        }
+        return sid, _memory_sessions[sid]
+
+
+def _save_session(session_id: str, session: dict):
+    """Persist session back to Redis (no-op for in-memory)."""
+    r = _get_redis()
+    if r:
+        r.setex(f"chat_session:{session_id}", _SESSION_TTL, json.dumps(session))
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +176,9 @@ async def chat_endpoint(req: ChatRequest):
         "timestamp": datetime.utcnow().isoformat(),
     })
 
+    # Persist session to Redis
+    _save_session(sid, session)
+
     return ChatResponse(
         session_id=sid,
         reply=reply,
@@ -132,46 +192,115 @@ def _build_reply(
     context: dict[str, Any],
     analysis: dict[str, Any] | None,
 ) -> str:
-    """Build a contextual reply based on the current conversation state."""
+    """Build a contextual reply using Claude LLM, with rule-based fallback."""
+    settings = get_settings()
+
+    # Try LLM-powered reply if API key is available
+    if settings.anthropic_api_key:
+        try:
+            return _llm_reply(message, context, analysis, settings)
+        except Exception as e:
+            logger.warning(f"LLM reply failed, using fallback: {e}")
+
+    # Fallback: rule-based replies
+    return _rule_based_reply(message, context, analysis)
+
+
+def _llm_reply(
+    message: str,
+    context: dict[str, Any],
+    analysis: dict[str, Any] | None,
+    settings,
+) -> str:
+    """Generate a reply using Claude."""
+    try:
+        import anthropic
+    except ImportError:
+        return _rule_based_reply(message, context, analysis)
+
+    system_prompt = """You are Kay, the GreenBay Market AI evaluator assistant.
+You help sellers in Kenya get the best price for their used appliances and electronics.
+
+Key rules:
+- Be warm, friendly, and professional (like a Kenyan market expert)
+- Keep responses SHORT (2-3 sentences max)
+- Reference the wizard steps on the left panel when guiding the user
+- Never make up prices or valuations, only the engine does that
+- If the user asks about pricing, tell them to complete all steps for an accurate offer
+- Never use markdown formatting (no **, no ##, no bullet points)
+- Use Kenyan English naturally
+- Do NOT reveal internal scores, grades, or technical details
+- Currency is always KES (Kenya Shillings)"""
+
+    # Build context summary
+    ctx_parts = []
+    if context.get("category"):
+        ctx_parts.append(f"Category: {context['category'].replace('_', ' ').title()}")
+    if context.get("brand"):
+        ctx_parts.append(f"Brand: {context['brand']}")
+    if context.get("model"):
+        ctx_parts.append(f"Model: {context['model']}")
+    if context.get("condition"):
+        ctx_parts.append(f"Condition: {context['condition']}")
+    if context.get("age") is not None:
+        ctx_parts.append(f"Age: {context['age']} years")
+
+    user_content = message
+    if ctx_parts:
+        user_content += f"\n\n[Wizard context: {', '.join(ctx_parts)}]"
+    if analysis:
+        user_content += f"\n\n[Vision analysis: grade={analysis.get('condition_grade')}, score={analysis.get('condition_score')}, defects={len(analysis.get('defects', []))}]"
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    response = client.messages.create(
+        model=settings.anthropic_fallback_model,  # Use Sonnet for speed
+        max_tokens=200,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+
+    reply = response.content[0].text.strip()
+    # Clean up any markdown that slipped through
+    reply = reply.replace("**", "").replace("##", "").replace("- ", "")
+    return reply
+
+
+def _rule_based_reply(
+    message: str,
+    context: dict[str, Any],
+    analysis: dict[str, Any] | None,
+) -> str:
+    """Fallback rule-based reply when LLM is unavailable."""
     msg_lower = message.lower().strip()
 
-    # Greeting
     greetings = ["hi", "hello", "hey", "habari", "sasa", "mambo", "niaje"]
     if any(msg_lower.startswith(g) for g in greetings):
         return (
-            "Hey! 👋 I'm Kay, your GreenBay evaluator. "
+            "Hey! I'm Kay, your GreenBay evaluator. "
             "I'll help you get the best price for your appliance. "
             "What kind of appliance are you selling?"
         )
 
-    # If vision analysis was done
     if analysis:
         brand = analysis.get("brand_detected") or context.get("brand", "your appliance")
         grade = analysis.get("condition_grade", "B")
         score = analysis.get("condition_score", 65)
         defect_count = len(analysis.get("defects", []))
-        safety = analysis.get("safety_concerns", [])
 
-        parts = [f"I've analyzed your photos of the **{brand}**!"]
-        parts.append(f"📊 Condition: Grade **{grade}** (score: {score}/100)")
-
+        parts = [f"I've analyzed your photos of the {brand}!"]
+        parts.append(f"Condition: Grade {grade} (score: {score}/100)")
         if defect_count > 0:
-            parts.append(f"🔍 I found {defect_count} defect{'s' if defect_count != 1 else ''}")
-
-        if safety:
-            parts.append("⚠️ **Safety note:** " + safety[0].get("issue", "Please check for safety issues"))
-
+            parts.append(f"I found {defect_count} defect{'s' if defect_count != 1 else ''}")
         parts.append("Shall I proceed with the valuation?")
-        return "\n\n".join(parts)
+        return " ".join(parts)
 
-    # Generic acknowledgement
     if context.get("category"):
         cat = context["category"].replace("_", " ").title()
-        return f"Got it! A {cat}. Let me know the brand and I'll start looking up market prices. 🔍"
+        return f"Got it! A {cat}. Let me know the brand and I'll start looking up market prices."
 
     return (
         "Thanks for sharing! Please continue filling in the form "
-        "— I'll have your valuation ready once we have all the details. 😊"
+        "and I'll have your valuation ready once we have all the details."
     )
 
 

@@ -45,6 +45,7 @@ from greenbay_ai_evaluator.models.evaluator_models import (
 from greenbay_ai_evaluator.services.comparables_service import get_comparables
 from greenbay_ai_evaluator.services.image_quality_service import score_images
 from greenbay_ai_evaluator.services.risk_service import assess_risk
+from greenbay_ai_evaluator.services.vision_service import analyze_images
 
 evaluator_router = APIRouter()
 
@@ -127,6 +128,26 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             db_session=db,
         )
 
+        # 3b. Run vision analysis if photos were submitted
+        vision_result = None
+        if req.image_data:
+            try:
+                import asyncio
+                from app.config import get_settings
+                settings = get_settings()
+                vision_result = asyncio.get_event_loop().run_until_complete(
+                    analyze_images(
+                        images_base64=req.image_data[:8],
+                        category=req.category,
+                        brand_hint=req.brand,
+                        model_hint=req.model,
+                        api_key=settings.anthropic_api_key,
+                    )
+                )
+                logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
+            except Exception as ve:
+                logger.warning(f"Vision analysis skipped: {ve}")
+
         # 4. Score images
         iq_result = score_images(image_urls=req.image_urls)
 
@@ -135,6 +156,22 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             category=req.category,
             image_urls=req.image_urls,
         )
+
+        # 5b. Merge vision results into scoring if available
+        if vision_result:
+            # Use vision condition score if higher confidence
+            vision_cond = vision_result.get("condition_score")
+            if vision_cond is not None:
+                # Blend: 60% vision, 40% seller-reported
+                req.condition_score = vision_cond * 0.6 + req.condition_score * 0.4
+            # Add vision-detected defects
+            for defect in vision_result.get("defects", []):
+                defects_dicts = [d.model_dump() for d in req.defects]
+                defects_dicts.append(defect)
+            # Use vision photo quality if available
+            viq = vision_result.get("photo_quality_score")
+            if viq is not None:
+                iq_result.score = viq
 
         # 6. Run deterministic offer engine
         defects_dicts = [d.model_dump() for d in req.defects]

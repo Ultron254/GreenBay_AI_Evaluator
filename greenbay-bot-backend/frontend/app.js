@@ -699,8 +699,8 @@ async function callEvaluationAPI() {
     // Estimate retail price based on category (fallback)
     const defaultRetail = {
         refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
-        cooker_oven: 40000, microwave: 15000, air_conditioner: 50000,
-        water_dispenser: 20000, other: 30000,
+        cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
+        smartphone: 25000, other: 30000,
     };
 
     const payload = {
@@ -712,7 +712,8 @@ async function callEvaluationAPI() {
         condition_score: conditionScores[a.condition] || 60,
         defects: defects,
         seller_asking_price: a.price || null,
-        image_urls: [], // photos are analyzed client-side in this version
+        image_urls: [],
+        image_data: a.photos.slice(0, 8).map(p => p.dataUrl), // Send base64 photos for vision analysis
         retail_price: defaultRetail[a.category] || 35000,
         retail_price_source: 'category_default',
     };
@@ -752,8 +753,8 @@ function generateDemoResults(answers) {
     // Deterministic demo calculation when backend is unavailable
     const retailPrices = {
         refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
-        cooker_oven: 40000, microwave: 15000, air_conditioner: 50000,
-        water_dispenser: 20000, other: 30000,
+        cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
+        smartphone: 25000, other: 30000,
     };
     const condMult = { A: 1.0, B: 0.85, C: 0.65, D: 0.45 };
     const brandPrem = { Samsung: 1.10, LG: 1.05, Sony: 1.08, Bosch: 1.12 };

@@ -11,6 +11,15 @@ from contextlib import asynccontextmanager
 import uvicorn
 from loguru import logger
 
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    HAS_SLOWAPI = True
+except ImportError:
+    HAS_SLOWAPI = False
+    logger.warning("slowapi not installed, rate limiting disabled")
+
 from app.config import get_settings
 from app.database.db import init_db
 from app.webhooks.whatsapp import whatsapp_router
@@ -72,13 +81,33 @@ def create_app() -> FastAPI:
     )
     
     # CORS middleware
+    allowed_origins = [
+        "http://localhost:9100",
+        "http://127.0.0.1:9100",
+        "https://greenbay.market",
+        "https://www.greenbay.market",
+    ]
+    # Allow custom origins from environment
+    extra = os.environ.get("CORS_ORIGINS", "")
+    if extra:
+        allowed_origins.extend([o.strip() for o in extra.split(",") if o.strip()])
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure appropriately for production
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Rate limiting middleware
+    if HAS_SLOWAPI:
+        limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        logger.info("Rate limiting enabled: 60 requests/minute per IP")
+    else:
+        logger.warning("Rate limiting disabled (install slowapi to enable)")
     
     # Include routers
     app.include_router(whatsapp_router, tags=["WhatsApp"])

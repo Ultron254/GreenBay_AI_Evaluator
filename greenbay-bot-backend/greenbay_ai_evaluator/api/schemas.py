@@ -27,6 +27,7 @@ class EvaluateRequest(BaseModel):
     defects: list[DefectItem] = Field(default_factory=list)
     seller_asking_price: float | None = Field(None, ge=0, description="What the seller wants (KES)")
     image_urls: list[str] = Field(default_factory=list)
+    image_data: list[str] = Field(default_factory=list, description="Base64-encoded photo data from frontend")
     retail_price: float = Field(..., gt=0, description="Original retail price KES")
     retail_price_source: str = Field("", description="Where retail price came from")
 
