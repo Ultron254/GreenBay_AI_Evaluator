@@ -33,25 +33,79 @@ const state = {
     chatHistory: [],
 };
 
-// Restore from localStorage
+// Restore from localStorage — auto-reset if previous evaluation was complete
 try {
     const saved = localStorage.getItem('gb_eval_state');
     if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.currentStep) {
-            Object.assign(state, parsed);
-            // Photos can't survive localStorage (blobs), so reset
-            state.answers.photos = [];
-            state.answers.modelPhoto = null;
+            // If the previous session was completed, start fresh
+            if (parsed.currentStep > TOTAL_STEPS) {
+                localStorage.removeItem('gb_eval_state');
+            } else {
+                Object.assign(state, parsed);
+                // Photos can't survive localStorage (blobs), so reset
+                state.answers.photos = [];
+                state.answers.modelPhoto = null;
+            }
         }
     }
 } catch (_) { /* ignore */ }
 
 function saveState() {
     try {
+        // Don't persist completed evaluations — they'll reset on reload
+        if (state.currentStep > TOTAL_STEPS) return;
         const toSave = { ...state, answers: { ...state.answers, photos: [], modelPhoto: null } };
         localStorage.setItem('gb_eval_state', JSON.stringify(toSave));
     } catch (_) { /* ignore */ }
+}
+
+function resetWizard() {
+    // Clear all state
+    state.currentStep = 1;
+    state.sessionId = null;
+    state.answers = {
+        category: null, brand: null, model: '', modelPhoto: null,
+        age: null, condition: null, conditionGrade: null,
+        ownership: null, issues: '', otherDescription: '',
+        photos: [], price: null,
+    };
+    state.evaluation = null;
+    state.negotiation = { round: 0, offers: [], counters: [], status: 'idle' };
+    state.chatHistory = [];
+
+    // Clear localStorage
+    localStorage.removeItem('gb_eval_state');
+
+    // Reset UI: clear selections, photos, inputs
+    document.querySelectorAll('.option-card.selected').forEach(
+        el => el.classList.remove('selected')
+    );
+    document.querySelectorAll('.wizard-step input, .wizard-step textarea').forEach(
+        el => { el.value = ''; }
+    );
+    const gallery = document.getElementById('photoGallery');
+    if (gallery) gallery.innerHTML = '';
+    const modelPreview = document.getElementById('modelPhotoPreview');
+    if (modelPreview) modelPreview.innerHTML = '';
+
+    // Reset result panels
+    const resultPanel = document.getElementById('resultPanel');
+    if (resultPanel) resultPanel.classList.add('hidden');
+    const negotiationPanel = document.getElementById('negotiationPanel');
+    if (negotiationPanel) negotiationPanel.classList.add('hidden');
+
+    // Show next button again
+    const nextBtn = document.getElementById('nextBtn');
+    if (nextBtn) {
+        nextBtn.classList.remove('hidden');
+        nextBtn.textContent = 'Next ';
+        nextBtn.classList.remove('btn-lg');
+    }
+
+    // Navigate to step 1
+    goToStep(1);
 }
 
 /* ============================================================
@@ -836,6 +890,13 @@ function showResults(data) {
  </div>
  <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}%20valued%20at%20KES%20${offer}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
+ </div>
+
+ <div style="text-align:center; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+ <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
+ <i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
+ Evaluate Another Appliance
+ </button>
  </div>
  `;
 
