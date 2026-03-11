@@ -138,6 +138,16 @@ def create_app() -> FastAPI:
         logger.info(f"Frontend mounted at /app from {frontend_dir}")
     else:
         logger.warning(f"Frontend directory not found: {frontend_dir}")
+
+    # No-cache middleware for frontend files
+    @app.middleware("http")
+    async def no_cache_frontend(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/app/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
     
     @app.get("/")
     async def root():

@@ -13,8 +13,11 @@
         href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260311">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
 </head>
 
 <body>
@@ -901,7 +904,19 @@
         </div>
     </footer>
 
-    <script src="app.js"></script>
+    <!-- Clear stale evaluation state BEFORE app.js loads -->
+    <script>
+        try {
+            var s = localStorage.getItem('gb_eval_state');
+            if (s) {
+                var p = JSON.parse(s);
+                if (p && p.currentStep && p.currentStep > 10) {
+                    localStorage.removeItem('gb_eval_state');
+                }
+            }
+        } catch(e) { localStorage.removeItem('gb_eval_state'); }
+    </script>
+    <script src="app.js?v=20260311"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
