@@ -42,8 +42,10 @@ ENV SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/sentence-transformers
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')" || echo "Model download failed, will try at runtime"
 
 # Fix permissions after model download
+# chmod 777 on logs/temp_images/receipts so docker volume mounts work with non-root user
 RUN chown -R appuser:appuser /app /home/appuser && \
-    chmod -R 755 /home/appuser
+    chmod -R 755 /home/appuser && \
+    chmod -R 777 /app/logs /app/temp_images /app/receipts
 
 # Switch to non-root user
 USER appuser
@@ -51,8 +53,8 @@ USER appuser
 # Expose port
 EXPOSE 9100
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Health check — start-period=180s allows time for model loading
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
     CMD curl -f http://localhost:9100/health || exit 1
 
 # Run the application
