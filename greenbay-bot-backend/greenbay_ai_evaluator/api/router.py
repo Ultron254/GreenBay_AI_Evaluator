@@ -133,17 +133,27 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         if req.image_data:
             try:
                 import asyncio
+                import concurrent.futures
                 from app.config import get_settings
                 settings = get_settings()
-                vision_result = asyncio.get_event_loop().run_until_complete(
-                    analyze_images(
-                        images_base64=req.image_data[:8],
-                        category=req.category,
-                        brand_hint=req.brand,
-                        model_hint=req.model,
-                        api_key=settings.anthropic_api_key,
-                    )
-                )
+
+                def _run_vision():
+                    loop = asyncio.new_event_loop()
+                    try:
+                        return loop.run_until_complete(
+                            analyze_images(
+                                images_base64=req.image_data[:8],
+                                category=req.category,
+                                brand_hint=req.brand,
+                                model_hint=req.model,
+                                api_key=settings.anthropic_api_key,
+                            )
+                        )
+                    finally:
+                        loop.close()
+
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    vision_result = pool.submit(_run_vision).result(timeout=120)
                 logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
             except Exception as ve:
                 logger.warning(f"Vision analysis skipped: {ve}")
@@ -166,16 +176,18 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             db_session=db,
         )
 
-        # 5b. Merge vision results into scoring if available
+        # 5b. Build defects list from request
+        defects_dicts = [d.model_dump() for d in req.defects]
+
+        # 5c. Merge vision results into scoring if available
         if vision_result:
             # Use vision condition score if higher confidence
             vision_cond = vision_result.get("condition_score")
             if vision_cond is not None:
                 # Blend: 60% vision, 40% seller-reported
                 req.condition_score = vision_cond * 0.6 + req.condition_score * 0.4
-            # Add vision-detected defects
+            # Add vision-detected defects to the list
             for defect in vision_result.get("defects", []):
-                defects_dicts = [d.model_dump() for d in req.defects]
                 defects_dicts.append(defect)
             # Use vision photo quality if available
             viq = vision_result.get("photo_quality_score")
@@ -183,7 +195,6 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 iq_result.score = viq
 
         # 6. Run deterministic offer engine
-        defects_dicts = [d.model_dump() for d in req.defects]
         result = compute_valuation(
             category=req.category,
             brand=req.brand,

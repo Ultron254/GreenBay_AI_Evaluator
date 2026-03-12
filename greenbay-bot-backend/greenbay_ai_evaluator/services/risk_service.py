@@ -17,7 +17,7 @@ Scoring (0-100, higher = riskier):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 
@@ -166,7 +166,7 @@ def _check_duplicates(
     try:
         from app.database.models import TradeInSession
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Check sessions in the last 7 days from same phone
         week_ago = now - timedelta(days=7)

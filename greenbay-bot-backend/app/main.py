@@ -66,9 +66,20 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized successfully")
     
-    # Start background payment polling service
-    polling_task = asyncio.create_task(payment_polling_service.start_polling_loop())
-    logger.info("Payment polling service started")
+    # Start background payment polling service with auto-restart
+    async def _resilient_polling():
+        """Wrapper that restarts the polling loop if it crashes."""
+        while True:
+            try:
+                await payment_polling_service.start_polling_loop()
+            except asyncio.CancelledError:
+                raise  # propagate cancellation
+            except Exception as e:
+                logger.error(f"Payment polling crashed, restarting in 5s: {e}")
+                await asyncio.sleep(5)
+
+    polling_task = asyncio.create_task(_resilient_polling())
+    logger.info("Payment polling service started (with auto-restart)")
     
     yield
     
