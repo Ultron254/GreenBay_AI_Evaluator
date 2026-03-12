@@ -75,3 +75,12 @@ pytz
 python-decouple
 
 schedule
+
+# Rate Limiting
+slowapi
+
+# Anthropic (Claude AI)
+anthropic
+
+# Image Quality Analysis (OpenCV)
+opencv-python-headless

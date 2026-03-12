@@ -92,8 +92,8 @@ services:
     image: qdrant/qdrant:latest
     container_name: greenbay-qdrant
     ports:
-      - "9400:6333"
-      - "9401:6334"
+      - "9400:9400"
+      - "9401:9401"
     volumes:
       - ./qdrant_data:/qdrant/storage
     environment:
