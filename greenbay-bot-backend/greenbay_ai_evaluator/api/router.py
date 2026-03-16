@@ -23,7 +23,11 @@ from greenbay_ai_evaluator.api.schemas import (
     DecisionLedgerOut,
     EvaluateRequest,
     EvaluateResponse,
+    InventoryStatsOut,
     NegotiationRoundOut,
+    PickupNotifyRequest,
+    PickupNotifyResponse,
+    RelatedProductOut,
     SessionDetailResponse,
 )
 from greenbay_ai_evaluator.config import CONDITION_GRADE_MAP
@@ -46,6 +50,8 @@ from greenbay_ai_evaluator.services.comparables_service import get_comparables
 from greenbay_ai_evaluator.services.image_quality_service import score_images
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
+
+from app.database.models import PickupRequest, ShopifyProduct
 
 evaluator_router = APIRouter()
 
@@ -194,6 +200,23 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             if viq is not None:
                 iq_result.score = viq
 
+        # 6a. Quality rejection pre-screening
+        HARD_REJECT_KEYWORDS = {
+            "rust", "rusted", "corrosion", "heavy_dent", "major_crack",
+            "missing_part", "broken", "shattered", "severe_damage",
+        }
+        defect_types = {d.get("type", "").lower() for d in defects_dicts}
+        defect_descs = " ".join(d.get("description", "").lower() for d in defects_dicts)
+
+        is_hard_reject = bool(defect_types & HARD_REJECT_KEYWORDS) or any(
+            kw in defect_descs for kw in ["rust", "rusted", "heavy dent", "major crack"]
+        )
+        grade_lower = req.condition_grade.lower().strip()
+        if grade_lower in ("d", "poor", "not working"):
+            is_hard_reject = True
+
+        is_review_flag = req.age_years > 5 or grade_lower in ("partially working",)
+
         # 6. Run deterministic offer engine
         result = compute_valuation(
             category=req.category,
@@ -211,6 +234,30 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             retail_price=req.retail_price,
         )
 
+        # Override decision based on rejection pre-screening
+        if is_hard_reject:
+            reject_reasons = []
+            if defect_types & HARD_REJECT_KEYWORDS:
+                reject_reasons.append(f"Detected issues: {', '.join(defect_types & HARD_REJECT_KEYWORDS)}")
+            if grade_lower in ("d", "poor", "not working"):
+                reject_reasons.append(f"Condition grade too low: {req.condition_grade}")
+            result = result._replace(
+                decision="reject",
+                decision_reason="Product does not meet minimum quality standards. " + "; ".join(reject_reasons),
+            )
+            logger.info(f"Hard reject: {reject_reasons}")
+        elif is_review_flag and result.decision not in ("reject",):
+            review_reasons = []
+            if req.age_years > 5:
+                review_reasons.append(f"Product age ({req.age_years:.0f} years) exceeds 5-year threshold")
+            if grade_lower in ("partially working",):
+                review_reasons.append("Product is only partially working")
+            result = result._replace(
+                decision="review",
+                decision_reason="Manual review required. " + "; ".join(review_reasons),
+            )
+            logger.info(f"Flagged for review: {review_reasons}")
+
         # 7. Persist valuation session
         vs = ValuationSession(
             trade_in_session_id=req.trade_in_session_id,
@@ -222,6 +269,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             condition_score=req.condition_score,
             defects=defects_dicts,
             seller_asking_price=req.seller_asking_price,
+            seller_name=req.seller_name,
+            seller_phone=req.seller_phone,
             image_quality_score=iq_result.score,
             risk_score=risk_result.score,
             retail_price=req.retail_price,
@@ -582,3 +631,202 @@ def model_lookup(req: ModelLookupRequest):
             model_number=req.typed_model or None,
             specs_summary=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# POST /notify-pickup
+# ---------------------------------------------------------------------------
+NEWTON_PHONE = "254715284353"  # Newton's WhatsApp number
+
+
+@evaluator_router.post("/notify-pickup", response_model=PickupNotifyResponse)
+def notify_pickup(req: PickupNotifyRequest, db: Session = Depends(get_db)):
+    """Save a pickup request and return a WhatsApp deep-link to notify Newton."""
+    try:
+        pickup = PickupRequest(
+            valuation_session_id=req.valuation_session_id,
+            seller_name=req.seller_name,
+            seller_phone=req.seller_phone,
+            appliance_description=req.appliance_description,
+            condition_grade=req.condition_grade,
+            agreed_price=req.agreed_price,
+            pickup_address=req.pickup_address,
+            preferred_day=req.preferred_day,
+            photo_count=req.photo_count,
+            status="pending",
+        )
+        db.add(pickup)
+        db.commit()
+        db.refresh(pickup)
+
+        # Build WhatsApp deep-link message
+        price_str = f"KES {req.agreed_price:,.0f}" if req.agreed_price else "TBD"
+        msg = (
+            f"🟢 *NEW PICKUP REQUEST #{pickup.id}*\n\n"
+            f"📦 *Item:* {req.appliance_description}\n"
+            f"👤 *Seller:* {req.seller_name}\n"
+            f"📞 *Phone:* {req.seller_phone}\n"
+            f"💰 *Agreed Price:* {price_str}\n"
+            f"📍 *Address:* {req.pickup_address}\n"
+            f"📅 *Preferred Day:* {req.preferred_day or 'Any'}\n"
+            f"📸 *Photos:* {req.photo_count}\n"
+            f"⭐ *Condition:* {req.condition_grade or 'N/A'}"
+        )
+        import urllib.parse
+        wa_link = f"https://wa.me/{NEWTON_PHONE}?text={urllib.parse.quote(msg)}"
+
+        logger.info(f"Pickup request #{pickup.id} created for {req.seller_name}")
+
+        return PickupNotifyResponse(
+            id=pickup.id,
+            status="pending",
+            whatsapp_link=wa_link,
+            message="Pickup request saved. Newton has been notified.",
+        )
+    except Exception as e:
+        logger.error(f"Pickup notification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# GET /pickup-requests
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/pickup-requests")
+def list_pickup_requests(status: str = "pending", db: Session = Depends(get_db)):
+    """List pickup requests, filtered by status."""
+    q = db.query(PickupRequest)
+    if status != "all":
+        q = q.filter(PickupRequest.status == status)
+    pickups = q.order_by(PickupRequest.created_at.desc()).all()
+    return [
+        {
+            "id": p.id,
+            "seller_name": p.seller_name,
+            "seller_phone": p.seller_phone,
+            "appliance": p.appliance_description,
+            "agreed_price": p.agreed_price,
+            "pickup_address": p.pickup_address,
+            "preferred_day": p.preferred_day,
+            "status": p.status,
+            "created_at": str(p.created_at) if p.created_at else None,
+        }
+        for p in pickups
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /related-products
+# ---------------------------------------------------------------------------
+_CATEGORY_MAP = {
+    "refrigerator": ["REFRIGERATORS"],
+    "fridge": ["REFRIGERATORS"],
+    "washing_machine": ["Washing Machine"],
+    "washer": ["Washing Machine"],
+    "tv": ["TV & Home Entertainment"],
+    "television": ["TV & Home Entertainment"],
+    "cooker": ["COOKERS"],
+    "stove": ["COOKERS"],
+    "microwave": ["MICROWAVE"],
+    "freezer": ["FREEZER"],
+    "chiller": ["CHILLERS"],
+    "laptop": ["Computers & Laptops"],
+    "computer": ["Computers & Laptops"],
+}
+
+
+@evaluator_router.get("/related-products", response_model=list[RelatedProductOut])
+def get_related_products(
+    category: str = "",
+    limit: int = 6,
+    db: Session = Depends(get_db),
+):
+    """Return related products from our Shopify inventory."""
+    results: list[RelatedProductOut] = []
+
+    # Map evaluator category to Shopify product_type
+    shopify_types = _CATEGORY_MAP.get(category.lower().strip(), [])
+
+    # Same-category products first
+    if shopify_types:
+        same_cat = (
+            db.query(ShopifyProduct)
+            .filter(
+                ShopifyProduct.is_active.is_(True),
+                ShopifyProduct.available.is_(True),
+                ShopifyProduct.product_type.in_(shopify_types),
+            )
+            .order_by(ShopifyProduct.price.asc())
+            .limit(limit)
+            .all()
+        )
+        for p in same_cat:
+            results.append(RelatedProductOut(
+                title=p.title,
+                price=p.price,
+                compare_at_price=p.compare_at_price,
+                image_url=p.image_url,
+                product_url=p.product_url,
+                product_type=p.product_type,
+                available=p.available,
+            ))
+
+    # Fill remaining with popular items from other categories
+    remaining = limit - len(results)
+    if remaining > 0:
+        existing_ids = {r.title for r in results}
+        other = (
+            db.query(ShopifyProduct)
+            .filter(
+                ShopifyProduct.is_active.is_(True),
+                ShopifyProduct.available.is_(True),
+            )
+            .order_by(ShopifyProduct.price.asc())
+            .limit(remaining + len(results))  # fetch extra to skip dupes
+            .all()
+        )
+        for p in other:
+            if p.title not in existing_ids and len(results) < limit:
+                results.append(RelatedProductOut(
+                    title=p.title,
+                    price=p.price,
+                    compare_at_price=p.compare_at_price,
+                    image_url=p.image_url,
+                    product_url=p.product_url,
+                    product_type=p.product_type,
+                    available=p.available,
+                ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# GET /inventory-stats
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/inventory-stats", response_model=InventoryStatsOut)
+def get_inventory_stats(db: Session = Depends(get_db)):
+    """Return summary of Shopify inventory in our DB."""
+    from sqlalchemy import func as sqla_func
+
+    total = db.query(ShopifyProduct).filter(ShopifyProduct.is_active.is_(True)).count()
+
+    # Count by category
+    cats = (
+        db.query(ShopifyProduct.product_type, sqla_func.count())
+        .filter(ShopifyProduct.is_active.is_(True))
+        .group_by(ShopifyProduct.product_type)
+        .all()
+    )
+    by_category = {cat or "Unknown": cnt for cat, cnt in cats}
+
+    # Last scrape time
+    latest = (
+        db.query(sqla_func.max(ShopifyProduct.last_seen_at))
+        .filter(ShopifyProduct.is_active.is_(True))
+        .scalar()
+    )
+
+    return InventoryStatsOut(
+        total_active=total,
+        by_category=by_category,
+        last_scrape=str(latest) if latest else None,
+    )

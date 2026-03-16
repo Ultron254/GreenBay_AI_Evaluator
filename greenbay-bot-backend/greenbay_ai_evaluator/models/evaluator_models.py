@@ -99,6 +99,8 @@ class ValuationSession(Base):
     defects = Column(JSON, nullable=True)
 
     # Seller
+    seller_name = Column(String(100), nullable=True)
+    seller_phone = Column(String(20), nullable=True)
     seller_asking_price = Column(Float, nullable=True)
 
     # Service scores

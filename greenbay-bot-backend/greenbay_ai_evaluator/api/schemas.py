@@ -26,6 +26,8 @@ class EvaluateRequest(BaseModel):
     condition_score: float = Field(..., ge=0, le=100, description="Numeric condition 0-100")
     defects: list[DefectItem] = Field(default_factory=list)
     seller_asking_price: float | None = Field(None, ge=0, description="What the seller wants (KES)")
+    seller_name: str | None = Field(None, description="Seller's full name")
+    seller_phone: str | None = Field(None, description="Seller's phone number")
     image_urls: list[str] = Field(default_factory=list)
     image_data: list[str] = Field(default_factory=list, description="Base64-encoded photo data from frontend")
     retail_price: float = Field(..., gt=0, description="Original retail price KES")
@@ -109,3 +111,47 @@ class SessionDetailResponse(BaseModel):
     created_at: str | None
     negotiation_rounds: list[NegotiationRoundOut]
     decision_ledger: list[DecisionLedgerOut]
+
+
+# ---------------------------------------------------------------------------
+# POST /tradein/notify-pickup
+# ---------------------------------------------------------------------------
+class PickupNotifyRequest(BaseModel):
+    valuation_session_id: str | None = Field(None, description="FK to valuation session")
+    seller_name: str = Field(..., description="Seller's full name")
+    seller_phone: str = Field(..., description="Seller's phone number")
+    appliance_description: str = Field("", description="E.g. Hisense 124L Fridge")
+    condition_grade: str | None = Field(None)
+    agreed_price: float | None = Field(None, ge=0)
+    pickup_address: str = Field(..., description="Full pickup address")
+    preferred_day: str | None = Field(None, description="E.g. Monday, Tomorrow")
+    photo_count: int = Field(0, ge=0)
+
+
+class PickupNotifyResponse(BaseModel):
+    id: int
+    status: str
+    whatsapp_link: str
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# GET /tradein/related-products
+# ---------------------------------------------------------------------------
+class RelatedProductOut(BaseModel):
+    title: str
+    price: float | None
+    compare_at_price: float | None
+    image_url: str | None
+    product_url: str | None
+    product_type: str | None
+    available: bool
+
+
+# ---------------------------------------------------------------------------
+# GET /tradein/inventory-stats
+# ---------------------------------------------------------------------------
+class InventoryStatsOut(BaseModel):
+    total_active: int
+    by_category: dict[str, int]
+    last_scrape: str | None

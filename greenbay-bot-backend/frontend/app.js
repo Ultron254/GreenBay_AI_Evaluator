@@ -9,7 +9,7 @@
  STATE
  ============================================================ */
 const API_BASE = window.location.origin;
-const TOTAL_STEPS = 10;
+const TOTAL_STEPS = 11;
 
 const state = {
     currentStep: 1,
@@ -25,6 +25,8 @@ const state = {
         ownership: null,
         issues: '',
         otherDescription: '',
+        sellerName: '',
+        sellerPhone: '',
         photos: [], // { file, dataUrl, id }
         price: null,
     },
@@ -69,6 +71,7 @@ function resetWizard() {
         category: null, brand: null, model: '', modelPhoto: null,
         age: null, condition: null, conditionGrade: null,
         ownership: null, issues: '', otherDescription: '',
+        sellerName: '', sellerPhone: '',
         photos: [], price: null,
     };
     state.evaluation = null;
@@ -120,8 +123,9 @@ const STEP_LABELS = {
     6: 'Condition',
     7: 'Ownership',
     8: 'Issues & Damage',
-    9: 'Photos',
-    10: 'Your Price',
+    9: 'Your Details',
+    10: 'Photos',
+    11: 'Your Price',
 };
 
 const CATEGORY_NAMES = {
@@ -131,7 +135,6 @@ const CATEGORY_NAMES = {
     cooker_oven: 'Cooker / Oven',
     microwave: 'Microwave',
     small_kitchen: 'Small Kitchen Appliance',
-    smartphone: 'Smartphone',
     other: 'Other Appliance',
 };
 
@@ -231,14 +234,15 @@ function isStepValid(step) {
     switch (step) {
         case 1: return !!state.answers.category;
         case 2: return !!state.answers.brand;
-        case 3: return state.answers.model.trim().length > 0;
-        case 4: return !!state.answers.modelPhoto;
+        case 3: return true; // model is now optional
+        case 4: return true; // model photo is now optional
         case 5: return state.answers.age !== null;
         case 6: return !!state.answers.condition;
         case 7: return !!state.answers.ownership;
         case 8: return true; // issues can be empty
-        case 9: return state.answers.photos.length >= 5;
-        case 10: return true; // price can be null ("make me an offer")
+        case 9: return state.answers.sellerName.trim().length > 0 && state.answers.sellerPhone.trim().length >= 9;
+        case 10: return state.answers.photos.length >= 5;
+        case 11: return true; // price can be null ("make me an offer")
         default: return true;
     }
 }
@@ -456,7 +460,7 @@ function handlePhotoUpload(files) {
                 state.answers.photos.push({ file, dataUrl: compressedDataUrl, id });
                 renderPhotoGrid();
                 updatePhotoCount();
-                document.getElementById('nextBtn').disabled = !isStepValid(9);
+                document.getElementById('nextBtn').disabled = !isStepValid(10);
                 saveState();
 
                 // Chat feedback
@@ -507,7 +511,7 @@ function removePhoto(id) {
     state.answers.photos = state.answers.photos.filter(p => p.id !== id);
     renderPhotoGrid();
     updatePhotoCount();
-    document.getElementById('nextBtn').disabled = !isStepValid(9);
+    document.getElementById('nextBtn').disabled = !isStepValid(10);
     saveState();
 }
 
@@ -616,16 +620,17 @@ function mirrorStepToChat(step) {
     const messages = {
         1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}` : null,
         2: () => a.brand ? `Brand: <strong>${a.brand}</strong>, nice choice!` : null,
-        3: () => a.model ? `Model: <strong>${a.model}</strong>, got it!` : null,
-        4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : null,
+        3: () => a.model ? `Model: <strong>${a.model}</strong>, got it!` : 'Model number skipped',
+        4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : 'Model photo skipped',
         5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
         6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
         7: () => a.ownership ? `Ownership: <strong>${a.ownership.replace(/_/g, ' ')}</strong>` : null,
         8: () => a.issues ? (a.issues === 'No issues'
             ? 'No issues, that\'s great!'
             : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
-        9: () => `${a.photos.length} photos uploaded`,
-        10: () => a.price ? `Your asking price: <strong>KES ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        9: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
+        10: () => `${a.photos.length} photos uploaded`,
+        11: () => a.price ? `Your asking price: <strong>KES ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
     };
 
     const fn = messages[step];
@@ -638,14 +643,15 @@ function mirrorStepToChat(step) {
 function promptNextStep(step) {
     const prompts = {
         2: 'Great choice! Now, what brand is your appliance?',
-        3: 'Next up, the model number. Check the sticker on the back or inside the door!',
-        4: 'Now please upload a clear photo of the model number label. This helps me verify the exact model, look up its release date, retail price, and specifications for a more accurate offer.',
+        3: 'Next up, the model number. This is optional — skip it if you\'re not sure!',
+        4: 'Upload a photo of the model label if you have it. This is optional but helps me look up exact specs!',
         5: 'How old is this product? Younger appliances hold more value!',
         6: 'And what condition is it in? Be honest, it helps me be accurate!',
         7: 'How long have you personally owned it? This helps with provenance.',
         8: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
-        9: 'Now for the important part, photos! I need at least <strong>5 clear photos</strong>. Good lighting makes a big difference!',
-        10: 'Last question, the big one! What price are you hoping for? Or let me make you an offer.',
+        9: 'I need your name and phone number so we can reach you about pickup or drop-off.',
+        10: 'Now for the important part — photos! I need at least <strong>5 clear photos</strong>. Good lighting makes a big difference!',
+        11: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
     };
 
     // Show/hide Other description field based on category
@@ -754,7 +760,7 @@ async function callEvaluationAPI() {
     const defaultRetail = {
         refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
         cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
-        smartphone: 25000, other: 30000,
+        other: 30000,
     };
 
     const payload = {
@@ -808,7 +814,7 @@ function generateDemoResults(answers) {
     const retailPrices = {
         refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
         cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
-        smartphone: 25000, other: 30000,
+        other: 30000,
     };
     const condMult = { A: 1.0, B: 0.85, C: 0.65, D: 0.45 };
     const brandPrem = { Samsung: 1.10, LG: 1.05, Sony: 1.08, Bosch: 1.12 };
@@ -849,14 +855,103 @@ function showResults(data) {
     const a = state.answers;
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const gradeClass = `grade-${(data.condition_grade || 'b').toLowerCase()}`;
+    const confidence = data.confidence_score || 0;
 
-    // Update wizard panel with results
+    // HARD REJECT — product doesn't meet quality standards
+    if (data.decision === 'reject') {
+        const resultsStep = document.getElementById('stepResults');
+        resultsStep.innerHTML = `
+ <div class="offer-card">
+ <div class="offer-card-header" style="background:linear-gradient(135deg,#dc3545,#c82333);">❌ Trade-In Not Eligible</div>
+ <div class="offer-grade grade-d">
+ Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
+ </div>
+ <p style="margin:16px 0;color:var(--muted);font-size:.92rem;">
+ Unfortunately, your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> does not meet our minimum quality standards for trade-in.
+ </p>
+ <div class="offer-breakdown">
+ <div class="offer-breakdown-row">
+ <span class="label">Reason</span>
+ <span class="value" style="color:#dc3545;">${data.decision_reason || 'Below quality threshold'}</span>
+ </div>
+ </div>
+ <div style="background:var(--warm);border-radius:var(--radius-sm);padding:16px;margin:20px 0;">
+ <p style="font-size:.88rem;margin:0;"><strong>💡 What you can do:</strong><br>
+ • Get the item repaired and resubmit<br>
+ • Speak to our team for recycling options<br>
+ • Browse our marketplace for affordable replacements</p>
+ </div>
+ <div style="display:grid;gap:8px;">
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20was%20rejected%20for%20trade-in.%20Can%20you%20help%3F" 
+ target="_blank" class="btn btn-whatsapp" style="width:100%;">
+ <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
+ Speak to Our Team
+ </a>
+ <a href="https://greenbay.market" target="_blank" class="btn btn-primary" style="width:100%;">
+ 🛒 Browse GreenBay Marketplace
+ </a>
+ <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
+ Evaluate Another Appliance
+ </button>
+ </div>
+ </div>
+ `;
+        addChatMessage('bot', `I'm sorry, but your ${a.brand} ${CATEGORY_NAMES[a.category]} doesn't meet our minimum standards for trade-in. ${data.decision_reason || ''} You can speak to our team for other options.`);
+        lucide.createIcons();
+        return;
+    }
+
+    // AUTO-REDIRECT to WhatsApp agent if confidence < 85% OR flagged for review
+    if (confidence < 85 || data.decision === 'review') {
+        const resultsStep = document.getElementById('stepResults');
+        resultsStep.innerHTML = `
+ <div class="offer-card">
+ <div class="offer-card-header">🤝 Connecting You With an Expert</div>
+ <div class="offer-grade ${gradeClass}">
+ Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
+ </div>
+ <div class="offer-amount" style="font-size:1.2rem;color:var(--gold);">Confidence: ${confidence.toFixed(0)}%</div>
+ <p style="margin:16px 0;color:var(--muted);font-size:.92rem;">
+ Our AI's confidence on this valuation is below 85%. For the most accurate offer,
+ we're connecting you with one of our trade-in experts who can assess your
+ <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> personally.
+ </p>
+ <div class="offer-breakdown">
+ <div class="offer-breakdown-row">
+ <span class="label">Preliminary estimate</span>
+ <span class="value">KES ${formatKES(offer)}</span>
+ </div>
+ <div class="offer-breakdown-row">
+ <span class="label">Confidence score</span>
+ <span class="value">${confidence.toFixed(0)}%</span>
+ </div>
+ </div>
+ <div style="margin-top:20px;">
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20for%20trade-in.%20AI%20estimate%3A%20KES%20${offer}%20(${confidence.toFixed(0)}%25%20confidence).%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
+ target="_blank" class="btn btn-whatsapp btn-lg" style="width:100%;">
+ <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
+ Speak to a Trade-In Expert
+ </a>
+ </div>
+ <div style="text-align:center; margin-top:1rem;">
+ <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
+ Evaluate Another Appliance
+ </button>
+ </div>
+ </div>
+ `;
+        addChatMessage('bot', `I'd like an expert to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. The preliminary estimate is KES ${formatKES(offer)}, but our team can give you a more precise valuation. Click the WhatsApp button to connect with them!`);
+        lucide.createIcons();
+        return;
+    }
+
+    // Normal results display (confidence >= 85%)
     const resultsStep = document.getElementById('stepResults');
     resultsStep.innerHTML = `
  <div class="offer-card">
- <div class="offer-card-header"> Your GreenBay Valuation</div>
+ <div class="offer-card-header">✅ Your GreenBay Valuation</div>
  <div class="offer-grade ${gradeClass}">
- Grade ${data.condition_grade} , ${CONDITION_LABELS[a.condition] || a.condition}
+ Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
  </div>
  <div class="offer-amount">KES ${formatKES(offer)}</div>
  <div class="offer-validity">Valid for 7 days</div>
@@ -868,7 +963,7 @@ function showResults(data) {
  </div>
  <div class="offer-breakdown-row">
  <span class="label">Confidence score</span>
- <span class="value">${data.confidence_score?.toFixed(0) || ', '}%</span>
+ <span class="value">${confidence.toFixed(0)}%</span>
  </div>
  <div class="offer-breakdown-row">
  <span class="label">Comparable sales found</span>
@@ -877,18 +972,18 @@ function showResults(data) {
  </div>
  
  <div class="offer-actions">
- <button class="btn btn-accept" onclick="acceptOffer(${offer})"> Accept KES ${formatKES(offer)}</button>
- <button class="btn btn-counter" onclick="showCounterUI()"> Counter</button>
+ <button class="btn btn-accept" onclick="acceptOffer(${offer})">✅ Accept KES ${formatKES(offer)}</button>
+ <button class="btn btn-counter" onclick="showCounterUI()">💬 Counter</button>
  </div>
  </div>
  
  <div class="whatsapp-bridge">
- <div class="whatsapp-bridge-icon"></div>
+ <div class="whatsapp-bridge-icon">💬</div>
  <div class="whatsapp-bridge-text">
  <h4>Prefer WhatsApp?</h4>
  <p>Continue this conversation on WhatsApp for a more personal experience.</p>
  </div>
- <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}%20valued%20at%20KES%20${offer}" 
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20valued%20at%20KES%20${offer}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
 
@@ -1062,17 +1157,13 @@ function handleNegotiationResponse(data) {
 
     if (data.decision === 'accept') {
         neg.status = 'accepted';
-        addChatMessage('bot', `KES ${formatKES(data.system_offer)} works! You've got a deal. <br><br>
- <strong>Next steps:</strong><br>
- Free pickup anywhere in Nairobi<br>
- Payment via M-Pesa , same day<br>
- Our team will call within 24 hours`);
-        showDealClosed(data.system_offer);
+        addChatMessage('bot', `KES ${formatKES(data.system_offer)} works! You've got a deal!`);
+        showPickupDropoffChoice(data.system_offer);
 
     } else if (data.decision === 'decline') {
         neg.status = 'declined';
         addChatMessage('bot', `Unfortunately we can't go above KES ${formatKES(data.system_offer)} for this unit at this time. Our offer stands for 7 days if you change your mind. <br><br>
- Thanks for your time , you're welcome to come back anytime!`);
+ Thanks for your time — you're welcome to come back anytime!`);
         showNoDeal(data.system_offer);
 
     } else {
@@ -1114,40 +1205,52 @@ function updateOfferCard(newOffer, roundsRemaining) {
 
 async function acceptOffer(amount) {
     state.negotiation.status = 'accepted';
-    addChatMessage('user', `I accept KES ${formatKES(amount)} `);
+    addChatMessage('user', `I accept KES ${formatKES(amount)}`);
 
     showTypingIndicator();
     await sleep(1000);
     hideTypingIndicator();
 
-    addChatMessage('bot', `Wonderful! Deal confirmed!<br><br>
- <br>
- <strong>ACQUISITION SUMMARY</strong><br>
- <br><br>
- Appliance: ${state.answers.brand} ${state.answers.model || ''} ${CATEGORY_NAMES[state.answers.category]}<br>
- Condition: Grade ${state.evaluation.condition_grade}<br>
- Agreed Price: <strong>KES ${formatKES(amount)}</strong><br>
- Reference: GB-${state.sessionId || Date.now()}<br><br>
- <strong>What happens next:</strong><br>
- 1. Our team calls you within 24 hours<br>
- 2. We schedule a FREE pickup at your location<br>
- 3. Quick 5-minute verification at pickup<br>
- 4. <strong>Same-day payment via M-Pesa</strong><br><br>
- Thanks for choosing GreenBay! `);
+    addChatMessage('bot', `Wonderful! Deal confirmed at <strong>KES ${formatKES(amount)}</strong>!<br><br>
+ Now, how would you like to proceed?<br><br>
+ 🚚 <strong>Option 1:</strong> We come to you — FREE pickup in Nairobi<br>
+ 🏬 <strong>Option 2:</strong> Drop it off at one of our outlets<br><br>
+ Choose your preferred option below!`);
 
-    showDealClosed(amount);
+    showPickupDropoffChoice(amount);
     saveState();
 }
 
-function showDealClosed(amount) {
+function showPickupDropoffChoice(amount) {
     const a = state.answers;
     const resultsStep = document.getElementById('stepResults');
     resultsStep.innerHTML = `
  <div class="deal-result">
- <div class="result-icon"></div>
- <h3>Deal Confirmed!</h3>
- <p>Your ${a.brand} ${CATEGORY_NAMES[a.category]} has been accepted.</p>
+ <div class="result-icon">🎉</div>
+ <h3>Deal Confirmed — KES ${formatKES(amount)}</h3>
+ <p>Your ${a.brand} ${CATEGORY_NAMES[a.category]} has been accepted. Choose how to proceed:</p>
  
+ <div style="display:grid;gap:16px;margin:24px 0;">
+ <div class="option-card" style="cursor:pointer;padding:20px;text-align:left;" onclick="showPickupForm(${amount})">
+ <div style="display:flex;align-items:center;gap:12px;">
+ <span style="font-size:2rem;">🚚</span>
+ <div>
+ <strong style="display:block;font-size:1.05rem;">Schedule a Pickup</strong>
+ <span style="color:var(--muted);font-size:.85rem;">We'll send someone to collect it at your location — FREE in Nairobi</span>
+ </div>
+ </div>
+ </div>
+ <div class="option-card" style="cursor:pointer;padding:20px;text-align:left;" onclick="showDropoffLocations(${amount})">
+ <div style="display:flex;align-items:center;gap:12px;">
+ <span style="font-size:2rem;">🏬</span>
+ <div>
+ <strong style="display:block;font-size:1.05rem;">Drop Off at Our Outlet</strong>
+ <span style="color:var(--muted);font-size:.85rem;">Bring it to Kasarani or Roysambu — see our inventory too!</span>
+ </div>
+ </div>
+ </div>
+ </div>
+
  <div class="deal-summary">
  <div class="deal-summary-row">
  <span>Appliance</span>
@@ -1156,6 +1259,192 @@ function showDealClosed(amount) {
  <div class="deal-summary-row">
  <span>Condition</span>
  <span>Grade ${state.evaluation.condition_grade}</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Seller</span>
+ <span>${escapeHtml(a.sellerName)} (${escapeHtml(a.sellerPhone)})</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Reference</span>
+ <span>GB-${state.sessionId || Date.now()}</span>
+ </div>
+ <div class="deal-summary-row total">
+ <span>Agreed Price</span>
+ <span>KES ${formatKES(amount)}</span>
+ </div>
+ </div>
+ </div>
+ `;
+}
+
+function showPickupForm(amount) {
+    const a = state.answers;
+    const resultsStep = document.getElementById('stepResults');
+    resultsStep.innerHTML = `
+ <div class="deal-result">
+ <div class="result-icon">🚚</div>
+ <h3>Schedule Your Pickup</h3>
+ <p>Enter your address and we'll arrange a FREE pickup in Nairobi.</p>
+ 
+ <div class="form-group" style="margin:20px 0;">
+ <label class="form-label">Pickup Address / Location</label>
+ <textarea class="form-input" id="pickupAddress" rows="3" placeholder="e.g. Kilimani, Lenana Road, Apt 4B — or drop a Google Maps link"></textarea>
+ </div>
+ <div class="form-group" style="margin-bottom:20px;">
+ <label class="form-label">Preferred Pickup Day</label>
+ <select class="form-input" id="pickupDay">
+ <option value="">Select a day</option>
+ <option value="Today">Today</option>
+ <option value="Tomorrow">Tomorrow</option>
+ <option value="This Week">Later This Week</option>
+ <option value="Next Week">Next Week</option>
+ </select>
+ </div>
+ 
+ <button class="btn btn-primary" style="width:100%;" onclick="submitPickupRequest(${amount})">
+ ✅ Confirm Pickup Request
+ </button>
+ 
+ <button class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="showPickupDropoffChoice(${amount})">
+ ← Back to Options
+ </button>
+ </div>
+ `;
+    addChatMessage('bot', 'Please enter your location details so we can schedule the pickup.');
+}
+
+async function submitPickupRequest(amount) {
+    const address = document.getElementById('pickupAddress')?.value?.trim();
+    const day = document.getElementById('pickupDay')?.value;
+    const a = state.answers;
+    
+    if (!address) {
+        addChatMessage('bot', 'Please enter your address or location so we know where to pick up!');
+        return;
+    }
+
+    // Build notification message for Newton (via WhatsApp deep link)
+    const pickupMsg = `🚚 PICKUP REQUEST\n\nSeller: ${a.sellerName}\nPhone: ${a.sellerPhone}\nAppliance: ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}\nCondition: Grade ${state.evaluation?.condition_grade || 'B'}\nAgreed Price: KES ${formatKES(amount)}\nPickup Address: ${address}\nPreferred Day: ${day || 'ASAP'}\nRef: GB-${state.sessionId || Date.now()}`;
+
+    // Save to backend and get WhatsApp deep-link for Newton
+    try {
+        const resp = await fetch(`${API_BASE}/tradein/notify-pickup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                valuation_session_id: state.sessionId || null,
+                seller_name: a.sellerName,
+                seller_phone: a.sellerPhone,
+                appliance_description: `${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}`.trim(),
+                condition_grade: state.evaluation?.condition_grade || 'B',
+                agreed_price: amount,
+                pickup_address: address,
+                preferred_day: day || 'ASAP',
+                photo_count: (a.photos || []).length,
+            }),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            // Auto-open WhatsApp to notify Newton
+            if (data.whatsapp_link) {
+                window.open(data.whatsapp_link, '_blank');
+            }
+        }
+    } catch(_) { /* Non-critical */ }
+
+    addChatMessage('bot', `Pickup confirmed! 🎉<br><br>
+ <strong>PICKUP SUMMARY</strong><br>
+ 📍 Location: ${escapeHtml(address)}<br>
+ 📅 Preferred: ${day || 'ASAP'}<br>
+ 💰 Payment: KES ${formatKES(amount)} via M-Pesa on pickup<br><br>
+ Our team (Newton) will contact you at <strong>${escapeHtml(a.sellerPhone)}</strong> to confirm the exact time. Thanks for choosing GreenBay!`);
+
+    showFinalConfirmation(amount, 'pickup', address, day);
+}
+
+function showDropoffLocations(amount) {
+    const a = state.answers;
+    addChatMessage('bot', 'Here are our outlet locations. Drop off your appliance and browse our inventory while you\'re there!');
+    
+    const resultsStep = document.getElementById('stepResults');
+    resultsStep.innerHTML = `
+ <div class="deal-result">
+ <div class="result-icon">🏬</div>
+ <h3>Our Outlet Locations</h3>
+ <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location and get paid on the spot!</p>
+ 
+ <div style="display:grid;gap:16px;margin:20px 0;">
+ <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
+ <h4 style="margin-bottom:8px;">📍 Kasarani Outlet</h4>
+ <p style="font-size:.88rem;color:var(--slate);margin-bottom:12px;">Delta 40, Kasarani — Opposite Safari Park Hotel</p>
+ <a href="https://maps.app.goo.gl/kasarani-greenbay" target="_blank" style="font-size:.85rem;font-weight:600;">Open in Google Maps →</a>
+ </div>
+ <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
+ <h4 style="margin-bottom:8px;">📍 Roysambu Outlet</h4>
+ <p style="font-size:.88rem;color:var(--slate);margin-bottom:12px;">Roysambu — Near TRM Mall</p>
+ <a href="https://maps.app.goo.gl/roysambu-greenbay" target="_blank" style="font-size:.85rem;font-weight:600;">Open in Google Maps →</a>
+ </div>
+ </div>
+ 
+ <div style="background:var(--warm);border-radius:var(--radius-sm);padding:16px;margin-bottom:20px;">
+ <p style="font-size:.88rem;margin:0;"><strong>💡 Tip:</strong> While at the outlet, check out our inventory! You might find the perfect upgrade — and your trade-in value gives you a head start.</p>
+ </div>
+
+ <div class="deal-summary">
+ <div class="deal-summary-row">
+ <span>Appliance</span>
+ <span>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Seller</span>
+ <span>${escapeHtml(a.sellerName)} (${escapeHtml(a.sellerPhone)})</span>
+ </div>
+ <div class="deal-summary-row total">
+ <span>Amount Due on Drop-off</span>
+ <span>KES ${formatKES(amount)}</span>
+ </div>
+ </div>
+
+ <div class="whatsapp-bridge" style="margin-top:20px;">
+ <div class="whatsapp-bridge-icon">📞</div>
+ <div class="whatsapp-bridge-text">
+ <h4>Confirm Your Visit</h4>
+ <p>Let us know when you're coming so we can prepare!</p>
+ </div>
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I'll%20be%20dropping%20off%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20at%20your%20outlet.%20Agreed%20price%3A%20KES%20${amount}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Ref%3A%20GB-${state.sessionId || ''}" 
+ target="_blank" class="btn btn-whatsapp btn-sm">Confirm on WhatsApp</a>
+ </div>
+
+ <button class="btn btn-ghost" style="width:100%;margin-top:12px;" onclick="showPickupDropoffChoice(${amount})">
+ ← Back to Options
+ </button>
+ </div>
+ `;
+}
+
+function showFinalConfirmation(amount, method, address, day) {
+    const a = state.answers;
+    const resultsStep = document.getElementById('stepResults');
+    resultsStep.innerHTML = `
+ <div class="deal-result">
+ <div class="result-icon">🎉</div>
+ <h3>All Set!</h3>
+ <p>Your trade-in is confirmed. ${method === 'pickup' ? 'Our team will pick up your appliance.' : 'Drop it off at your chosen outlet.'}</p>
+ 
+ <div class="deal-summary">
+ <div class="deal-summary-row">
+ <span>Appliance</span>
+ <span>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</span>
+ </div>
+ <div class="deal-summary-row">
+ <span>Seller</span>
+ <span>${escapeHtml(a.sellerName)} (${escapeHtml(a.sellerPhone)})</span>
+ </div>
+ ${method === 'pickup' ? `<div class="deal-summary-row"><span>Pickup Location</span><span>${escapeHtml(address || '')}</span></div>` : ''}
+ ${method === 'pickup' && day ? `<div class="deal-summary-row"><span>Preferred Day</span><span>${day}</span></div>` : ''}
+ <div class="deal-summary-row">
+ <span>Payment</span>
+ <span>M-Pesa on ${method === 'pickup' ? 'pickup' : 'drop-off'}</span>
  </div>
  <div class="deal-summary-row">
  <span>Reference</span>
@@ -1167,21 +1456,67 @@ function showDealClosed(amount) {
  </div>
  </div>
  
- <button class="btn btn-primary" onclick="resetEvaluator()">
+ <button class="btn btn-primary" onclick="resetEvaluator()" style="width:100%;margin-top:20px;">
  Evaluate Another Appliance
  </button>
  
  <div class="whatsapp-bridge" style="margin-top:20px;">
- <div class="whatsapp-bridge-icon"></div>
+ <div class="whatsapp-bridge-icon">💬</div>
  <div class="whatsapp-bridge-text">
  <h4>Track on WhatsApp</h4>
- <p>Get pickup updates and payment confirmation via WhatsApp.</p>
+ <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and payment confirmation.</p>
  </div>
- <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
+ <div id="relatedProductsSection" style="margin-top:24px;"></div>
  </div>
  `;
+
+    // Load related product suggestions
+    loadRelatedProducts(a.category);
+}
+
+async function loadRelatedProducts(category) {
+    try {
+        const resp = await fetch(`${API_BASE}/tradein/related-products?category=${encodeURIComponent(category || '')}&limit=6`);
+        if (!resp.ok) return;
+        const products = await resp.json();
+        if (!products || products.length === 0) return;
+
+        const container = document.getElementById('relatedProductsSection');
+        if (!container) return;
+
+        const cards = products.map(p => {
+            const priceStr = p.price ? `KES ${Math.round(p.price).toLocaleString('en-KE')}` : 'Contact us';
+            const savingsStr = p.compare_at_price && p.price ?
+                `<span style="text-decoration:line-through;color:var(--muted);font-size:.78rem;margin-left:6px;">KES ${Math.round(p.compare_at_price).toLocaleString('en-KE')}</span>` : '';
+            const imgSrc = p.image_url || '';
+            return `
+            <a href="${p.product_url || 'https://greenbay.market'}" target="_blank" style="text-decoration:none;color:inherit;display:block;">
+            <div style="background:var(--surface);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);">
+                ${imgSrc ? `<img src="${imgSrc}" alt="${p.title}" style="width:100%;height:140px;object-fit:cover;" loading="lazy">` : ''}
+                <div style="padding:10px;">
+                    <p style="font-size:.82rem;font-weight:600;margin:0 0 4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${p.title}</p>
+                    <p style="font-size:.85rem;margin:0;color:var(--emerald);font-weight:700;">${priceStr}${savingsStr}</p>
+                    <span style="font-size:.72rem;color:var(--muted);">${p.product_type || ''}</span>
+                </div>
+            </div>
+            </a>`;
+        }).join('');
+
+        container.innerHTML = `
+            <h4 style="margin-bottom:12px;font-size:1rem;">🛍️ Use Your Trade-In Value — Browse Our Deals</h4>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;">
+                ${cards}
+            </div>
+            <a href="https://greenbay.market" target="_blank" class="btn btn-outline" style="width:100%;margin-top:12px;">
+                View All Products on GreenBay →
+            </a>
+        `;
+    } catch(e) {
+        console.log('Related products load failed (non-critical):', e);
+    }
 }
 
 function showNoDeal(lastOffer) {
@@ -1204,7 +1539,7 @@ function showNoDeal(lastOffer) {
  <h4>Continue on WhatsApp</h4>
  <p>Chat with our team for a more personal experience.</p>
  </div>
- <a href="https://wa.me/254700000000?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20KES%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(a.category)}" 
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20KES%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
  </div>
@@ -1216,9 +1551,10 @@ function resetEvaluator() {
     state.currentStep = 1;
     state.sessionId = null;
     state.answers = {
-        category: null, brand: null, model: '', age: null,
-        condition: null, conditionGrade: null, ownership: null,
-        issues: '', photos: [], price: null,
+        category: null, brand: null, model: '', modelPhoto: null,
+        age: null, condition: null, conditionGrade: null, ownership: null,
+        issues: '', otherDescription: '', sellerName: '', sellerPhone: '',
+        photos: [], price: null,
     };
     state.evaluation = null;
     state.negotiation = { round: 0, offers: [], counters: [], status: 'idle' };
@@ -1232,6 +1568,10 @@ function resetEvaluator() {
     document.getElementById('issuesInput').value = '';
     document.getElementById('priceInput').value = '';
     document.getElementById('brandCustom').value = '';
+    const sellerName = document.getElementById('sellerNameInput');
+    if (sellerName) sellerName.value = '';
+    const sellerPhone = document.getElementById('sellerPhoneInput');
+    if (sellerPhone) sellerPhone.value = '';
     document.getElementById('photoGrid').innerHTML = '';
     updatePhotoCount();
 

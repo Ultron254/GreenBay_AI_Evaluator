@@ -80,16 +80,40 @@ async def lifespan(app: FastAPI):
 
     polling_task = asyncio.create_task(_resilient_polling())
     logger.info("Payment polling service started (with auto-restart)")
+
+    # Start background Shopify inventory scraper (runs on startup + every 12 hours)
+    async def _shopify_scraper_loop():
+        """Scrape greenbay.market inventory into DB every 12 hours."""
+        from greenbay_ai_evaluator.services.shopify_scraper import scrape_full_inventory_async
+        while True:
+            try:
+                logger.info("Starting Shopify inventory scrape...")
+                result = await scrape_full_inventory_async()
+                logger.info(f"Shopify scrape complete: {result}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Shopify scraper error: {e}")
+            await asyncio.sleep(43200)  # 12 hours
+
+    scraper_task = asyncio.create_task(_shopify_scraper_loop())
+    logger.info("Shopify inventory scraper started (12-hour cycle)")
     
     yield
     
     # Shutdown
     polling_task.cancel()
+    scraper_task.cancel()
     try:
         await polling_task
     except asyncio.CancelledError:
         pass
+    try:
+        await scraper_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Payment polling service stopped")
+    logger.info("Shopify scraper stopped")
     logger.info("Shutting down GreenBay Market Chatbot...")
 
 

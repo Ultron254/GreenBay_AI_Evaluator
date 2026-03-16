@@ -49,7 +49,8 @@ async def init_db():
         # Import all models to ensure they are registered
         from app.database.models import (
             User, Cart, Order, OrderItem, 
-            Delivery, Payment, Conversation
+            Delivery, Payment, Conversation,
+            ShopifyProduct, PickupRequest
         )
         # Import evaluator models so their tables are created too
         import greenbay_ai_evaluator.models.evaluator_models  # noqa: F401

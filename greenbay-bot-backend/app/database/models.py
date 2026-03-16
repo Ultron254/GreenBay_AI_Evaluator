@@ -209,6 +209,7 @@ class TradeInSession(Base):
     session_id = Column(String(100), unique=True, index=True, nullable=False)
     user_phone = Column(String(20), nullable=False, index=True)
     transaction_type = Column(String(20), default="trade_in")  # trade_in or sell
+    seller_name = Column(String(100), nullable=True)
     
     # Product information
     product_name = Column(String(200), nullable=True)
@@ -315,3 +316,46 @@ class TradeInValuation(Base):
     
     # Relationships
     session = relationship("TradeInSession")
+
+
+class ShopifyProduct(Base):
+    """Cached product from greenbay.market Shopify store."""
+    __tablename__ = "shopify_products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    shopify_id = Column(String(50), unique=True, nullable=False, index=True)
+    title = Column(String(300), nullable=False)
+    handle = Column(String(300), nullable=True)
+    product_type = Column(String(100), nullable=True, index=True)
+    vendor = Column(String(100), nullable=True)
+    tags = Column(JSON, nullable=True)
+    price = Column(Float, nullable=True)
+    compare_at_price = Column(Float, nullable=True)
+    sku = Column(String(100), nullable=True)
+    available = Column(Boolean, default=True)
+    image_url = Column(String(1000), nullable=True)
+    product_url = Column(String(500), nullable=True)
+    first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class PickupRequest(Base):
+    """Pickup requests for Newton to collect trade-in items."""
+    __tablename__ = "pickup_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    valuation_session_id = Column(String(36), nullable=True, index=True)
+    seller_name = Column(String(100), nullable=False)
+    seller_phone = Column(String(20), nullable=False)
+    appliance_description = Column(String(500), nullable=True)
+    condition_grade = Column(String(50), nullable=True)
+    agreed_price = Column(Float, nullable=True)
+    pickup_address = Column(Text, nullable=False)
+    preferred_day = Column(String(50), nullable=True)
+    photo_count = Column(Integer, default=0)
+    status = Column(String(20), default="pending")  # pending, scheduled, completed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
