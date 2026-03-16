@@ -501,7 +501,206 @@ def counter_offer(session_id: str, req: CounterRequest, db: Session = Depends(ge
 
 
 # ---------------------------------------------------------------------------
-# GET /{session_id}
+# POST /notify-pickup  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+NEWTON_PHONE = "254715284353"  # Newton's WhatsApp number
+
+
+@evaluator_router.post("/notify-pickup", response_model=PickupNotifyResponse)
+def notify_pickup(req: PickupNotifyRequest, db: Session = Depends(get_db)):
+    """Save a pickup request and return a WhatsApp deep-link to notify Newton."""
+    try:
+        pickup = PickupRequest(
+            valuation_session_id=req.valuation_session_id,
+            seller_name=req.seller_name,
+            seller_phone=req.seller_phone,
+            appliance_description=req.appliance_description,
+            condition_grade=req.condition_grade,
+            agreed_price=req.agreed_price,
+            pickup_address=req.pickup_address,
+            preferred_day=req.preferred_day,
+            photo_count=req.photo_count,
+            status="pending",
+        )
+        db.add(pickup)
+        db.commit()
+        db.refresh(pickup)
+
+        # Build WhatsApp deep-link message
+        price_str = f"KES {req.agreed_price:,.0f}" if req.agreed_price else "TBD"
+        msg = (
+            f"\U0001f7e2 *NEW PICKUP REQUEST #{pickup.id}*\n\n"
+            f"\U0001f4e6 *Item:* {req.appliance_description}\n"
+            f"\U0001f464 *Seller:* {req.seller_name}\n"
+            f"\U0001f4de *Phone:* {req.seller_phone}\n"
+            f"\U0001f4b0 *Agreed Price:* {price_str}\n"
+            f"\U0001f4cd *Address:* {req.pickup_address}\n"
+            f"\U0001f4c5 *Preferred Day:* {req.preferred_day or 'Any'}\n"
+            f"\U0001f4f8 *Photos:* {req.photo_count}\n"
+            f"\u2b50 *Condition:* {req.condition_grade or 'N/A'}"
+        )
+        import urllib.parse
+        wa_link = f"https://wa.me/{NEWTON_PHONE}?text={urllib.parse.quote(msg)}"
+
+        logger.info(f"Pickup request #{pickup.id} created for {req.seller_name}")
+
+        return PickupNotifyResponse(
+            id=pickup.id,
+            status="pending",
+            whatsapp_link=wa_link,
+            message="Pickup request saved. Newton has been notified.",
+        )
+    except Exception as e:
+        logger.error(f"Pickup notification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# GET /pickup-requests  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/pickup-requests")
+def list_pickup_requests(status: str = "pending", db: Session = Depends(get_db)):
+    """List pickup requests, filtered by status."""
+    q = db.query(PickupRequest)
+    if status != "all":
+        q = q.filter(PickupRequest.status == status)
+    pickups = q.order_by(PickupRequest.created_at.desc()).all()
+    return [
+        {
+            "id": p.id,
+            "seller_name": p.seller_name,
+            "seller_phone": p.seller_phone,
+            "appliance": p.appliance_description,
+            "agreed_price": p.agreed_price,
+            "pickup_address": p.pickup_address,
+            "preferred_day": p.preferred_day,
+            "status": p.status,
+            "created_at": str(p.created_at) if p.created_at else None,
+        }
+        for p in pickups
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /related-products  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+_CATEGORY_MAP = {
+    "refrigerator": ["REFRIGERATORS"],
+    "fridge": ["REFRIGERATORS"],
+    "washing_machine": ["Washing Machine"],
+    "washer": ["Washing Machine"],
+    "tv": ["TV & Home Entertainment"],
+    "television": ["TV & Home Entertainment"],
+    "cooker": ["COOKERS"],
+    "stove": ["COOKERS"],
+    "microwave": ["MICROWAVE"],
+    "freezer": ["FREEZER"],
+    "chiller": ["CHILLERS"],
+    "laptop": ["Computers & Laptops"],
+    "computer": ["Computers & Laptops"],
+}
+
+
+@evaluator_router.get("/related-products", response_model=list[RelatedProductOut])
+def get_related_products(
+    category: str = "",
+    limit: int = 6,
+    db: Session = Depends(get_db),
+):
+    """Return related products from our Shopify inventory."""
+    results: list[RelatedProductOut] = []
+
+    # Map evaluator category to Shopify product_type
+    shopify_types = _CATEGORY_MAP.get(category.lower().strip(), [])
+
+    # Same-category products first
+    if shopify_types:
+        same_cat = (
+            db.query(ShopifyProduct)
+            .filter(
+                ShopifyProduct.is_active.is_(True),
+                ShopifyProduct.available.is_(True),
+                ShopifyProduct.product_type.in_(shopify_types),
+            )
+            .order_by(ShopifyProduct.price.asc())
+            .limit(limit)
+            .all()
+        )
+        for p in same_cat:
+            results.append(RelatedProductOut(
+                title=p.title,
+                price=p.price,
+                compare_at_price=p.compare_at_price,
+                image_url=p.image_url,
+                product_url=p.product_url,
+                product_type=p.product_type,
+                available=p.available,
+            ))
+
+    # Fill remaining with popular items from other categories
+    remaining = limit - len(results)
+    if remaining > 0:
+        existing_ids = {r.title for r in results}
+        other = (
+            db.query(ShopifyProduct)
+            .filter(
+                ShopifyProduct.is_active.is_(True),
+                ShopifyProduct.available.is_(True),
+            )
+            .order_by(ShopifyProduct.price.asc())
+            .limit(remaining + len(results))  # fetch extra to skip dupes
+            .all()
+        )
+        for p in other:
+            if p.title not in existing_ids and len(results) < limit:
+                results.append(RelatedProductOut(
+                    title=p.title,
+                    price=p.price,
+                    compare_at_price=p.compare_at_price,
+                    image_url=p.image_url,
+                    product_url=p.product_url,
+                    product_type=p.product_type,
+                    available=p.available,
+                ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# GET /inventory-stats  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/inventory-stats", response_model=InventoryStatsOut)
+def get_inventory_stats(db: Session = Depends(get_db)):
+    """Return summary of Shopify inventory in our DB."""
+    from sqlalchemy import func as sqla_func
+
+    total = db.query(ShopifyProduct).filter(ShopifyProduct.is_active.is_(True)).count()
+
+    # Count by category
+    cats = (
+        db.query(ShopifyProduct.product_type, sqla_func.count())
+        .filter(ShopifyProduct.is_active.is_(True))
+        .group_by(ShopifyProduct.product_type)
+        .all()
+    )
+    by_category = {cat or "Unknown": cnt for cat, cnt in cats}
+
+    # Last scrape time
+    latest = (
+        db.query(sqla_func.max(ShopifyProduct.last_seen_at))
+        .filter(ShopifyProduct.is_active.is_(True))
+        .scalar()
+    )
+
+    return InventoryStatsOut(
+        total_active=total,
+        by_category=by_category,
+        last_scrape=str(latest) if latest else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /{session_id}  — WILDCARD: must be LAST
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/{session_id}", response_model=SessionDetailResponse)
 def get_session_detail(session_id: str, db: Session = Depends(get_db)):
@@ -632,201 +831,3 @@ def model_lookup(req: ModelLookupRequest):
             specs_summary=None,
         )
 
-
-# ---------------------------------------------------------------------------
-# POST /notify-pickup
-# ---------------------------------------------------------------------------
-NEWTON_PHONE = "254715284353"  # Newton's WhatsApp number
-
-
-@evaluator_router.post("/notify-pickup", response_model=PickupNotifyResponse)
-def notify_pickup(req: PickupNotifyRequest, db: Session = Depends(get_db)):
-    """Save a pickup request and return a WhatsApp deep-link to notify Newton."""
-    try:
-        pickup = PickupRequest(
-            valuation_session_id=req.valuation_session_id,
-            seller_name=req.seller_name,
-            seller_phone=req.seller_phone,
-            appliance_description=req.appliance_description,
-            condition_grade=req.condition_grade,
-            agreed_price=req.agreed_price,
-            pickup_address=req.pickup_address,
-            preferred_day=req.preferred_day,
-            photo_count=req.photo_count,
-            status="pending",
-        )
-        db.add(pickup)
-        db.commit()
-        db.refresh(pickup)
-
-        # Build WhatsApp deep-link message
-        price_str = f"KES {req.agreed_price:,.0f}" if req.agreed_price else "TBD"
-        msg = (
-            f"🟢 *NEW PICKUP REQUEST #{pickup.id}*\n\n"
-            f"📦 *Item:* {req.appliance_description}\n"
-            f"👤 *Seller:* {req.seller_name}\n"
-            f"📞 *Phone:* {req.seller_phone}\n"
-            f"💰 *Agreed Price:* {price_str}\n"
-            f"📍 *Address:* {req.pickup_address}\n"
-            f"📅 *Preferred Day:* {req.preferred_day or 'Any'}\n"
-            f"📸 *Photos:* {req.photo_count}\n"
-            f"⭐ *Condition:* {req.condition_grade or 'N/A'}"
-        )
-        import urllib.parse
-        wa_link = f"https://wa.me/{NEWTON_PHONE}?text={urllib.parse.quote(msg)}"
-
-        logger.info(f"Pickup request #{pickup.id} created for {req.seller_name}")
-
-        return PickupNotifyResponse(
-            id=pickup.id,
-            status="pending",
-            whatsapp_link=wa_link,
-            message="Pickup request saved. Newton has been notified.",
-        )
-    except Exception as e:
-        logger.error(f"Pickup notification failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# GET /pickup-requests
-# ---------------------------------------------------------------------------
-@evaluator_router.get("/pickup-requests")
-def list_pickup_requests(status: str = "pending", db: Session = Depends(get_db)):
-    """List pickup requests, filtered by status."""
-    q = db.query(PickupRequest)
-    if status != "all":
-        q = q.filter(PickupRequest.status == status)
-    pickups = q.order_by(PickupRequest.created_at.desc()).all()
-    return [
-        {
-            "id": p.id,
-            "seller_name": p.seller_name,
-            "seller_phone": p.seller_phone,
-            "appliance": p.appliance_description,
-            "agreed_price": p.agreed_price,
-            "pickup_address": p.pickup_address,
-            "preferred_day": p.preferred_day,
-            "status": p.status,
-            "created_at": str(p.created_at) if p.created_at else None,
-        }
-        for p in pickups
-    ]
-
-
-# ---------------------------------------------------------------------------
-# GET /related-products
-# ---------------------------------------------------------------------------
-_CATEGORY_MAP = {
-    "refrigerator": ["REFRIGERATORS"],
-    "fridge": ["REFRIGERATORS"],
-    "washing_machine": ["Washing Machine"],
-    "washer": ["Washing Machine"],
-    "tv": ["TV & Home Entertainment"],
-    "television": ["TV & Home Entertainment"],
-    "cooker": ["COOKERS"],
-    "stove": ["COOKERS"],
-    "microwave": ["MICROWAVE"],
-    "freezer": ["FREEZER"],
-    "chiller": ["CHILLERS"],
-    "laptop": ["Computers & Laptops"],
-    "computer": ["Computers & Laptops"],
-}
-
-
-@evaluator_router.get("/related-products", response_model=list[RelatedProductOut])
-def get_related_products(
-    category: str = "",
-    limit: int = 6,
-    db: Session = Depends(get_db),
-):
-    """Return related products from our Shopify inventory."""
-    results: list[RelatedProductOut] = []
-
-    # Map evaluator category to Shopify product_type
-    shopify_types = _CATEGORY_MAP.get(category.lower().strip(), [])
-
-    # Same-category products first
-    if shopify_types:
-        same_cat = (
-            db.query(ShopifyProduct)
-            .filter(
-                ShopifyProduct.is_active.is_(True),
-                ShopifyProduct.available.is_(True),
-                ShopifyProduct.product_type.in_(shopify_types),
-            )
-            .order_by(ShopifyProduct.price.asc())
-            .limit(limit)
-            .all()
-        )
-        for p in same_cat:
-            results.append(RelatedProductOut(
-                title=p.title,
-                price=p.price,
-                compare_at_price=p.compare_at_price,
-                image_url=p.image_url,
-                product_url=p.product_url,
-                product_type=p.product_type,
-                available=p.available,
-            ))
-
-    # Fill remaining with popular items from other categories
-    remaining = limit - len(results)
-    if remaining > 0:
-        existing_ids = {r.title for r in results}
-        other = (
-            db.query(ShopifyProduct)
-            .filter(
-                ShopifyProduct.is_active.is_(True),
-                ShopifyProduct.available.is_(True),
-            )
-            .order_by(ShopifyProduct.price.asc())
-            .limit(remaining + len(results))  # fetch extra to skip dupes
-            .all()
-        )
-        for p in other:
-            if p.title not in existing_ids and len(results) < limit:
-                results.append(RelatedProductOut(
-                    title=p.title,
-                    price=p.price,
-                    compare_at_price=p.compare_at_price,
-                    image_url=p.image_url,
-                    product_url=p.product_url,
-                    product_type=p.product_type,
-                    available=p.available,
-                ))
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# GET /inventory-stats
-# ---------------------------------------------------------------------------
-@evaluator_router.get("/inventory-stats", response_model=InventoryStatsOut)
-def get_inventory_stats(db: Session = Depends(get_db)):
-    """Return summary of Shopify inventory in our DB."""
-    from sqlalchemy import func as sqla_func
-
-    total = db.query(ShopifyProduct).filter(ShopifyProduct.is_active.is_(True)).count()
-
-    # Count by category
-    cats = (
-        db.query(ShopifyProduct.product_type, sqla_func.count())
-        .filter(ShopifyProduct.is_active.is_(True))
-        .group_by(ShopifyProduct.product_type)
-        .all()
-    )
-    by_category = {cat or "Unknown": cnt for cat, cnt in cats}
-
-    # Last scrape time
-    latest = (
-        db.query(sqla_func.max(ShopifyProduct.last_seen_at))
-        .filter(ShopifyProduct.is_active.is_(True))
-        .scalar()
-    )
-
-    return InventoryStatsOut(
-        total_active=total,
-        by_category=by_category,
-        last_scrape=str(latest) if latest else None,
-    )
