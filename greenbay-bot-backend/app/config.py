@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Tavily Web Search (for internet price verification)
     tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
     
+    # Google Cloud Vision API (for Google Lens product identification)
+    google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY")
+    
     # WhatsApp Business API Configuration
     whatsapp_api_token: str = Field(default="test_token", validation_alias="ACCESS_TOKEN")
     whatsapp_phone_number_id: str = Field(default="test_id", validation_alias="PHONE_NUMBER_ID")

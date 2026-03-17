@@ -327,6 +327,132 @@ select {
   align-items: center;
 }
 
+.hero-content-centered {
+  grid-template-columns: 1fr;
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.hero-text-centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero-text-centered .hero-badge {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero-text-centered .hero-description {
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero-actions-centered {
+  justify-content: center;
+}
+
+/* Floating appliance images on left/right of hero */
+.hero-appliance {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.hero-appliance-left {
+  left: -20px;
+  top: calc(var(--header-height) + 30px);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hero-appliance-right {
+  right: -20px;
+  top: calc(var(--header-height) + 30px);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: flex-end;
+}
+
+.hero-float-img {
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  object-fit: cover;
+  opacity: 0.85;
+  transition: opacity 0.3s;
+}
+
+.hero-float-top {
+  width: 180px;
+  height: 220px;
+}
+
+.hero-float-bottom {
+  width: 200px;
+  height: 260px;
+}
+
+@media (max-width: 1200px) {
+  .hero-float-top { width: 140px; height: 170px; }
+  .hero-float-bottom { width: 160px; height: 200px; }
+}
+
+@media (max-width: 900px) {
+  .hero-appliance { display: none; }
+}
+
+/* Outline button for "Learn More" */
+.btn-outline {
+  background: transparent;
+  color: var(--forest);
+  border: 2px solid rgba(6, 78, 59, 0.2);
+  font-weight: 600;
+}
+
+.btn-outline:hover {
+  border-color: var(--green-primary);
+  color: var(--green-primary);
+  transform: translateY(-1px);
+  background: rgba(13, 159, 79, 0.04);
+}
+
+/* Bug report button */
+.btn-bug-report {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(13, 159, 79, 0.08);
+  color: var(--muted);
+  transition: all 0.25s;
+  cursor: pointer;
+}
+
+.btn-bug-report:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--red);
+  transform: scale(1.1);
+}
+
+/* Evaluate on WhatsApp CTA */
+.whatsapp-cta-section {
+  text-align: center;
+  padding: 40px 24px;
+  background: linear-gradient(180deg, transparent, rgba(37, 211, 102, 0.04));
+}
+
+.whatsapp-cta-section .btn-whatsapp {
+  font-size: 1.1rem;
+  padding: 18px 40px;
+}
+
 .hero-badge {
   display: inline-flex;
   align-items: center;

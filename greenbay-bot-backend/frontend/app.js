@@ -41,8 +41,9 @@ try {
     if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.currentStep) {
-            // If the previous session was completed, start fresh
-            if (parsed.currentStep > TOTAL_STEPS) {
+            // If the previous session was completed OR has evaluation results,
+            // start fresh. Results can't survive page reload (HTML isn't persisted).
+            if (parsed.currentStep > TOTAL_STEPS || parsed.evaluation) {
                 localStorage.removeItem('gb_eval_state');
             } else {
                 Object.assign(state, parsed);

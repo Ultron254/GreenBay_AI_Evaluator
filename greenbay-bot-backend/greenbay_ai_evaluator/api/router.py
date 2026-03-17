@@ -55,6 +55,7 @@ from greenbay_ai_evaluator.services.market_price_service import search_internet_
 from greenbay_ai_evaluator.services.marketplace_scraper import get_marketplace_prices
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
+from greenbay_ai_evaluator.services.google_lens_service import identify_product_multi
 
 from app.database.models import ExpertPriceFeedback, PickupRequest, ShopifyProduct
 
@@ -168,6 +169,40 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
             except Exception as ve:
                 logger.warning(f"Vision analysis skipped: {ve}")
+
+        # 3c. Google Cloud Vision product identification (Google Lens equivalent)
+        lens_result = None
+        if req.image_data:
+            try:
+                from app.config import get_settings
+                settings_for_lens = get_settings()
+                lens_result = identify_product_multi(
+                    images_b64=req.image_data[:3],  # Use first 3 images
+                    category_hint=req.category,
+                    brand_hint=req.brand,
+                    model_hint=req.model,
+                    google_cloud_api_key=settings_for_lens.google_cloud_api_key,
+                )
+                if lens_result and lens_result.confidence > 20:
+                    logger.info(
+                        f"Google Lens identified: {lens_result.product_name}, "
+                        f"brand={lens_result.brand}, model={lens_result.model}, "
+                        f"price={lens_result.estimated_retail_price_kes}"
+                    )
+                    # Enrich request data with Google Lens findings
+                    if lens_result.brand and not req.brand:
+                        req.brand = lens_result.brand
+                    if lens_result.model and not req.model:
+                        req.model = lens_result.model
+                    # Use Google Lens retail price as a reference if we don't have one
+                    if lens_result.estimated_retail_price_kes and (
+                        not req.retail_price or req.retail_price <= 0
+                    ):
+                        req.retail_price = lens_result.estimated_retail_price_kes
+                        req.retail_price_source = "google_lens"
+                        logger.info(f"Using Google Lens retail price: {req.retail_price}")
+            except Exception as le:
+                logger.warning(f"Google Lens identification failed: {le}")
 
         # 4. Score images (OpenCV if base64 data available)
         iq_result = score_images(
@@ -308,6 +343,21 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "price_range": [mkt_result.min_price, mkt_result.max_price],
                     "listing_count": mkt_result.count,
                     "confidence": mkt_result.confidence,
+                }
+            if lens_result and lens_result.confidence > 0:
+                price_verification["google_lens_data"] = {
+                    "product_name": lens_result.product_name,
+                    "brand": lens_result.brand,
+                    "model": lens_result.model,
+                    "category": lens_result.category,
+                    "estimated_retail_price": lens_result.estimated_retail_price_kes,
+                    "release_year": lens_result.release_year,
+                    "labels": lens_result.labels[:5],
+                    "web_entities": [
+                        {"description": e["description"], "score": e.get("score", 0)}
+                        for e in lens_result.web_entities[:5]
+                    ],
+                    "confidence": lens_result.confidence,
                 }
 
             logger.info(
