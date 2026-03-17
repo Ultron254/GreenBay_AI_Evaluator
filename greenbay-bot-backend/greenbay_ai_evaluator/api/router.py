@@ -224,18 +224,29 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         # 6a. Multi-source price verification (5-point system)
         price_verification = None
-        try:
-            import asyncio
-            import concurrent.futures
+        internet_price = None
+        marketplace_avg = None
+        shopify_avg = None
+        expert_avg = None
+        internet_result = None
+        mkt_result = None
 
-            # --- Source A: Internet price lookup (Tavily) ---
+        # --- Source A: Internet price lookup (Tavily) ---
+        try:
             internet_result = search_internet_price(
                 brand=req.brand, model=req.model,
                 category=req.category, condition=req.condition_grade,
             )
             internet_price = internet_result.launch_price
+            logger.info(f"Internet price: {internet_price} (confidence: {internet_result.confidence})")
+        except Exception as e:
+            logger.warning(f"Internet price lookup failed: {e}")
 
-            # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
+        # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
+        try:
+            import asyncio
+            import concurrent.futures
+
             def _run_marketplace():
                 loop = asyncio.new_event_loop()
                 try:
@@ -251,18 +262,30 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 mkt_result = pool.submit(_run_marketplace).result(timeout=15)
             marketplace_avg = mkt_result.avg_price if mkt_result.count > 0 else None
+            logger.info(f"Marketplace: avg={marketplace_avg}, count={mkt_result.count}")
+        except Exception as e:
+            logger.warning(f"Marketplace scraping failed: {e}")
 
-            # --- Source C: Shopify inventory average ---
-            shopify_avg = comp_result.weighted_average if comp_result.sources_breakdown and comp_result.sources_breakdown.get("shopify", 0) > 0 else None
+        # --- Source C: Shopify inventory average ---
+        try:
+            if comp_result.sources_breakdown and comp_result.sources_breakdown.get("shopify", 0) > 0:
+                shopify_avg = comp_result.weighted_average
+            logger.info(f"Shopify inventory: avg={shopify_avg}")
+        except Exception as e:
+            logger.warning(f"Shopify lookup failed: {e}")
 
-            # --- Source D: Expert feedback average ---
-            expert_avg = None
+        # --- Source D: Expert feedback average ---
+        try:
             if comp_result.sources_breakdown and comp_result.sources_breakdown.get("expert", 0) > 0:
                 expert_comps = [c for c in comp_result.comparables if c.weight >= 2.5]
                 if expert_comps:
                     expert_avg = sum(c.resale_price for c in expert_comps) / len(expert_comps)
+            logger.info(f"Expert feedback: avg={expert_avg}")
+        except Exception as e:
+            logger.warning(f"Expert feedback lookup failed: {e}")
 
-            # --- Reconcile all sources ---
+        # --- Reconcile all sources ---
+        try:
             price_verification = reconcile_retail_price(
                 frontend_price=req.retail_price,
                 internet_price=internet_price,
@@ -271,19 +294,21 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 expert_avg=expert_avg,
             )
 
-            # Add detailed breakdown
-            price_verification["internet_data"] = {
-                "launch_price": internet_result.launch_price,
-                "resale_range": [internet_result.current_resale_low, internet_result.current_resale_high],
-                "sources": internet_result.sources[:3],
-                "confidence": internet_result.confidence,
-            }
-            price_verification["marketplace_data"] = {
-                "avg_price": mkt_result.avg_price,
-                "price_range": [mkt_result.min_price, mkt_result.max_price],
-                "listing_count": mkt_result.count,
-                "confidence": mkt_result.confidence,
-            }
+            # Add detailed breakdown if sources responded
+            if internet_result:
+                price_verification["internet_data"] = {
+                    "launch_price": internet_result.launch_price,
+                    "resale_range": [internet_result.current_resale_low, internet_result.current_resale_high],
+                    "sources": internet_result.sources[:3],
+                    "confidence": internet_result.confidence,
+                }
+            if mkt_result:
+                price_verification["marketplace_data"] = {
+                    "avg_price": mkt_result.avg_price,
+                    "price_range": [mkt_result.min_price, mkt_result.max_price],
+                    "listing_count": mkt_result.count,
+                    "confidence": mkt_result.confidence,
+                }
 
             logger.info(
                 f"Price verification: {price_verification['num_sources']} sources, "
@@ -291,7 +316,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 f"frontend={req.retail_price}"
             )
         except Exception as pve:
-            logger.warning(f"Price verification partial failure: {pve}")
+            logger.warning(f"Price reconciliation failed: {pve}")
 
         # 6b. Run deterministic offer engine with price verification
         result = compute_valuation(
@@ -318,10 +343,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 reject_reasons.append(f"Detected issues: {', '.join(defect_types & HARD_REJECT_KEYWORDS)}")
             if grade_lower in ("d", "poor", "not working"):
                 reject_reasons.append(f"Condition grade too low: {req.condition_grade}")
-            result = result._replace(
-                decision="reject",
-                decision_reason="Product does not meet minimum quality standards. " + "; ".join(reject_reasons),
-            )
+            result.decision = "reject"
+            result.decision_reason = "Product does not meet minimum quality standards. " + "; ".join(reject_reasons)
             logger.info(f"Hard reject: {reject_reasons}")
         elif is_review_flag and result.decision not in ("reject",):
             review_reasons = []
@@ -329,10 +352,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 review_reasons.append(f"Product age ({req.age_years:.0f} years) exceeds 5-year threshold")
             if grade_lower in ("partially working",):
                 review_reasons.append("Product is only partially working")
-            result = result._replace(
-                decision="review",
-                decision_reason="Manual review required. " + "; ".join(review_reasons),
-            )
+            result.decision = "review"
+            result.decision_reason = "Manual review required. " + "; ".join(review_reasons)
             logger.info(f"Flagged for review: {review_reasons}")
 
         # 7. Persist valuation session

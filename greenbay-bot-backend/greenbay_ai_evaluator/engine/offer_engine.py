@@ -136,29 +136,48 @@ def _compute_confidence(
     has_seller_asking: bool,
     has_age: bool,
     has_brand: bool,
+    price_verification_sources: int = 0,
 ) -> float:
-    """Deterministic confidence score in [0, 100]."""
+    """Deterministic confidence score in [0, 100].
+
+    Scoring breakdown (max 100):
+    - Comparables: up to 25 pts
+    - Image quality: up to 15 pts
+    - Data completeness: up to 30 pts
+    - Multi-source price verification: up to 30 pts
+    """
     score = 0.0
 
-    # Comparables contribution (max 40 pts)
+    # Comparables contribution (max 25 pts)
     if comparables_count >= 5:
-        score += 40.0
+        score += 25.0
     elif comparables_count >= 3:
-        score += 30.0
-    elif comparables_count >= 1:
         score += 20.0
+    elif comparables_count >= 1:
+        score += 15.0
     # else 0
 
-    # Image quality contribution (max 25 pts)
-    score += (image_quality_score / 100.0) * 25.0
+    # Image quality contribution (max 15 pts)
+    score += (image_quality_score / 100.0) * 15.0
 
-    # Data completeness (max 35 pts)
+    # Data completeness (max 30 pts)
     if has_seller_asking:
         score += 10.0
     if has_age:
-        score += 15.0
+        score += 10.0
     if has_brand:
         score += 10.0
+
+    # Multi-source price verification (max 30 pts)
+    # Each verified source adds confidence
+    if price_verification_sources >= 4:
+        score += 30.0
+    elif price_verification_sources >= 3:
+        score += 25.0
+    elif price_verification_sources >= 2:
+        score += 20.0
+    elif price_verification_sources >= 1:
+        score += 12.0
 
     return min(100.0, round(score, 1))
 
@@ -285,24 +304,34 @@ def compute_valuation(
 
     # -- STEP 1: Base value --------------------------------------------------
     # Use reconciled price if available from multi-source verification
+    # Use reconciled price if multi-source verification found anything
     effective_retail = retail_price
     if price_verification and price_verification.get("reconciled_price"):
-        effective_retail = price_verification["reconciled_price"]
+        reconciled = price_verification["reconciled_price"]
+        # Only use reconciled if it's reasonable (within 5x of frontend price)
+        if reconciled > 0 and (retail_price <= 0 or 0.2 <= reconciled / max(retail_price, 1) <= 5.0):
+            effective_retail = reconciled
 
-    # Compute weighted average of comparables if confidence is high enough
+    # Compute weighted average of comparables
     total_weight = sum(c.weight for c in comparables) if comparables else 0.0
     comparables_avg = (
         sum(c.resale_price * c.weight for c in comparables) / total_weight
         if total_weight > 0
         else 0.0
     )
-    comparables_confidence = min(100.0, len(comparables) * 20.0)
 
-    if comparables and comparables_confidence >= 70:
+    num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
+
+    if comparables and len(comparables) >= 3:
+        # Strong comparables — use directly
         base_value = comparables_avg
         base_value_source = "comparables"
-    elif price_verification and price_verification.get("num_sources", 0) >= 2:
-        # Multi-source reconciled price (at least 2 external sources)
+    elif comparables and len(comparables) >= 1 and num_pv_sources >= 1:
+        # Blend comparables with reconciled price
+        base_value = comparables_avg * 0.6 + effective_retail * 0.4
+        base_value_source = "comparables+reconciled"
+    elif num_pv_sources >= 1:
+        # Multi-source reconciled price available
         base_value = effective_retail
         base_value_source = "reconciled"
     else:
@@ -357,12 +386,14 @@ def compute_valuation(
     walkaway_limit = round(estimated_resale_value * pricing_policy.walkaway_pct, 2)
 
     # -- STEP 10: Confidence score -------------------------------------------
+    num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
     confidence_score = _compute_confidence(
         comparables_count=len(comparables),
         image_quality_score=image_quality_score,
         has_seller_asking=seller_asking_price is not None,
         has_age=age_years > 0,
         has_brand=bool(brand_key),
+        price_verification_sources=num_pv_sources,
     )
 
     # -- STEP 11: Risk adjustment --------------------------------------------

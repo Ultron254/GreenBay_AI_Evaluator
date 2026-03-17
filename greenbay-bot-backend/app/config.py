@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     flowcart_api_key: Optional[str] = Field(default=None, env="FLOWCART_API_KEY")
     flowcart_api_url: str = Field(default="https://api.flowcart.io/v1", env="FLOWCART_API_URL")
     
+    # Tavily Web Search (for internet price verification)
+    tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
+    
     # WhatsApp Business API Configuration
     whatsapp_api_token: str = Field(default="test_token", validation_alias="ACCESS_TOKEN")
     whatsapp_phone_number_id: str = Field(default="test_id", validation_alias="PHONE_NUMBER_ID")
