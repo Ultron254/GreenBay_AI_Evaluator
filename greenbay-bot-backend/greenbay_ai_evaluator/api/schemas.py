@@ -47,6 +47,24 @@ class EvaluateResponse(BaseModel):
     risk_score: float
     comparable_count: int
     pricing_policy_version: str | None = None
+    price_verification: dict | None = None
+
+
+class ExpertFeedbackRequest(BaseModel):
+    valuation_session_id: str = Field(..., description="Session ID from the evaluation")
+    expert_name: str = Field(..., description="Name of the expert providing feedback")
+    expert_price: float = Field(..., gt=0, description="Expert's assessed price in KES")
+    expert_reasoning: str | None = Field(None, description="Why the expert chose this price")
+
+
+class ExpertFeedbackResponse(BaseModel):
+    id: int
+    valuation_session_id: str
+    expert_name: str
+    expert_price: float
+    system_price: float | None
+    price_difference: float | None
+    message: str
 
 
 # ---------------------------------------------------------------------------

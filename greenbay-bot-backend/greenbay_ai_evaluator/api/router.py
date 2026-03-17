@@ -23,6 +23,8 @@ from greenbay_ai_evaluator.api.schemas import (
     DecisionLedgerOut,
     EvaluateRequest,
     EvaluateResponse,
+    ExpertFeedbackRequest,
+    ExpertFeedbackResponse,
     InventoryStatsOut,
     NegotiationRoundOut,
     PickupNotifyRequest,
@@ -39,6 +41,7 @@ from greenbay_ai_evaluator.engine.offer_engine import (
     Comparable,
     PricingPolicyData,
     compute_valuation,
+    reconcile_retail_price,
 )
 from greenbay_ai_evaluator.models.evaluator_models import (
     DecisionLedger,
@@ -48,10 +51,12 @@ from greenbay_ai_evaluator.models.evaluator_models import (
 )
 from greenbay_ai_evaluator.services.comparables_service import get_comparables
 from greenbay_ai_evaluator.services.image_quality_service import score_images
+from greenbay_ai_evaluator.services.market_price_service import search_internet_price
+from greenbay_ai_evaluator.services.marketplace_scraper import get_marketplace_prices
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
 
-from app.database.models import PickupRequest, ShopifyProduct
+from app.database.models import ExpertPriceFeedback, PickupRequest, ShopifyProduct
 
 evaluator_router = APIRouter()
 
@@ -217,7 +222,78 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         is_review_flag = req.age_years > 5 or grade_lower in ("partially working",)
 
-        # 6. Run deterministic offer engine
+        # 6a. Multi-source price verification (5-point system)
+        price_verification = None
+        try:
+            import asyncio
+            import concurrent.futures
+
+            # --- Source A: Internet price lookup (Tavily) ---
+            internet_result = search_internet_price(
+                brand=req.brand, model=req.model,
+                category=req.category, condition=req.condition_grade,
+            )
+            internet_price = internet_result.launch_price
+
+            # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
+            def _run_marketplace():
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(
+                        get_marketplace_prices(
+                            brand=req.brand, model=req.model,
+                            category=req.category,
+                        )
+                    )
+                finally:
+                    loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                mkt_result = pool.submit(_run_marketplace).result(timeout=15)
+            marketplace_avg = mkt_result.avg_price if mkt_result.count > 0 else None
+
+            # --- Source C: Shopify inventory average ---
+            shopify_avg = comp_result.weighted_average if comp_result.sources_breakdown and comp_result.sources_breakdown.get("shopify", 0) > 0 else None
+
+            # --- Source D: Expert feedback average ---
+            expert_avg = None
+            if comp_result.sources_breakdown and comp_result.sources_breakdown.get("expert", 0) > 0:
+                expert_comps = [c for c in comp_result.comparables if c.weight >= 2.5]
+                if expert_comps:
+                    expert_avg = sum(c.resale_price for c in expert_comps) / len(expert_comps)
+
+            # --- Reconcile all sources ---
+            price_verification = reconcile_retail_price(
+                frontend_price=req.retail_price,
+                internet_price=internet_price,
+                marketplace_avg=marketplace_avg,
+                shopify_avg=shopify_avg,
+                expert_avg=expert_avg,
+            )
+
+            # Add detailed breakdown
+            price_verification["internet_data"] = {
+                "launch_price": internet_result.launch_price,
+                "resale_range": [internet_result.current_resale_low, internet_result.current_resale_high],
+                "sources": internet_result.sources[:3],
+                "confidence": internet_result.confidence,
+            }
+            price_verification["marketplace_data"] = {
+                "avg_price": mkt_result.avg_price,
+                "price_range": [mkt_result.min_price, mkt_result.max_price],
+                "listing_count": mkt_result.count,
+                "confidence": mkt_result.confidence,
+            }
+
+            logger.info(
+                f"Price verification: {price_verification['num_sources']} sources, "
+                f"reconciled={price_verification['reconciled_price']}, "
+                f"frontend={req.retail_price}"
+            )
+        except Exception as pve:
+            logger.warning(f"Price verification partial failure: {pve}")
+
+        # 6b. Run deterministic offer engine with price verification
         result = compute_valuation(
             category=req.category,
             brand=req.brand,
@@ -232,6 +308,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             comparables=comp_result.comparables,
             pricing_policy=policy_data,
             retail_price=req.retail_price,
+            price_verification=price_verification,
         )
 
         # Override decision based on rejection pre-screening
@@ -353,6 +430,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             pricing_policy_version=(
                 str(policy.updated_at) if policy.updated_at else str(policy.created_at)
             ),
+            price_verification=price_verification,
         )
 
     except HTTPException:
@@ -664,6 +742,111 @@ def get_related_products(
                 ))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# POST /expert-feedback  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+@evaluator_router.post("/expert-feedback", response_model=ExpertFeedbackResponse)
+def submit_expert_feedback(req: ExpertFeedbackRequest, db: Session = Depends(get_db)):
+    """Submit expert pricing feedback for a valuation session.
+
+    Used by experienced sales agents during pilot phase to teach the AI.
+    """
+    try:
+        # Look up the valuation session to get product details
+        vs = db.query(ValuationSession).filter(
+            ValuationSession.id == int(req.valuation_session_id)
+        ).first()
+
+        system_price = None
+        category = None
+        brand = None
+        model_name = None
+        condition = None
+        age = None
+        images = None
+
+        if vs:
+            system_price = vs.opening_offer
+            category = vs.category
+            brand = vs.brand
+            model_name = vs.model
+            condition = vs.condition_grade
+            age = vs.age_years
+            images = vs.defects  # JSON field that may contain image refs
+
+        price_diff = (req.expert_price - system_price) if system_price else None
+
+        feedback = ExpertPriceFeedback(
+            valuation_session_id=req.valuation_session_id,
+            expert_name=req.expert_name,
+            expert_price=req.expert_price,
+            expert_reasoning=req.expert_reasoning,
+            product_category=category,
+            brand=brand,
+            model=model_name,
+            condition_grade=condition,
+            age_years=age,
+            system_price=system_price,
+            price_difference=price_diff,
+            images_json=images,
+            specs_json={
+                "category": category,
+                "brand": brand,
+                "model": model_name,
+                "condition": condition,
+                "age_years": age,
+            },
+        )
+        db.add(feedback)
+        db.commit()
+        db.refresh(feedback)
+
+        logger.info(
+            f"Expert feedback: session={req.valuation_session_id}, "
+            f"expert={req.expert_name}, price={req.expert_price}, "
+            f"system={system_price}, diff={price_diff}"
+        )
+
+        return ExpertFeedbackResponse(
+            id=feedback.id,
+            valuation_session_id=req.valuation_session_id,
+            expert_name=req.expert_name,
+            expert_price=req.expert_price,
+            system_price=system_price,
+            price_difference=price_diff,
+            message=f"Thank you! Your pricing expertise has been recorded and will help improve future valuations.",
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Expert feedback failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# GET /expert-feedback/{session_id}  (MUST be above /{session_id} wildcard)
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/expert-feedback/{session_id}")
+def get_expert_feedback(session_id: str, db: Session = Depends(get_db)):
+    """Retrieve expert feedback for a specific valuation session."""
+    feedbacks = db.query(ExpertPriceFeedback).filter(
+        ExpertPriceFeedback.valuation_session_id == session_id
+    ).all()
+
+    return [
+        {
+            "id": f.id,
+            "expert_name": f.expert_name,
+            "expert_price": f.expert_price,
+            "expert_reasoning": f.expert_reasoning,
+            "system_price": f.system_price,
+            "price_difference": f.price_difference,
+            "created_at": str(f.created_at),
+        }
+        for f in feedbacks
+    ]
 
 
 # ---------------------------------------------------------------------------

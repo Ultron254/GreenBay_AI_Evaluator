@@ -987,6 +987,38 @@ function showResults(data) {
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
 
+ ${data.price_verification ? `
+ <div class="offer-breakdown" style="margin-top:1rem;">
+ <div style="font-weight:600; margin-bottom:8px; color:var(--forest);">📊 Price Verification (${data.price_verification.num_sources || 0} sources)</div>
+ ${(data.price_verification.sources || []).map(s => `
+ <div class="offer-breakdown-row">
+ <span class="label">${s.source.replace(/_/g, ' ')}</span>
+ <span class="value">KES ${formatKES(s.price)}</span>
+ </div>
+ `).join('')}
+ <div class="offer-breakdown-row" style="border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px;">
+ <span class="label" style="font-weight:600;">Reconciled Price</span>
+ <span class="value" style="font-weight:600;">KES ${formatKES(data.price_verification.reconciled_price)}</span>
+ </div>
+ </div>
+ ` : ''}
+
+ <div style="margin-top:1rem; padding:12px; background:rgba(13,159,79,.06); border-radius:var(--radius-sm); border:1px solid rgba(13,159,79,.15);">
+ <div style="font-weight:600; margin-bottom:6px; color:var(--forest);">🧑‍💼 Expert Pricing (Pilot)</div>
+ <p style="font-size:.82rem; color:var(--muted); margin-bottom:10px;">Are you an experienced sales agent? Help train the AI by sharing what you would price this product at.</p>
+ <div id="expertFeedbackForm">
+ <input type="text" id="expertNameInput" class="form-input" placeholder="Your name" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px;">
+ <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (KES)" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px;">
+ <textarea id="expertReasonInput" class="form-input" placeholder="Why this price? (optional)" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px; min-height:50px;"></textarea>
+ <button class="btn btn-secondary btn-sm" onclick="submitExpertFeedback()" style="width:100%;">
+ Submit Expert Price
+ </button>
+ </div>
+ <div id="expertFeedbackSuccess" style="display:none; text-align:center; padding:10px; color:var(--green-primary);">
+ ✅ Thank you! Your expertise has been recorded.
+ </div>
+ </div>
+
  <div style="text-align:center; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
  <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
  <i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
@@ -1034,6 +1066,53 @@ function showResults(data) {
             saveState();
         }
     }, 500);
+}
+
+/* ============================================================
+ EXPERT FEEDBACK
+ ============================================================ */
+function submitExpertFeedback() {
+    const name = document.getElementById('expertNameInput')?.value?.trim();
+    const price = parseFloat(document.getElementById('expertPriceInput')?.value);
+    const reasoning = document.getElementById('expertReasonInput')?.value?.trim();
+
+    if (!name) { alert('Please enter your name'); return; }
+    if (!price || price <= 0) { alert('Please enter a valid price'); return; }
+    if (!state.sessionId) { alert('No session ID available'); return; }
+
+    const btn = document.querySelector('#expertFeedbackForm button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+
+    fetch(`${API_BASE}/tradein/expert-feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            valuation_session_id: String(state.sessionId),
+            expert_name: name,
+            expert_price: price,
+            expert_reasoning: reasoning || null,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        const form = document.getElementById('expertFeedbackForm');
+        const success = document.getElementById('expertFeedbackSuccess');
+        if (form) form.style.display = 'none';
+        if (success) {
+            success.style.display = 'block';
+            const diff = data.price_difference;
+            if (diff !== null && diff !== undefined) {
+                const dir = diff > 0 ? 'higher' : 'lower';
+                success.innerHTML = `✅ Recorded! Your price is KES ${formatKES(Math.abs(diff))} ${dir} than the AI's offer.`;
+            }
+        }
+        addChatMessage('bot', `Expert feedback recorded — thank you, ${name}! 🎯`);
+    })
+    .catch(err => {
+        console.error('Expert feedback error:', err);
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit Expert Price'; }
+        alert('Failed to submit feedback. Please try again.');
+    });
 }
 
 /* ============================================================

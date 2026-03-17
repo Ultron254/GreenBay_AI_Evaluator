@@ -225,9 +225,22 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
 
     if current_state == ConvoState.BRAND:
         session["answers"]["brand"] = text.strip()
+        session["state"] = ConvoState.MODEL
+        return {
+            "text": f"{text.strip()} — nice! 🏷️\n\nDo you know the model name or number? (e.g. RT34, WW90T, 43LM6300)",
+            "buttons": [
+                {"type": "reply", "title": "I don't know"},
+            ],
+        }
+
+    if current_state == ConvoState.MODEL:
+        if "don't know" in text_lower or "not sure" in text_lower or "no" == text_lower:
+            session["answers"]["model"] = ""
+        else:
+            session["answers"]["model"] = text.strip()
         session["state"] = ConvoState.AGE
         return {
-            "text": f"{text.strip()} — nice! 🏷️\n\nHow old is it (approximately)?",
+            "text": "How old is it (approximately)?",
             "buttons": [
                 {"type": "reply", "title": "Under 1 year"},
                 {"type": "reply", "title": "1-3 years"},
@@ -316,35 +329,73 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
         session["answers"]["seller_asking_price"] = price
         session["state"] = ConvoState.ANALYZING
 
-        # In production, trigger evaluation API here
-        offer = _quick_estimate(session)
-        session["evaluation"] = offer
-        session["state"] = ConvoState.NEGOTIATING
+        # Call the REAL evaluator engine (5-point pricing)
+        eval_result = _call_evaluator(session)
 
-        return {
-            "text": (
-                f"🔍 Analyzing your {session['answers'].get('brand', 'appliance')}...\n\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"💰 GreenBay Offer:\n"
-                f"*KES {offer:,.0f}*\n"
-                f"━━━━━━━━━━━━━━━━\n\n"
-                f"Valid for 7 days.\n"
-                f"Free pickup + same-day M-Pesa payment!"
-            ),
-            "buttons": [
-                {"type": "reply", "title": "✅ Accept"},
-                {"type": "reply", "title": "💬 Counter"},
-                {"type": "reply", "title": "❌ Decline"},
-            ],
-        }
+        if eval_result:
+            offer = eval_result.get("opening_offer", 0)
+            session["evaluation"] = eval_result
+            session["evaluation_session_id"] = eval_result.get("session_id")
+            session["state"] = ConvoState.NEGOTIATING
+
+            # Build verification info
+            pv = eval_result.get("price_verification")
+            source_info = ""
+            if pv and pv.get("num_sources", 0) > 1:
+                source_info = f"\n📊 Price verified against {pv['num_sources']} market sources"
+
+            return {
+                "text": (
+                    f"🔍 Analyzing your {session['answers'].get('brand', 'appliance')}...\n\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💰 GreenBay Offer:\n"
+                    f"*KES {offer:,.0f}*\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"{source_info}\n"
+                    f"Grade {eval_result.get('condition_grade', 'B')} | "
+                    f"Confidence: {eval_result.get('confidence_score', 0):.0f}%\n\n"
+                    f"Valid for 7 days.\n"
+                    f"Free pickup + same-day M-Pesa payment!"
+                ),
+                "buttons": [
+                    {"type": "reply", "title": "✅ Accept"},
+                    {"type": "reply", "title": "💬 Counter"},
+                    {"type": "reply", "title": "❌ Decline"},
+                ],
+            }
+        else:
+            # Fallback to quick estimate if evaluator API fails
+            offer = _quick_estimate(session)
+            session["evaluation"] = {"opening_offer": offer}
+            session["state"] = ConvoState.NEGOTIATING
+
+            return {
+                "text": (
+                    f"🔍 Analyzing your {session['answers'].get('brand', 'appliance')}...\n\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💰 GreenBay Offer:\n"
+                    f"*KES {offer:,.0f}*\n"
+                    f"━━━━━━━━━━━━━━━━\n\n"
+                    f"Valid for 7 days.\n"
+                    f"Free pickup + same-day M-Pesa payment!"
+                ),
+                "buttons": [
+                    {"type": "reply", "title": "✅ Accept"},
+                    {"type": "reply", "title": "💬 Counter"},
+                    {"type": "reply", "title": "❌ Decline"},
+                ],
+            }
 
     if current_state == ConvoState.NEGOTIATING:
+        eval_data = session.get("evaluation", {})
+        offer = eval_data.get("opening_offer", 0) if isinstance(eval_data, dict) else eval_data
+
         if "accept" in text_lower or "yes" in text_lower or "deal" in text_lower:
             session["state"] = ConvoState.DEAL_CLOSED
             return {
                 "text": (
                     "🎉 Deal confirmed!\n\n"
-                    f"Amount: KES {session['evaluation']:,.0f}\n"
+                    f"Amount: KES {offer:,.0f}\n"
                     f"Ref: GB-{session['session_id']}\n\n"
                     "📍 Our team will call within 24 hours to arrange FREE pickup.\n"
                     "⚡ Payment via M-Pesa — same day.\n\n"
@@ -355,16 +406,20 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
             session["state"] = ConvoState.DEAL_CLOSED
             return {
                 "text": (
-                    f"I understand. Our offer of KES {session['evaluation']:,.0f} "
+                    f"I understand. Our offer of KES {offer:,.0f} "
                     "stands for 7 days.\n\n"
                     "Feel free to reach out anytime! 💚"
                 ),
             }
         else:
-            # Counter-offer
+            # Counter-offer — try to call the real counter API
+            counter_result = _handle_counter(session, text)
+            if counter_result:
+                return counter_result
+
             return {
                 "text": (
-                    f"I appreciate the counter. Unfortunately, KES {session['evaluation']:,.0f} "
+                    f"I appreciate the counter. Unfortunately, KES {offer:,.0f} "
                     "is the best I can offer for this unit based on current market data.\n\n"
                     "Would you like to accept?"
                 ),
@@ -385,8 +440,175 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
     return {"text": "Type 'sell' to start a new valuation! 📱"}
 
 
+# ---------------------------------------------------------------------------
+# Image download helper
+# ---------------------------------------------------------------------------
+def _download_image_as_base64(media_url: str) -> str | None:
+    """Download an image from a Flowcart/WhatsApp media URL and return as base64."""
+    import base64
+
+    import httpx
+
+    try:
+        settings = get_settings()
+        headers = {}
+        # If this is a WhatsApp media URL, add auth token
+        if "graph.facebook.com" in media_url or "whatsapp" in media_url.lower():
+            token = getattr(settings, "whatsapp_api_token", None)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(media_url, headers=headers, follow_redirects=True)
+            resp.raise_for_status()
+            return base64.b64encode(resp.content).decode("utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to download image from {media_url}: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Real evaluator API call
+# ---------------------------------------------------------------------------
+def _call_evaluator(session: dict) -> dict | None:
+    """Call the real /tradein/evaluate endpoint with session data.
+
+    Downloads photos from media URLs, encodes as base64, and submits
+    to the same evaluator engine that the web frontend uses.
+    """
+    import httpx
+
+    answers = session.get("answers", {})
+    photos = session.get("photos", [])
+
+    # Download and encode images as base64
+    image_data = []
+    for url in photos:
+        b64 = _download_image_as_base64(url)
+        if b64:
+            image_data.append(b64)
+
+    # Map category retail price estimates for the required retail_price field
+    cat_retail = {
+        "refrigerator": 65000, "washing_machine": 55000, "tv_monitor": 45000,
+        "cooker_oven": 40000, "microwave": 15000, "air_conditioner": 50000,
+        "water_dispenser": 20000, "other": 30000,
+    }
+    retail = cat_retail.get(answers.get("category", "other"), 30000)
+
+    # Build the EvaluateRequest payload
+    payload = {
+        "category": answers.get("category", "other"),
+        "brand": answers.get("brand", "Unknown"),
+        "model": answers.get("model", ""),
+        "age_years": answers.get("age_years", 2.0),
+        "condition_grade": answers.get("condition_grade", "B"),
+        "condition_score": answers.get("condition_score", 65),
+        "defects": [],
+        "seller_asking_price": answers.get("seller_asking_price"),
+        "seller_name": None,
+        "seller_phone": session.get("phone"),
+        "image_urls": photos,
+        "image_data": image_data,
+        "retail_price": retail,
+        "retail_price_source": "whatsapp_category_estimate",
+    }
+
+    try:
+        # Internal call to our own API
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                "http://127.0.0.1:8000/tradein/evaluate",
+                json=payload,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(
+                f"WhatsApp evaluation complete: session={result.get('session_id')}, "
+                f"offer={result.get('opening_offer')}, "
+                f"decision={result.get('decision')}"
+            )
+            return result
+    except Exception as e:
+        logger.error(f"Evaluator API call failed for WhatsApp session: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Counter-offer via real API
+# ---------------------------------------------------------------------------
+def _handle_counter(session: dict, text: str) -> dict | None:
+    """Process a counter-offer through the real negotiation API."""
+    import httpx
+
+    eval_session_id = session.get("evaluation_session_id")
+    if not eval_session_id:
+        return None
+
+    # Parse counter amount
+    try:
+        cleaned = text.lower().replace(",", "").replace("kes", "").strip()
+        if cleaned.endswith("k"):
+            counter_amount = float(cleaned[:-1]) * 1000
+        else:
+            counter_amount = float(cleaned)
+    except ValueError:
+        return None
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"http://127.0.0.1:8000/tradein/{eval_session_id}/counter",
+                json={"seller_counter": counter_amount},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        decision = result.get("decision", "")
+        system_offer = result.get("system_offer", 0)
+        rounds_remaining = result.get("rounds_remaining", 0)
+
+        # Update session with latest offer
+        if isinstance(session.get("evaluation"), dict):
+            session["evaluation"]["opening_offer"] = system_offer
+
+        if decision == "accept":
+            session["state"] = ConvoState.DEAL_CLOSED
+            return {
+                "text": (
+                    f"✅ We can do *KES {system_offer:,.0f}*!\n\n"
+                    "🎉 Deal confirmed!\n"
+                    f"Ref: GB-{session['session_id']}\n\n"
+                    "📍 Our team will call within 24 hours for FREE pickup.\n"
+                    "⚡ M-Pesa payment — same day.\n\n"
+                    "Asante sana! 💚"
+                ),
+            }
+        elif decision == "counter":
+            return {
+                "text": (
+                    f"I can adjust to *KES {system_offer:,.0f}*.\n"
+                    f"({rounds_remaining} negotiation rounds remaining)\n\n"
+                    "Would this work for you?"
+                ),
+                "buttons": [
+                    {"type": "reply", "title": "✅ Accept"},
+                    {"type": "reply", "title": "❌ No thanks"},
+                ],
+            }
+        else:
+            return None
+
+    except Exception as e:
+        logger.warning(f"Counter API call failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Fallback estimator (used when evaluator API is unavailable)
+# ---------------------------------------------------------------------------
 def _quick_estimate(session: dict) -> float:
-    """Quick locally-computed estimate for WhatsApp (no API call)."""
+    """Quick locally-computed estimate — fallback only."""
     cat_retail = {
         "refrigerator": 65000, "washing_machine": 55000, "tv_monitor": 45000,
         "cooker_oven": 40000, "microwave": 15000, "air_conditioner": 50000,
@@ -401,3 +623,4 @@ def _quick_estimate(session: dict) -> float:
     depr = max(0.05, 0.85 ** age)
     offer = retail * depr * grade_mult.get(grade, 0.45)
     return round(offer / 100) * 100
+

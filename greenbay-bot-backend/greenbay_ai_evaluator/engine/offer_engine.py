@@ -65,7 +65,7 @@ class ValuationResult:
 
     # Intermediates
     base_value: float
-    base_value_source: str  # "comparables" | "depreciation"
+    base_value_source: str  # "comparables" | "depreciation" | "reconciled"
     brand_adjusted_value: float
     condition_adjusted_value: float
     defect_deduction_total: float
@@ -76,6 +76,9 @@ class ValuationResult:
     # Pass-through inputs for snapshot
     condition_grade: str
     risk_score: float
+
+    # Multi-source price verification
+    price_verification: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +164,68 @@ def _compute_confidence(
 
 
 # ---------------------------------------------------------------------------
+# Multi-source price reconciliation
+# ---------------------------------------------------------------------------
+def reconcile_retail_price(
+    *,
+    frontend_price: float,
+    internet_price: float | None = None,
+    marketplace_avg: float | None = None,
+    shopify_avg: float | None = None,
+    expert_avg: float | None = None,
+) -> dict[str, Any]:
+    """Reconcile retail price from multiple sources.
+
+    Returns a dict with the reconciled price and breakdown of sources.
+    Each source gets a weight based on reliability.
+    """
+    sources = []
+    total_weight = 0.0
+    weighted_sum = 0.0
+
+    # Frontend / AI-provided price (weight 1.0 — baseline)
+    if frontend_price and frontend_price > 0:
+        sources.append({"source": "frontend", "price": frontend_price, "weight": 1.0})
+        weighted_sum += frontend_price * 1.0
+        total_weight += 1.0
+
+    # Internet lookup (weight 2.0 — real retail data)
+    if internet_price and internet_price > 0:
+        sources.append({"source": "internet_lookup", "price": internet_price, "weight": 2.0})
+        weighted_sum += internet_price * 2.0
+        total_weight += 2.0
+
+    # Marketplace average from Jiji/Jumia (weight 2.5 — actual secondhand market)
+    if marketplace_avg and marketplace_avg > 0:
+        sources.append({"source": "marketplace_jiji_jumia", "price": marketplace_avg, "weight": 2.5})
+        weighted_sum += marketplace_avg * 2.5
+        total_weight += 2.5
+
+    # Our Shopify inventory average (weight 3.0 — our own verified prices)
+    if shopify_avg and shopify_avg > 0:
+        sources.append({"source": "shopify_inventory", "price": shopify_avg, "weight": 3.0})
+        weighted_sum += shopify_avg * 3.0
+        total_weight += 3.0
+
+    # Expert feedback (weight 4.0 — highest reliability)
+    if expert_avg and expert_avg > 0:
+        sources.append({"source": "expert_feedback", "price": expert_avg, "weight": 4.0})
+        weighted_sum += expert_avg * 4.0
+        total_weight += 4.0
+
+    reconciled = weighted_sum / total_weight if total_weight > 0 else frontend_price
+    num_sources = len(sources)
+
+    return {
+        "reconciled_price": round(reconciled, 2),
+        "sources": sources,
+        "num_sources": num_sources,
+        "confidence": min(100.0, num_sources * 20.0 + 10.0),
+        "frontend_price": frontend_price,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 def compute_valuation(
@@ -178,6 +243,7 @@ def compute_valuation(
     comparables: list[Comparable],
     pricing_policy: PricingPolicyData,
     retail_price: float,
+    price_verification: dict[str, Any] | None = None,
 ) -> ValuationResult:
     """Deterministic valuation computation.
 
@@ -218,6 +284,11 @@ def compute_valuation(
     """
 
     # -- STEP 1: Base value --------------------------------------------------
+    # Use reconciled price if available from multi-source verification
+    effective_retail = retail_price
+    if price_verification and price_verification.get("reconciled_price"):
+        effective_retail = price_verification["reconciled_price"]
+
     # Compute weighted average of comparables if confidence is high enough
     total_weight = sum(c.weight for c in comparables) if comparables else 0.0
     comparables_avg = (
@@ -230,9 +301,13 @@ def compute_valuation(
     if comparables and comparables_confidence >= 70:
         base_value = comparables_avg
         base_value_source = "comparables"
+    elif price_verification and price_verification.get("num_sources", 0) >= 2:
+        # Multi-source reconciled price (at least 2 external sources)
+        base_value = effective_retail
+        base_value_source = "reconciled"
     else:
         depreciation_factor = _compute_depreciation_factor(age_years, pricing_policy)
-        base_value = retail_price * depreciation_factor
+        base_value = effective_retail * depreciation_factor
         base_value_source = "depreciation"
 
     # -- STEP 2: Brand adjustment --------------------------------------------
@@ -352,6 +427,7 @@ def compute_valuation(
         risk_adjustment_applied=risk_adjustment_applied,
         condition_grade=grade_upper,
         risk_score=risk_score,
+        price_verification=price_verification or {},
     )
 
 

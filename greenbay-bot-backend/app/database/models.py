@@ -359,3 +359,29 @@ class PickupRequest(Base):
     status = Column(String(20), default="pending")  # pending, scheduled, completed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ExpertPriceFeedback(Base):
+    """Expert pricing feedback for AI learning.
+
+    Stores prices provided by experienced sales agents during pilot phase.
+    Used as high-weight comparables and for training the pricing model.
+    """
+    __tablename__ = "expert_price_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    valuation_session_id = Column(String(36), nullable=True, index=True)
+    expert_name = Column(String(100), nullable=False)
+    expert_price = Column(Float, nullable=False)
+    expert_reasoning = Column(Text, nullable=True)
+    product_category = Column(String(100), nullable=True, index=True)
+    brand = Column(String(100), nullable=True, index=True)
+    model = Column(String(200), nullable=True)
+    condition_grade = Column(String(50), nullable=True)
+    age_years = Column(Float, nullable=True)
+    system_price = Column(Float, nullable=True)  # What the AI offered
+    price_difference = Column(Float, nullable=True)  # expert_price - system_price
+    images_json = Column(JSON, nullable=True)  # List of image URLs
+    specs_json = Column(JSON, nullable=True)  # Product specifications
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
