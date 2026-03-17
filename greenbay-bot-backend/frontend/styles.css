@@ -2394,52 +2394,71 @@ textarea.form-input {
 .floating-icon {
   position: absolute;
   color: var(--green-primary);
-  opacity: 0.04;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-  animation-direction: alternate;
+  opacity: 0.09;
+  filter: drop-shadow(0 0 6px rgba(13, 159, 79, 0.15));
+  transition: opacity 0.5s ease;
 }
 
-.fi-1 { top: 8%; left: 5%; animation: float-drift-1 18s infinite; }
-.fi-2 { top: 15%; right: 8%; animation: float-drift-2 22s infinite; }
-.fi-3 { top: 40%; left: 3%; animation: float-drift-3 20s infinite; }
-.fi-4 { top: 55%; right: 4%; animation: float-drift-4 16s infinite; }
-.fi-5 { top: 75%; left: 8%; animation: float-drift-5 24s infinite; }
-.fi-6 { top: 25%; left: 92%; animation: float-drift-6 19s infinite; }
-.fi-7 { top: 65%; right: 10%; animation: float-drift-7 21s infinite; }
-.fi-8 { top: 88%; left: 15%; animation: float-drift-8 17s infinite; }
+.fi-1 { top: 8%; left: 5%; animation: float-drift-1 14s ease-in-out infinite; }
+.fi-2 { top: 15%; right: 8%; animation: float-drift-2 18s ease-in-out infinite; }
+.fi-3 { top: 40%; left: 3%; animation: float-drift-3 16s ease-in-out infinite; }
+.fi-4 { top: 55%; right: 4%; animation: float-drift-4 12s ease-in-out infinite; }
+.fi-5 { top: 75%; left: 8%; animation: float-drift-5 20s ease-in-out infinite; }
+.fi-6 { top: 25%; left: 92%; animation: float-drift-6 15s ease-in-out infinite; }
+.fi-7 { top: 65%; right: 10%; animation: float-drift-7 17s ease-in-out infinite; }
+.fi-8 { top: 88%; left: 15%; animation: float-drift-8 13s ease-in-out infinite; }
 
 @keyframes float-drift-1 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(20px, -30px) rotate(15deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
+  25%  { transform: translate(30px, -20px) rotate(8deg) scale(1.08); opacity: 0.10; }
+  50%  { transform: translate(10px, -45px) rotate(-5deg) scale(1.02); opacity: 0.12; }
+  75%  { transform: translate(-15px, -25px) rotate(12deg) scale(1.06); opacity: 0.09; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
 }
 @keyframes float-drift-2 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(-25px, 20px) rotate(-10deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
+  20%  { transform: translate(-20px, 30px) rotate(-10deg) scale(1.05); opacity: 0.11; }
+  50%  { transform: translate(-40px, 15px) rotate(6deg) scale(1.1); opacity: 0.13; }
+  80%  { transform: translate(-10px, 40px) rotate(-4deg) scale(1.03); opacity: 0.10; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
 }
 @keyframes float-drift-3 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(15px, 25px) rotate(12deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.06; }
+  30%  { transform: translate(25px, 35px) rotate(15deg) scale(1.12); opacity: 0.11; }
+  60%  { transform: translate(40px, 10px) rotate(-8deg) scale(1.05); opacity: 0.14; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.06; }
 }
 @keyframes float-drift-4 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(-18px, -15px) rotate(-8deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
+  33%  { transform: translate(-30px, -25px) rotate(-12deg) scale(1.08); opacity: 0.12; }
+  66%  { transform: translate(-15px, -45px) rotate(6deg) scale(1.04); opacity: 0.10; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
 }
 @keyframes float-drift-5 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(22px, -20px) rotate(18deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
+  25%  { transform: translate(35px, -15px) rotate(10deg) scale(1.06); opacity: 0.11; }
+  50%  { transform: translate(20px, -40px) rotate(-6deg) scale(1.1); opacity: 0.13; }
+  75%  { transform: translate(-10px, -20px) rotate(14deg) scale(1.03); opacity: 0.09; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
 }
 @keyframes float-drift-6 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(-12px, 28px) rotate(-14deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.06; }
+  35%  { transform: translate(-20px, 40px) rotate(-15deg) scale(1.1); opacity: 0.12; }
+  65%  { transform: translate(-35px, 20px) rotate(8deg) scale(1.05); opacity: 0.10; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.06; }
 }
 @keyframes float-drift-7 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(16px, 18px) rotate(10deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
+  20%  { transform: translate(20px, 30px) rotate(12deg) scale(1.07); opacity: 0.11; }
+  50%  { transform: translate(40px, 15px) rotate(-5deg) scale(1.12); opacity: 0.14; }
+  80%  { transform: translate(15px, 35px) rotate(8deg) scale(1.04); opacity: 0.10; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.08; }
 }
 @keyframes float-drift-8 {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  100% { transform: translate(-20px, -22px) rotate(-12deg); }
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
+  30%  { transform: translate(-25px, -35px) rotate(-10deg) scale(1.09); opacity: 0.12; }
+  70%  { transform: translate(-40px, -15px) rotate(12deg) scale(1.05); opacity: 0.10; }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.07; }
 }
 
 /* Hide floating icons on smaller screens where they'd be distracting */
