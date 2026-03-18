@@ -38,10 +38,20 @@ class QdrantService:
     
     def __init__(self):
         """Initialize Qdrant client and load sentence-transformers model once."""
-        self.client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key
-        )
+        try:
+            self.client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key,
+                timeout=3,  # Fail fast if Qdrant isn't running
+            )
+            # Quick connectivity check
+            self.client.get_collections()
+            self._connected = True
+            logger.info("✓ Qdrant connected successfully")
+        except Exception as e:
+            logger.warning(f"Qdrant not available ({e}), product search disabled")
+            self.client = None
+            self._connected = False
         self.collection_name = settings.qdrant_collection_name
         
         # Load sentence-transformers model ONCE at initialization
