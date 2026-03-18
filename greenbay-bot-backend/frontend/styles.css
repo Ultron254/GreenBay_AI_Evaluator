@@ -408,17 +408,20 @@ select {
 
 /* Outline button for "Learn More" */
 .btn-outline {
-  background: transparent;
-  color: var(--forest);
-  border: 2px solid rgba(6, 78, 59, 0.2);
+  background: linear-gradient(135deg, #0D9F4F 0%, #064E3B 100%);
+  color: #fff;
+  border: 2px solid rgba(13, 159, 79, 0.3);
   font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 8px rgba(13, 159, 79, 0.18);
 }
 
 .btn-outline:hover {
   border-color: var(--green-primary);
-  color: var(--green-primary);
-  transform: translateY(-1px);
-  background: rgba(13, 159, 79, 0.04);
+  color: #fff;
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, #10b860 0%, #0D9F4F 100%);
+  box-shadow: 0 4px 16px rgba(13, 159, 79, 0.3);
 }
 
 /* Bug report button */

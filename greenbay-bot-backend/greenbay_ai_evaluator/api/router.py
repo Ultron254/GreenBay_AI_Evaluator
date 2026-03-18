@@ -309,13 +309,50 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Shopify lookup failed: {e}")
 
-        # --- Source D: Expert feedback average ---
+        # --- Source D: Expert feedback average (learning from past expert prices) ---
         try:
-            if comp_result.sources_breakdown and comp_result.sources_breakdown.get("expert", 0) > 0:
-                expert_comps = [c for c in comp_result.comparables if c.weight >= 2.5]
-                if expert_comps:
-                    expert_avg = sum(c.resale_price for c in expert_comps) / len(expert_comps)
-            logger.info(f"Expert feedback: avg={expert_avg}")
+            from sqlalchemy import func as sqla_func, desc as sqla_desc
+            # Query expert feedback for similar products (same category + brand)
+            expert_query = (
+                db.query(ExpertPriceFeedback)
+                .filter(
+                    ExpertPriceFeedback.product_category == req.category,
+                    ExpertPriceFeedback.brand == req.brand,
+                    ExpertPriceFeedback.expert_price > 0,
+                )
+            )
+            # If we know the model, prefer exact model matches
+            exact_model_prices = (
+                expert_query
+                .filter(ExpertPriceFeedback.model == req.model)
+                .order_by(sqla_desc(ExpertPriceFeedback.created_at))
+                .limit(10)
+                .all()
+            )
+            if exact_model_prices:
+                # Exact model match — highly relevant
+                expert_avg = sum(f.expert_price for f in exact_model_prices) / len(exact_model_prices)
+                logger.info(f"Expert feedback (exact model): avg={expert_avg}, count={len(exact_model_prices)}")
+            else:
+                # Fallback: same category + brand, weighted by recency
+                brand_prices = (
+                    expert_query
+                    .order_by(sqla_desc(ExpertPriceFeedback.created_at))
+                    .limit(20)
+                    .all()
+                )
+                if brand_prices:
+                    # Weight more recent feedback higher
+                    total_weight = 0
+                    weighted_sum = 0
+                    for i, f in enumerate(brand_prices):
+                        weight = 1.0 / (i + 1)  # Recency decay: 1, 0.5, 0.33, ...
+                        weighted_sum += f.expert_price * weight
+                        total_weight += weight
+                    expert_avg = weighted_sum / total_weight if total_weight > 0 else None
+                    logger.info(f"Expert feedback (brand-level): avg={expert_avg}, count={len(brand_prices)}")
+                else:
+                    logger.info("Expert feedback: no matching records found")
         except Exception as e:
             logger.warning(f"Expert feedback lookup failed: {e}")
 
@@ -360,10 +397,16 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "confidence": lens_result.confidence,
                 }
 
+            if expert_avg:
+                price_verification["expert_data"] = {
+                    "avg_price": expert_avg,
+                    "confidence": 80.0,
+                }
+
             logger.info(
                 f"Price verification: {price_verification['num_sources']} sources, "
                 f"reconciled={price_verification['reconciled_price']}, "
-                f"frontend={req.retail_price}"
+                f"frontend={req.retail_price}, expert_avg={expert_avg}"
             )
         except Exception as pve:
             logger.warning(f"Price reconciliation failed: {pve}")
