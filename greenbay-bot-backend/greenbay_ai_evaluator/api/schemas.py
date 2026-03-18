@@ -1,37 +1,119 @@
-"""Pydantic request / response models for the evaluator API."""
+"""Pydantic request / response models for the evaluator API.
+
+Security: All request models use strict input validation including:
+- max_length on all string fields to prevent oversized payloads
+- regex patterns for structured fields (phone, grades)
+- extra="forbid" to reject unexpected fields (OWASP input validation)
+- ge/le/gt constraints on numeric fields
+"""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# Shared HTML sanitiser — strips tags from free-text inputs (XSS prevention)
+# ---------------------------------------------------------------------------
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_tags(v: str | None) -> str | None:
+    """Remove HTML tags from a string to prevent stored XSS."""
+    if v is None:
+        return v
+    return _TAG_RE.sub("", v).strip()
 
 
 # ---------------------------------------------------------------------------
 # POST /tradein/evaluate
 # ---------------------------------------------------------------------------
 class DefectItem(BaseModel):
-    type: str = Field(..., description="Defect type key, e.g. 'cosmetic_scratch'")
-    description: str | None = Field(None, description="Human-readable description")
-    severity: str | None = Field(None, description="low / medium / high")
+    """Individual defect reported by the seller."""
+
+    model_config = ConfigDict(extra="forbid")  # Reject unexpected fields
+
+    type: str = Field(
+        ...,
+        max_length=100,
+        description="Defect type key, e.g. 'cosmetic_scratch'",
+    )
+    description: str | None = Field(
+        None,
+        max_length=500,
+        description="Human-readable description",
+    )
+    severity: str | None = Field(
+        None,
+        max_length=20,
+        description="low / medium / high",
+    )
+
+    @field_validator("type", "description", "severity", mode="before")
+    @classmethod
+    def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
+        return _strip_tags(v)
 
 
 class EvaluateRequest(BaseModel):
+    """Request body for POST /tradein/evaluate.
+
+    All string fields have max_length constraints.
+    image_data is limited to 8 photos max.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     trade_in_session_id: int | None = Field(None, description="FK to existing trade_in_sessions row")
-    category: str = Field(..., description="Product category, e.g. 'refrigerator'")
-    brand: str = Field(..., description="Brand name")
-    model: str = Field("", description="Model identifier")
-    age_years: float = Field(0.0, ge=0, description="Approx product age in years")
-    condition_grade: str = Field(..., description="A / B / C / D or Excellent / Good / Fair / Poor")
+    category: str = Field(
+        ...,
+        max_length=50,
+        description="Product category, e.g. 'refrigerator'",
+    )
+    brand: str = Field(..., max_length=100, description="Brand name")
+    model: str = Field("", max_length=200, description="Model identifier")
+    age_years: float = Field(0.0, ge=0, le=50, description="Approx product age in years")
+    condition_grade: str = Field(
+        ...,
+        max_length=20,
+        description="A / B / C / D or Excellent / Good / Fair / Poor",
+    )
     condition_score: float = Field(..., ge=0, le=100, description="Numeric condition 0-100")
-    defects: list[DefectItem] = Field(default_factory=list)
-    seller_asking_price: float | None = Field(None, ge=0, description="What the seller wants (KES)")
-    seller_name: str | None = Field(None, description="Seller's full name")
-    seller_phone: str | None = Field(None, description="Seller's phone number")
-    image_urls: list[str] = Field(default_factory=list)
-    image_data: list[str] = Field(default_factory=list, description="Base64-encoded photo data from frontend")
-    retail_price: float = Field(..., gt=0, description="Original retail price KES")
-    retail_price_source: str = Field("", description="Where retail price came from")
+    defects: list[DefectItem] = Field(default_factory=list, max_length=20)
+    seller_asking_price: float | None = Field(None, ge=0, le=50_000_000, description="What the seller wants (KES)")
+    seller_name: str | None = Field(None, max_length=200, description="Seller's full name")
+    seller_phone: str | None = Field(None, max_length=30, description="Seller's phone number")
+    image_urls: list[str] = Field(default_factory=list, max_length=8)
+    image_data: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Base64-encoded photo data from frontend (max 8)",
+    )
+    retail_price: float = Field(..., gt=0, le=50_000_000, description="Original retail price KES")
+    retail_price_source: str = Field("", max_length=100, description="Where retail price came from")
+
+    @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", mode="before")
+    @classmethod
+    def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
+        return _strip_tags(v)
+
+    @field_validator("seller_name", mode="before")
+    @classmethod
+    def sanitise_name(cls, v: str | None) -> str | None:  # noqa: N805
+        return _strip_tags(v)
+
+    @field_validator("seller_phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:  # noqa: N805
+        if v is None:
+            return v
+        v = _strip_tags(v)
+        # Allow digits, spaces, dashes, plus sign, and parentheses
+        cleaned = re.sub(r"[^\d+\-() ]", "", v)
+        return cleaned[:30] if cleaned else v
 
 
 class EvaluateResponse(BaseModel):
@@ -51,10 +133,36 @@ class EvaluateResponse(BaseModel):
 
 
 class ExpertFeedbackRequest(BaseModel):
-    valuation_session_id: str = Field(..., description="Session ID from the evaluation")
-    expert_name: str = Field(..., description="Name of the expert providing feedback")
-    expert_price: float = Field(..., gt=0, description="Expert's assessed price in KES")
-    expert_reasoning: str | None = Field(None, description="Why the expert chose this price")
+    """Expert pricing feedback — strict validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valuation_session_id: str = Field(
+        ...,
+        max_length=50,
+        description="Session ID from the evaluation",
+    )
+    expert_name: str = Field(
+        ...,
+        max_length=200,
+        description="Name of the expert providing feedback",
+    )
+    expert_price: float = Field(
+        ...,
+        gt=0,
+        le=50_000_000,
+        description="Expert's assessed price in KES",
+    )
+    expert_reasoning: str | None = Field(
+        None,
+        max_length=1000,
+        description="Why the expert chose this price",
+    )
+
+    @field_validator("expert_name", "expert_reasoning", mode="before")
+    @classmethod
+    def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
+        return _strip_tags(v)
 
 
 class ExpertFeedbackResponse(BaseModel):
@@ -71,7 +179,16 @@ class ExpertFeedbackResponse(BaseModel):
 # POST /tradein/{session_id}/counter
 # ---------------------------------------------------------------------------
 class CounterRequest(BaseModel):
-    seller_counter: float = Field(..., gt=0, description="Seller's counter-offer in KES")
+    """Counter-offer — strict validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    seller_counter: float = Field(
+        ...,
+        gt=0,
+        le=50_000_000,
+        description="Seller's counter-offer in KES",
+    )
 
 
 class CounterResponse(BaseModel):
@@ -135,15 +252,49 @@ class SessionDetailResponse(BaseModel):
 # POST /tradein/notify-pickup
 # ---------------------------------------------------------------------------
 class PickupNotifyRequest(BaseModel):
-    valuation_session_id: str | None = Field(None, description="FK to valuation session")
-    seller_name: str = Field(..., description="Seller's full name")
-    seller_phone: str = Field(..., description="Seller's phone number")
-    appliance_description: str = Field("", description="E.g. Hisense 124L Fridge")
-    condition_grade: str | None = Field(None)
-    agreed_price: float | None = Field(None, ge=0)
-    pickup_address: str = Field(..., description="Full pickup address")
-    preferred_day: str | None = Field(None, description="E.g. Monday, Tomorrow")
-    photo_count: int = Field(0, ge=0)
+    """Pickup notification — strict validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valuation_session_id: str | None = Field(
+        None,
+        max_length=50,
+        description="FK to valuation session",
+    )
+    seller_name: str = Field(..., max_length=200, description="Seller's full name")
+    seller_phone: str = Field(..., max_length=30, description="Seller's phone number")
+    appliance_description: str = Field(
+        "",
+        max_length=500,
+        description="E.g. Hisense 124L Fridge",
+    )
+    condition_grade: str | None = Field(None, max_length=20)
+    agreed_price: float | None = Field(None, ge=0, le=50_000_000)
+    pickup_address: str = Field(
+        ...,
+        max_length=500,
+        description="Full pickup address",
+    )
+    preferred_day: str | None = Field(
+        None,
+        max_length=50,
+        description="E.g. Monday, Tomorrow",
+    )
+    photo_count: int = Field(0, ge=0, le=20)
+
+    @field_validator("seller_name", "appliance_description", "pickup_address", "preferred_day", mode="before")
+    @classmethod
+    def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
+        return _strip_tags(v)
+
+    @field_validator("seller_phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:  # noqa: N805
+        if v is None:
+            return v
+        v = _strip_tags(v)
+        cleaned = re.sub(r"[^\d+\-() ]", "", v)
+        return cleaned[:30] if cleaned else v
 
 
 class PickupNotifyResponse(BaseModel):

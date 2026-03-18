@@ -37,3 +37,13 @@ greenbay-bot-backend/receipts/
 
 # Node modules (if any)
 node_modules/
+
+# Security: SSL keys and certificates
+*.pem
+*.key
+*.crt
+
+# Logs and temp files
+logs/
+greenbay-bot-backend/logs/
+greenbay-bot-backend/temp_images/

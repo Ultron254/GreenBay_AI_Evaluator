@@ -1,4 +1,10 @@
-"""Configuration management for GreenBay Market Chatbot."""
+"""Configuration management for GreenBay Market Chatbot.
+
+Security notes:
+- All secret fields use repr=False so they are not exposed in logs or __repr__.
+- Default values are empty strings — production MUST provide real values via .env.
+- get_settings() logs a warning if critical keys are missing.
+"""
 
 import os
 from typing import Optional
@@ -10,37 +16,37 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # OpenAI Configuration
-    openai_api_key: str = Field(default="test_key", env="OPENAI_API_KEY")
+    openai_api_key: str = Field(default="", env="OPENAI_API_KEY", repr=False)
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
     
     # Anthropic (Claude) Configuration — for AI Evaluator vision & chat
-    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY", repr=False)
     anthropic_primary_model: str = Field(default="claude-opus-4-20250514", env="ANTHROPIC_PRIMARY_MODEL")
     anthropic_fallback_model: str = Field(default="claude-sonnet-4-20250514", env="ANTHROPIC_FALLBACK_MODEL")
     
     # Flowcart (WhatsApp Integration) Configuration
-    flowcart_webhook_secret: Optional[str] = Field(default=None, env="FLOWCART_WEBHOOK_SECRET")
-    flowcart_api_key: Optional[str] = Field(default=None, env="FLOWCART_API_KEY")
+    flowcart_webhook_secret: Optional[str] = Field(default=None, env="FLOWCART_WEBHOOK_SECRET", repr=False)
+    flowcart_api_key: Optional[str] = Field(default=None, env="FLOWCART_API_KEY", repr=False)
     flowcart_api_url: str = Field(default="https://api.flowcart.io/v1", env="FLOWCART_API_URL")
     
     # Tavily Web Search (for internet price verification)
-    tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
+    tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY", repr=False)
     
     # Google Cloud Vision API (for Google Lens product identification)
-    google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY")
+    google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY", repr=False)
     
     # WhatsApp Business API Configuration
-    whatsapp_api_token: str = Field(default="test_token", validation_alias="ACCESS_TOKEN")
-    whatsapp_phone_number_id: str = Field(default="test_id", validation_alias="PHONE_NUMBER_ID")
-    whatsapp_verify_token: str = Field(default="test_verify_token", validation_alias="VERIFY_TOKEN")
-    whatsapp_catalog_id: str = Field(default="test_catalog", env="CATALOG_ID")
-    whatsapp_app_id: str = Field(default="test_app_id", env="APP_ID")
-    whatsapp_app_secret: str = Field(default="test_app_secret", env="APP_SECRET")
+    whatsapp_api_token: str = Field(default="", validation_alias="ACCESS_TOKEN", repr=False)
+    whatsapp_phone_number_id: str = Field(default="", validation_alias="PHONE_NUMBER_ID")
+    whatsapp_verify_token: str = Field(default="", validation_alias="VERIFY_TOKEN", repr=False)
+    whatsapp_catalog_id: str = Field(default="", env="CATALOG_ID")
+    whatsapp_app_id: str = Field(default="", env="APP_ID")
+    whatsapp_app_secret: str = Field(default="", env="APP_SECRET", repr=False)
     whatsapp_version: str = Field(default="v23.0", env="VERSION")
     
     # Qdrant Vector Database Configuration
     qdrant_url: str = Field(default="http://localhost:9400", env="QDRANT_URL")
-    qdrant_api_key: Optional[str] = Field(default=None, env="QDRANT_API_KEY")
+    qdrant_api_key: Optional[str] = Field(default=None, env="QDRANT_API_KEY", repr=False)
     qdrant_collection_name: str = Field(default="products", env="QDRANT_COLLECTION")
     embedding_dim: int = Field(default=768, env="EMBEDDING_DIM")
     similarity_threshold: float = Field(default=0.5, env="SIMILARITY_THRESHOLD")
@@ -50,10 +56,10 @@ class Settings(BaseSettings):
     qdrant_rerank_model: str = Field(default="cohere-rerank-v3", env="QDRANT_RERANK_MODEL")
     
     # M-Pesa Daraja API Configuration
-    mpesa_consumer_key: str = Field(default="test_consumer_key", env="MPESA_CONSUMER_KEY")
-    mpesa_consumer_secret: str = Field(default="test_consumer_secret", env="MPESA_CONSUMER_SECRET")
-    mpesa_shortcode: str = Field(default="test_shortcode", env="MPESA_BUSINESS_SHORTCODE")
-    mpesa_passkey: str = Field(default="test_passkey", env="MPESA_PASSKEY")
+    mpesa_consumer_key: str = Field(default="", env="MPESA_CONSUMER_KEY", repr=False)
+    mpesa_consumer_secret: str = Field(default="", env="MPESA_CONSUMER_SECRET", repr=False)
+    mpesa_shortcode: str = Field(default="", env="MPESA_BUSINESS_SHORTCODE")
+    mpesa_passkey: str = Field(default="", env="MPESA_PASSKEY", repr=False)
     mpesa_environment: str = Field(default="sandbox", env="MPESA_ENVIRONMENT")
     mpesa_phone_number: str = Field(default="test_phone", env="MPESA_PHONE_NUMBER")
     mpesa_callback_url: str = Field(default="https://test.com/callback", env="MPESA_CALLBACK_URL")
@@ -64,17 +70,17 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432, env="POSTGRES_PORT")
     postgres_db: str = Field(default="greenbay_market", env="POSTGRES_DB")
     postgres_user: str = Field(default="postgres", env="POSTGRES_USER")
-    postgres_password: str = Field(default="", env="POSTGRES_PASSWORD")
+    postgres_password: str = Field(default="", env="POSTGRES_PASSWORD", repr=False)
     
     # Redis Configuration
     redis_host: str = Field(default="localhost", env="REDIS_HOST")
     redis_port: int = Field(default=9300, env="REDIS_PORT")
     redis_db: int = Field(default=0, env="REDIS_DB")
-    redis_password: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
+    redis_password: Optional[str] = Field(default=None, env="REDIS_PASSWORD", repr=False)
     
     # AWS S3 Configuration
-    aws_access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY")
+    aws_access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID", repr=False)
+    aws_secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY", repr=False)
     aws_region: str = Field(default="eu-north-1", env="AWS_DEFAULT_REGION")
     aws_s3_bucket: str = Field(default="greenbay-bucket", env="S3_BUCKET")
     
@@ -85,7 +91,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     
     # Security
-    secret_key: str = Field(default="test_secret_key", env="SECRET_KEY")
+    secret_key: str = Field(default="", env="SECRET_KEY", repr=False)
     algorithm: str = Field(default="HS256", env="ALGORITHM")
     access_token_expire_minutes: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     
@@ -109,13 +115,10 @@ class Settings(BaseSettings):
     rate_limit_per_hour: int = Field(default=1000, env="RATE_LIMIT_PER_HOUR")
     
     # LangSmith Configuration
-    langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY")
+    langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY", repr=False)
     langsmith_project: str = Field(default="greenbay-chatbot", env="LANGSMITH_PROJECT")
     langsmith_endpoint: str = Field(default="https://api.smith.langchain.com", env="LANGSMITH_ENDPOINT")
     langsmith_tracing: bool = Field(default=True, env="LANGSMITH_TRACING_V2")
-    
-    # Tavily Search Configuration (for general web search)
-    tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -129,8 +132,23 @@ _settings: Optional[Settings] = None
 
 
 def get_settings() -> Settings:
-    """Get application settings."""
+    """Get application settings.
+
+    Logs warnings if critical API keys are missing (security best practice).
+    """
     global _settings
     if _settings is None:
         _settings = Settings()
+        # Warn about missing critical keys (but don't block startup)
+        import logging
+        _log = logging.getLogger(__name__)
+        _critical_keys = [
+            ("anthropic_api_key", "Anthropic Vision"),
+            ("tavily_api_key", "Tavily Search"),
+            ("google_cloud_api_key", "Google Cloud Vision"),
+        ]
+        for attr, label in _critical_keys:
+            val = getattr(_settings, attr, None)
+            if not val:
+                _log.warning(f"SECURITY: {label} key not configured ({attr}). Feature will be disabled.")
     return _settings

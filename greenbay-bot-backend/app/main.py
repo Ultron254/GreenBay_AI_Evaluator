@@ -12,6 +12,7 @@ import uvicorn
 from loguru import logger
 
 # Configure structured file logging with rotation
+# SECURITY: diagnose=False prevents leaking local variable values in stack traces
 _log_dir = Path(__file__).resolve().parent.parent / "logs"
 _log_dir.mkdir(exist_ok=True)
 logger.add(
@@ -22,7 +23,7 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} | {message}",
     level="INFO",
     backtrace=True,
-    diagnose=True,
+    diagnose=False,
 )
 
 try:
@@ -118,23 +119,33 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    """Create and configure FastAPI application."""
+    """Create and configure FastAPI application with security hardening."""
     settings = get_settings()
-    
+
+    # SECURITY: Disable interactive docs in production (OWASP API Security)
+    docs_url = "/docs" if settings.debug else None
+    redoc_url = "/redoc" if settings.debug else None
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         description="WhatsApp E-commerce Chatbot for GreenBay Market using LangGraph React Agent",
         lifespan=lifespan,
-        debug=settings.debug
+        debug=False,  # SECURITY: Never run debug=True in production
+        docs_url=docs_url,
+        redoc_url=redoc_url,
     )
-    
-    # CORS middleware
+
+    # -----------------------------------------------------------------
+    # CORS middleware — SECURITY: restrict methods and headers (OWASP)
+    # -----------------------------------------------------------------
     allowed_origins = [
         "http://localhost:9100",
         "http://127.0.0.1:9100",
         "https://greenbay.market",
         "https://www.greenbay.market",
+        "http://3.217.166.244",
+        "https://3.217.166.244",
     ]
     # Allow custom origins from environment
     extra = os.environ.get("CORS_ORIGINS", "")
@@ -145,16 +156,31 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],  # Only methods we actually use
+        allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
     )
 
-    # Rate limiting middleware
+    # -----------------------------------------------------------------
+    # Rate limiting middleware with graceful 429 responses
+    # -----------------------------------------------------------------
     if HAS_SLOWAPI:
         limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
         app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-        logger.info("Rate limiting enabled: 60 requests/minute per IP")
+
+        # Custom 429 handler with Retry-After header
+        async def _custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "rate_limit_exceeded",
+                    "message": "Too many requests. Please slow down.",
+                    "retry_after": 60,
+                },
+                headers={"Retry-After": "60"},
+            )
+
+        app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
+        logger.info("Rate limiting enabled: 60 requests/minute per IP (default)")
     else:
         logger.warning("Rate limiting disabled (install slowapi to enable)")
     
@@ -174,14 +200,41 @@ def create_app() -> FastAPI:
     else:
         logger.warning(f"Frontend directory not found: {frontend_dir}")
 
-    # No-cache middleware for frontend files
+    # -----------------------------------------------------------------
+    # SECURITY HEADERS MIDDLEWARE (OWASP best practices)
+    # -----------------------------------------------------------------
     @app.middleware("http")
-    async def no_cache_frontend(request: Request, call_next):
+    async def security_headers(request: Request, call_next):
+        """Add OWASP-recommended security headers to all responses."""
+        # SECURITY: Reject oversized request bodies (50MB limit for image uploads)
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > 50 * 1024 * 1024:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Request body too large", "max_size_mb": 50},
+            )
+
         response = await call_next(request)
+
+        # OWASP security headers on ALL responses
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
+        # HSTS — tell browsers to always use HTTPS
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+
+        # No-cache for frontend files
         if request.url.path.startswith("/app/"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
+
         return response
     
     @app.get("/")
