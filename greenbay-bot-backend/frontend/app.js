@@ -934,8 +934,26 @@ function showResults(data) {
  Speak to a Trade-In Expert
  </a>
  </div>
- <div style="text-align:center; margin-top:1rem;">
+
+ <div style="margin-top:1.5rem; padding:16px; background:linear-gradient(135deg, rgba(13,159,79,0.08), rgba(6,78,59,0.05)); border-radius:var(--radius-sm); border:1px solid rgba(13,159,79,0.2);">
+ <div style="font-weight:700; margin-bottom:8px; color:var(--forest); font-size:1rem;">🧑‍💼 Expert Pricing</div>
+ <p style="font-size:.85rem; color:var(--muted); margin-bottom:12px;">Are you an experienced sales agent? Submit your assessed price to help train the AI for better future valuations.</p>
+ <div id="expertFeedbackForm">
+ <input type="text" id="expertNameInput" class="form-input" placeholder="Your name" style="margin-bottom:8px; font-size:.88rem; padding:10px 12px;">
+ <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (KES)" style="margin-bottom:8px; font-size:.88rem; padding:10px 12px;">
+ <textarea id="expertReasonInput" class="form-input" placeholder="Why this price? (optional)" style="margin-bottom:10px; font-size:.85rem; padding:10px 12px; min-height:55px;"></textarea>
+ <button class="btn btn-primary btn-sm" onclick="submitExpertFeedback()" style="width:100%; padding:10px;">
+ ✅ Submit Expert Price
+ </button>
+ </div>
+ <div id="expertFeedbackSuccess" style="display:none; text-align:center; padding:12px; color:var(--green-primary); font-weight:600;">
+ ✅ Thank you! Your expertise has been recorded and will improve future valuations.
+ </div>
+ </div>
+
+ <div style="text-align:center; margin-top:1.2rem;">
  <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
+ <i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
  Evaluate Another Appliance
  </button>
  </div>
