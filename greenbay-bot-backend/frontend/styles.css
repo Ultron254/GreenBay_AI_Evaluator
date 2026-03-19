@@ -1836,7 +1836,31 @@ textarea.form-input {
   }
 }
 
-/* ---------- Mobile Responsive ---------- */
+/* ============================================================
+   RESPONSIVE DESIGN — All Device Sizes
+   Breakpoints:
+     1366px — small laptops
+     1024px — tablets (landscape) / small desktops
+      768px — tablets (portrait) / iPads
+      640px — large phones (landscape)
+      480px — standard phones
+      375px — small phones (iPhone SE)
+      320px — very small phones
+   ============================================================ */
+
+/* ---------- Small Laptops (≤ 1366px) ---------- */
+@media (max-width: 1366px) {
+  :root {
+    --max-width: 1100px;
+  }
+
+  .eval-layout {
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+  }
+}
+
+/* ---------- Tablets Landscape / Small Desktops (≤ 1024px) ---------- */
 @media (max-width: 1024px) {
   .hero-content {
     grid-template-columns: 1fr;
@@ -1863,10 +1887,12 @@ textarea.form-input {
     grid-template-columns: 1fr 1fr;
   }
 
+  /* Evaluation: stack wizard + chat vertically */
   .eval-layout {
     grid-template-columns: 1fr;
   }
 
+  /* Chat panel becomes a collapsible bottom drawer */
   .chat-panel {
     position: fixed;
     bottom: 0;
@@ -1886,25 +1912,11 @@ textarea.form-input {
     max-height: 85vh;
   }
 
-  .chat-panel .chat-messages {
-    display: none;
-  }
-
-  .chat-panel.expanded .chat-messages {
-    display: flex;
-  }
-
-  .chat-panel .chat-input-area {
-    display: none;
-  }
-
-  .chat-panel.expanded .chat-input-area {
-    display: flex;
-  }
-
-  .chat-header {
-    cursor: pointer;
-  }
+  .chat-panel .chat-messages { display: none; }
+  .chat-panel.expanded .chat-messages { display: flex; }
+  .chat-panel .chat-input-area { display: none; }
+  .chat-panel.expanded .chat-input-area { display: flex; }
+  .chat-header { cursor: pointer; }
 
   .chat-toggle-icon {
     display: block;
@@ -1917,10 +1929,97 @@ textarea.form-input {
   .chat-panel.expanded .chat-toggle-icon {
     transform: rotate(180deg);
   }
+
+  /* Give evaluation results some bottom space for the chat drawer */
+  .evaluation-section {
+    padding-bottom: 90px;
+  }
 }
 
+/* ---------- Tablets Portrait / iPads (≤ 768px) ---------- */
+@media (max-width: 768px) {
+  .hero {
+    padding-top: calc(var(--header-height) + 40px);
+    padding-bottom: 56px;
+  }
+
+  h1 { font-size: clamp(1.6rem, 6vw, 2.4rem); }
+  h2 { font-size: clamp(1.3rem, 4vw, 1.8rem); }
+
+  .hero-stats {
+    gap: 24px;
+  }
+
+  .stat-number {
+    font-size: 1.5rem;
+  }
+
+  .steps-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+
+  .step-card {
+    padding: 24px 16px;
+  }
+
+  .category-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+
+  .category-card {
+    padding: 20px 14px;
+  }
+
+  .category-icon {
+    font-size: 2.2rem;
+  }
+
+  .evaluation-section {
+    padding: 48px 0 100px;
+  }
+
+  .wizard-body {
+    padding: 24px 20px;
+    min-height: 320px;
+  }
+
+  .wizard-progress {
+    padding: 16px 20px;
+  }
+
+  .wizard-footer {
+    padding: 16px 20px;
+  }
+
+  .offer-amount {
+    font-size: 1.6rem;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+  }
+
+  /* Header CTA buttons: show only the primary one */
+  .header-cta .btn-ghost {
+    display: none;
+  }
+
+  .whatsapp-cta-section .btn-whatsapp {
+    font-size: 1rem;
+    padding: 14px 28px;
+  }
+}
+
+/* ---------- Large Phones / Landscape (≤ 640px) ---------- */
 @media (max-width: 640px) {
   .container {
+    padding: 0 16px;
+  }
+
+  .header-inner {
     padding: 0 16px;
   }
 
@@ -1929,20 +2028,27 @@ textarea.form-input {
   }
 
   .hero {
-    padding-top: calc(var(--header-height) + 32px);
-    padding-bottom: 48px;
-  }
-
-  .hero-stats {
-    gap: 24px;
+    padding-top: calc(var(--header-height) + 24px);
+    padding-bottom: 40px;
   }
 
   .hero-actions {
     flex-direction: column;
   }
 
+  .hero-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero-stats {
+    gap: 20px;
+    justify-content: center;
+  }
+
   .steps-grid {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .category-grid {
@@ -1952,6 +2058,7 @@ textarea.form-input {
 
   .trust-grid {
     grid-template-columns: 1fr;
+    gap: 20px;
   }
 
   .option-grid {
@@ -1968,20 +2075,415 @@ textarea.form-input {
 
   .footer-grid {
     grid-template-columns: 1fr;
-    gap: 32px;
+    gap: 24px;
   }
 
   .footer-bottom {
     flex-direction: column;
     gap: 8px;
+    text-align: center;
   }
 
   .wizard-body {
-    padding: 24px 20px;
+    padding: 20px 16px;
+    min-height: 280px;
   }
 
   .wizard-footer {
-    padding: 16px 20px;
+    padding: 14px 16px;
+    gap: 8px;
+  }
+
+  /* Make wizard footer buttons stack if needed */
+  .wizard-footer .btn {
+    padding: 10px 20px;
+    font-size: .88rem;
+  }
+
+  .offer-card {
+    padding: 20px 16px;
+  }
+
+  .offer-amount {
+    font-size: 1.5rem;
+  }
+
+  .offer-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .offer-actions .btn {
+    width: 100%;
+  }
+
+  /* Counter-offer row stacks */
+  .counter-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Price input */
+  .price-input-wrapper .form-input {
+    font-size: 1rem;
+  }
+
+  /* WhatsApp bridge goes vertical on small screens */
+  .whatsapp-bridge {
+    flex-direction: column;
+    text-align: center;
+    padding: 20px 16px;
+  }
+
+  /* Deal result */
+  .deal-result {
+    padding: 24px 16px;
+  }
+
+  .deal-result .result-icon {
+    font-size: 2.4rem;
+  }
+}
+
+/* ---------- Standard Phones (≤ 480px) ---------- */
+@media (max-width: 480px) {
+  :root {
+    --header-height: 60px;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  .logo {
+    font-size: 1.15rem;
+    gap: 8px;
+  }
+
+  .logo-icon, .logo-img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .hero-badge {
+    font-size: .72rem;
+    padding: 4px 12px;
+  }
+
+  .hero-description {
+    font-size: .95rem;
+  }
+
+  .hero-stats {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .stat-number {
+    font-size: 1.3rem;
+  }
+
+  .stat-label {
+    font-size: .72rem;
+  }
+
+  .btn {
+    padding: 10px 22px;
+    font-size: .9rem;
+  }
+
+  .btn-lg {
+    padding: 14px 28px;
+    font-size: .95rem;
+  }
+
+  .section-label {
+    font-size: .7rem;
+    letter-spacing: 1.5px;
+  }
+
+  .option-card {
+    padding: 12px;
+    gap: 6px;
+  }
+
+  .option-card .option-icon {
+    font-size: 1.4rem;
+  }
+
+  .option-card .option-label {
+    font-size: .82rem;
+  }
+
+  .option-card .option-desc {
+    font-size: .72rem;
+  }
+
+  .form-input {
+    padding: 12px 14px;
+    font-size: .9rem;
+  }
+
+  .form-label {
+    font-size: .82rem;
+  }
+
+  .wizard-step h3 {
+    font-size: 1.1rem;
+  }
+
+  .wizard-step .step-description {
+    font-size: .82rem;
+  }
+
+  .photo-upload-zone {
+    padding: 28px 16px;
+  }
+
+  .photo-upload-zone h4 {
+    font-size: .88rem;
+  }
+
+  .photo-upload-zone p {
+    font-size: .78rem;
+  }
+
+  .offer-breakdown-row {
+    font-size: .78rem;
+  }
+
+  .analysis-step {
+    font-size: .82rem;
+  }
+
+  .chat-panel.expanded {
+    height: 90vh;
+    max-height: 90vh;
+  }
+
+  .msg-bubble {
+    font-size: .85rem;
+    padding: 10px 14px;
+  }
+
+  .quick-action-btn {
+    font-size: .75rem;
+    padding: 6px 12px;
+  }
+
+  /* Trust bar tighter */
+  .trust-bar {
+    padding: 40px 0;
+  }
+
+  .trust-icon {
+    font-size: 1.6rem;
+  }
+
+  .trust-item h4 {
+    font-size: .9rem;
+  }
+
+  .trust-item p {
+    font-size: .75rem;
+  }
+
+  .site-footer {
+    padding: 40px 0 24px;
+  }
+
+  .how-it-works,
+  .categories {
+    padding: 48px 0;
+  }
+}
+
+/* ---------- Small Phones — iPhone SE, Galaxy S21 (≤ 375px) ---------- */
+@media (max-width: 375px) {
+  .container {
+    padding: 0 12px;
+  }
+
+  .header-inner {
+    padding: 0 12px;
+  }
+
+  .logo {
+    font-size: 1rem;
+  }
+
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.15rem; }
+  h3 { font-size: 1rem; }
+
+  .hero-description {
+    font-size: .88rem;
+    margin-bottom: 24px;
+  }
+
+  .hero-stats {
+    gap: 12px;
+  }
+
+  .stat-number {
+    font-size: 1.15rem;
+  }
+
+  .btn {
+    padding: 10px 18px;
+    font-size: .85rem;
+  }
+
+  .wizard-body {
+    padding: 16px 12px;
+  }
+
+  .wizard-progress {
+    padding: 12px;
+  }
+
+  .wizard-footer {
+    padding: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .wizard-footer .btn {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  .category-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .category-card {
+    padding: 14px 10px;
+  }
+
+  .category-icon {
+    font-size: 1.8rem;
+    margin-bottom: 8px;
+  }
+
+  .category-card h4 {
+    font-size: .82rem;
+  }
+
+  .category-card p {
+    font-size: .7rem;
+  }
+
+  .offer-card {
+    padding: 16px 12px;
+  }
+
+  .offer-amount {
+    font-size: 1.3rem;
+  }
+
+  .mockup-offer-amount {
+    font-size: 1.2rem;
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  /* Ensure no horizontal overflow */
+  .price-input-wrapper .form-input {
+    font-size: .95rem;
+    padding-left: 48px;
+  }
+
+  .price-alt-buttons {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .price-alt-buttons .btn {
+    width: 100%;
+    font-size: .82rem;
+  }
+}
+
+/* ---------- Very Small Phones (≤ 320px) ---------- */
+@media (max-width: 320px) {
+  :root {
+    --header-height: 56px;
+  }
+
+  .logo-icon, .logo-img {
+    width: 28px;
+    height: 28px;
+  }
+
+  .logo { font-size: .95rem; }
+  h1 { font-size: 1.25rem; }
+
+  .hero-badge { display: none; }
+
+  .btn {
+    padding: 8px 16px;
+    font-size: .82rem;
+  }
+
+  .category-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .option-card {
+    padding: 10px 8px;
+  }
+}
+
+/* ---------- Touch Device Enhancements ---------- */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger touch targets for mobile */
+  .btn {
+    min-height: 44px;
+  }
+
+  .option-card {
+    min-height: 44px;
+  }
+
+  .category-card {
+    min-height: 44px;
+  }
+
+  .quick-action-btn {
+    min-height: 36px;
+  }
+
+  /* Remove hover effects on touch devices */
+  .step-card:hover {
+    transform: none;
+  }
+
+  .category-card:hover {
+    transform: none;
+  }
+}
+
+/* ---------- Landscape Phone Orientation ---------- */
+@media (max-height: 500px) and (orientation: landscape) {
+  .hero {
+    padding-top: calc(var(--header-height) + 16px);
+    padding-bottom: 24px;
+  }
+
+  .hero-stats { display: none; }
+
+  .chat-panel.expanded {
+    height: 95vh;
+    max-height: 95vh;
+  }
+
+  .evaluation-section {
+    padding: 24px 0 80px;
   }
 }
 
