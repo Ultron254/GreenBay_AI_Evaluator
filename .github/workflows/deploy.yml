@@ -1,0 +1,49 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            echo "=== Pulling latest code ==="
+            cd /opt/greenbay
+            sudo git pull origin main
+
+            echo "=== Rebuilding containers ==="
+            cd greenbay-bot-backend
+            sudo docker compose build
+            sudo docker compose up -d
+
+            echo "=== Seeding pricing policies ==="
+            sleep 10
+            sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py
+
+            echo "=== Verifying ==="
+            sleep 5
+            curl -sf http://localhost:9100/health || (echo "HEALTH CHECK FAILED" && exit 1)
+            echo ""
+            echo "=== Deploy successful ==="
+            sudo docker ps --format '{{.Names}} {{.Status}}'
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::Deployment to EC2 failed! Check the logs above."
