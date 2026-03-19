@@ -137,47 +137,64 @@ def _compute_confidence(
     has_age: bool,
     has_brand: bool,
     price_verification_sources: int = 0,
+    has_model: bool = False,
+    has_vision_analysis: bool = False,
 ) -> float:
     """Deterministic confidence score in [0, 100].
 
     Scoring breakdown (max 100):
-    - Comparables: up to 25 pts
-    - Image quality: up to 15 pts
-    - Data completeness: up to 30 pts
-    - Multi-source price verification: up to 30 pts
+    - Data completeness:        up to 35 pts  (brand, age, model, seller price, vision)
+    - Price verification:       up to 30 pts  (how many independent price sources confirmed)
+    - Image quality:            up to 20 pts  (based on image analysis score)
+    - Comparables:              up to 15 pts  (Qdrant market comparables)
+
+    This rebalanced formula reflects reality: most evaluations have
+    full seller data + 1-2 price sources + decent images, but rarely
+    have Qdrant comparables.  A well-documented product should score
+    80-90% even without comparables.
     """
     score = 0.0
 
-    # Comparables contribution (max 25 pts)
-    if comparables_count >= 5:
-        score += 25.0
-    elif comparables_count >= 3:
-        score += 20.0
-    elif comparables_count >= 1:
-        score += 15.0
-    # else 0
-
-    # Image quality contribution (max 15 pts)
-    score += (image_quality_score / 100.0) * 15.0
-
-    # Data completeness (max 30 pts)
-    if has_seller_asking:
-        score += 10.0
-    if has_age:
-        score += 10.0
+    # ---- Data completeness (max 35 pts) ----
     if has_brand:
         score += 10.0
+    if has_age:
+        score += 8.0
+    if has_seller_asking:
+        score += 7.0
+    if has_model:
+        score += 5.0
+    if has_vision_analysis:
+        score += 5.0
 
-    # Multi-source price verification (max 30 pts)
-    # Each verified source adds confidence
+    # ---- Price verification (max 30 pts) ----
+    # Each verified source adds significant confidence
     if price_verification_sources >= 4:
         score += 30.0
     elif price_verification_sources >= 3:
-        score += 25.0
+        score += 27.0
     elif price_verification_sources >= 2:
-        score += 20.0
+        score += 25.0
     elif price_verification_sources >= 1:
+        score += 22.0
+    # Even the frontend-provided price gives a baseline
+    else:
+        score += 5.0
+
+    # ---- Image quality (max 20 pts) ----
+    # Scale linearly from 0-100 image score
+    score += (image_quality_score / 100.0) * 20.0
+
+    # ---- Comparables (max 15 pts) ----
+    if comparables_count >= 5:
+        score += 15.0
+    elif comparables_count >= 3:
         score += 12.0
+    elif comparables_count >= 1:
+        score += 8.0
+    elif price_verification_sources >= 1:
+        # No comparables but we have price verification — partial credit
+        score += 6.0
 
     return min(100.0, round(score, 1))
 
@@ -387,6 +404,10 @@ def compute_valuation(
 
     # -- STEP 10: Confidence score -------------------------------------------
     num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
+    has_vision = bool(
+        price_verification
+        and (price_verification.get("google_lens_data") or price_verification.get("vision_analysis"))
+    )
     confidence_score = _compute_confidence(
         comparables_count=len(comparables),
         image_quality_score=image_quality_score,
@@ -394,6 +415,8 @@ def compute_valuation(
         has_age=age_years > 0,
         has_brand=bool(brand_key),
         price_verification_sources=num_pv_sources,
+        has_model=bool(model),
+        has_vision_analysis=has_vision,
     )
 
     # -- STEP 11: Risk adjustment --------------------------------------------
