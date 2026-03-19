@@ -242,7 +242,7 @@ function isStepValid(step) {
         case 7: return !!state.answers.ownership;
         case 8: return true; // issues can be empty
         case 9: return state.answers.sellerName.trim().length > 0 && state.answers.sellerPhone.trim().length >= 9;
-        case 10: return state.answers.photos.length >= 5;
+        case 10: return state.answers.photos.length >= 3;
         case 11: return true; // price can be null ("make me an offer")
         default: return true;
     }
@@ -467,13 +467,15 @@ function handlePhotoUpload(files) {
                 // Chat feedback
                 const count = state.answers.photos.length;
                 if (count === 1) {
-                    addChatMessage('bot', `Got it! That's 1/${5} photos , keep them coming!`);
+                    addChatMessage('bot', `Got it! That's 1 photo — keep them coming! At least 3 needed.`);
+                } else if (count === 2) {
+                    addChatMessage('bot', `Good, ${count} photos received. One more and you can proceed!`);
                 } else if (count === 3) {
-                    addChatMessage('bot', `Looking good! I can already spot some details. ${count}/5 photos received. `);
+                    addChatMessage('bot', `${count} photos received — you can proceed now! For the best valuation, 5 HD photos is ideal.`);
                 } else if (count === 5) {
-                    addChatMessage('bot', `All 5 photos received! Add more if you have them, or move to the next step.`);
+                    addChatMessage('bot', `All 5 photos received — perfect for an accurate valuation! Add more or move to the next step.`);
                 } else if (count > 5) {
-                    addChatMessage('bot', `Nice , extra photos help me give a more accurate valuation! ${count} photos total. `);
+                    addChatMessage('bot', `Nice, extra photos help me give a more accurate valuation! ${count} photos total.`);
                 }
             });
         };
@@ -519,8 +521,8 @@ function removePhoto(id) {
 function updatePhotoCount() {
     const count = state.answers.photos.length;
     const el = document.getElementById('photoCount');
-    el.innerHTML = `<span class="count-num">${count}</span> / 5 minimum photos uploaded`;
-    el.classList.toggle('complete', count >= 5);
+    el.innerHTML = `<span class="count-num">${count}</span> / 3 minimum photos (5 HD ideal)`;
+    el.classList.toggle('complete', count >= 3);
 }
 
 /* ============================================================
@@ -651,7 +653,7 @@ function promptNextStep(step) {
         7: 'How long have you personally owned it? This helps with provenance.',
         8: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
         9: 'I need your name and phone number so we can reach you about pickup or drop-off.',
-        10: 'Now for the important part — photos! I need at least <strong>5 clear photos</strong>. Good lighting makes a big difference!',
+        10: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
         11: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
     };
 
