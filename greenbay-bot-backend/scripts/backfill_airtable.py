@@ -3,7 +3,13 @@ One-time backfill: copy every historical evaluation from Postgres (and,
 where available, the Google Sheet) into Airtable.
 
 Usage (from the EC2 host):
+    # Initial backfill (idempotent - skips existing records)
     docker compose exec app python scripts/backfill_airtable.py
+
+    # After enabling S3: PATCH existing records with fresh 7-day presigned
+    # image URLs (does NOT create new rows, only updates Product Images +
+    # Attachment Summary on rows that already exist in Airtable):
+    docker compose exec app python scripts/backfill_airtable.py --update-images
 
 The script is idempotent: before inserting a record it queries Airtable for
 an existing row with the same Date Submitted + Product Name and skips it if
@@ -15,6 +21,7 @@ Rate limited: batches of 10 rows, 250ms between batches (Airtable's documented
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -178,12 +185,15 @@ def _lookup_sheet_prices(
 # ---------------------------------------------------------------------------
 # Idempotency check
 # ---------------------------------------------------------------------------
-def _already_in_airtable(cfg: dict[str, str], date_iso: str, product_name: str) -> bool:
-    """Return True if a record with the same Date Submitted + Product Name exists."""
+def _find_in_airtable(
+    cfg: dict[str, str], date_iso: str, product_name: str
+) -> Optional[str]:
+    """Return the Airtable record id for the first match, or None if not found.
+
+    Matches on (Date Submitted prefix YYYY-MM-DDTHH:MM, Product Name exact).
+    """
     import requests
 
-    # Airtable formula equality is string-based; we match on the stable prefix
-    # of the ISO date (YYYY-MM-DDTHH:MM) to tolerate sub-second differences.
     date_prefix = date_iso[:16]
     safe_name = product_name.replace("'", "\\'")
     formula = (
@@ -198,10 +208,38 @@ def _already_in_airtable(cfg: dict[str, str], date_iso: str, product_name: str) 
             timeout=10,
         )
         if resp.status_code != 200:
-            return False
-        return bool(resp.json().get("records"))
+            return None
+        records = resp.json().get("records", [])
+        return records[0].get("id") if records else None
     except Exception:
-        return False
+        return None
+
+
+def _already_in_airtable(cfg: dict[str, str], date_iso: str, product_name: str) -> bool:
+    """Back-compat wrapper: True if a record exists."""
+    return _find_in_airtable(cfg, date_iso, product_name) is not None
+
+
+def _patch_record(
+    cfg: dict[str, str], record_id: str, fields: dict[str, Any]
+) -> tuple[bool, Optional[str]]:
+    """PATCH a single existing Airtable record. Returns (success, error)."""
+    import requests
+
+    url = f"{_base_url(cfg)}/{record_id}"
+    body = {"fields": fields, "typecast": True}
+    try:
+        resp = requests.patch(
+            url,
+            headers=_auth_headers(cfg),
+            json=body,
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return True, None
+        return False, f"HTTP {resp.status_code}: {resp.text[:240]}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +267,15 @@ def build_record(
     if final_from_sheet and not in_house:
         in_house = float(final_from_sheet)
 
+    images = _image_attachments_from_trade_in(tis)
+    img_count = len(images)
+    attachment_summary = (
+        f"{img_count} product image{'s' if img_count != 1 else ''} "
+        f"(7-day presigned URL{'s' if img_count != 1 else ''})"
+        if img_count
+        else "No images attached (S3 unavailable or no keys on file)"
+    )
+
     payload: dict[str, Any] = {
         "Date Submitted": _iso_date(vs.created_at),
         "Product Name": _product_name(vs),
@@ -237,10 +284,15 @@ def build_record(
         "Category": vs.category or "",
         "Age (Years)": float(vs.age_years or 0),
         "Condition": vs.condition_grade or "",
-        "Product Images": _image_attachments_from_trade_in(tis),
+        "Product Images": images,
         "Customer Asking Price (KES)": float(vs.seller_asking_price or 0),
         "AI Evaluated Price (KES)": float(vs.opening_offer or 0),
         "Vertex AI Price (KES)": 0,  # historical records predate Vertex integration
+        "Attachment Summary": attachment_summary,
+        "Customer Name": vs.seller_name or "",
+        "Customer Phone": vs.seller_phone or "",
+        "Evaluation Status": vs.decision or "",
+        "Notes": (vs.decision_reason or "")[:2000],
     }
     if in_house is not None:
         payload["In-House Evaluator Price (KES)"] = in_house
@@ -250,7 +302,119 @@ def build_record(
     return clean
 
 
+def run_update_images(cfg: dict[str, str]) -> int:
+    """PATCH-only pass: attach fresh 7-day presigned URLs to already-backfilled
+    rows. Useful when the initial backfill ran before S3 was configured.
+    """
+    logger.info("=" * 60)
+    logger.info("Airtable image-update pass starting (PATCH-only, no inserts)")
+    logger.info("=" * 60)
+
+    try:
+        from app.services.s3_service import s3_client
+    except Exception:
+        s3_client = None
+    if not s3_client:
+        logger.error(
+            "S3 client unavailable - set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+            "in the EC2 .env and restart before running this."
+        )
+        return 3
+
+    db: Session = SessionLocal()
+    try:
+        sessions: list[ValuationSession] = (
+            db.query(ValuationSession)
+            .order_by(ValuationSession.created_at.asc())
+            .all()
+        )
+        trade_in_ids = {vs.trade_in_session_id for vs in sessions if vs.trade_in_session_id}
+        trade_in_map: dict[int, TradeInSession] = {}
+        if trade_in_ids:
+            tis_rows = (
+                db.query(TradeInSession)
+                .filter(TradeInSession.id.in_(trade_in_ids))
+                .all()
+            )
+            trade_in_map = {t.id: t for t in tis_rows}
+
+        counters = {"found": len(sessions), "patched": 0, "no_images": 0, "not_in_airtable": 0, "failed": 0}
+
+        for batch in _chunked(sessions, BATCH_SIZE):
+            for vs in batch:
+                tis = trade_in_map.get(vs.trade_in_session_id)
+                images = _image_attachments_from_trade_in(tis)
+                if not images:
+                    counters["no_images"] += 1
+                    continue
+
+                date_iso = _iso_date(vs.created_at)
+                prod_name = _product_name(vs)
+                record_id = _find_in_airtable(cfg, date_iso, prod_name)
+                if not record_id:
+                    counters["not_in_airtable"] += 1
+                    logger.debug(f"Skip (not in Airtable): {prod_name} @ {date_iso}")
+                    continue
+
+                img_count = len(images)
+                summary = (
+                    f"{img_count} product image{'s' if img_count != 1 else ''} "
+                    f"(7-day presigned URL{'s' if img_count != 1 else ''})"
+                )
+                patch_fields: dict[str, Any] = {
+                    "Product Images": images,
+                    "Attachment Summary": summary,
+                }
+                # While we're patching, also backfill the enriched metadata
+                # fields that earlier runs never populated.
+                if vs.seller_name:
+                    patch_fields["Customer Name"] = vs.seller_name
+                if vs.seller_phone:
+                    patch_fields["Customer Phone"] = vs.seller_phone
+                if vs.decision:
+                    patch_fields["Evaluation Status"] = vs.decision
+                if vs.decision_reason:
+                    patch_fields["Notes"] = str(vs.decision_reason)[:2000]
+
+                ok, err = _patch_record(cfg, record_id, patch_fields)
+                if ok:
+                    counters["patched"] += 1
+                    logger.info(
+                        f"Patched {counters['patched']}: {prod_name} (+{img_count} images)"
+                    )
+                else:
+                    counters["failed"] += 1
+                    logger.warning(f"Patch failed for {prod_name}: {err}")
+            time.sleep(BATCH_DELAY_SECONDS)
+
+        logger.info("=" * 60)
+        logger.info(
+            "Image-update summary: "
+            f"found={counters['found']} | "
+            f"patched={counters['patched']} | "
+            f"no_images={counters['no_images']} | "
+            f"not_in_airtable={counters['not_in_airtable']} | "
+            f"failed={counters['failed']}"
+        )
+        logger.info("=" * 60)
+        return 0 if counters["failed"] == 0 else 2
+    finally:
+        db.close()
+
+
 def run() -> int:
+    parser = argparse.ArgumentParser(description="Airtable backfill/updater")
+    parser.add_argument(
+        "--update-images",
+        action="store_true",
+        help=(
+            "PATCH-only mode: refresh Product Images + Attachment Summary on rows "
+            "that already exist in Airtable. Run this after S3 is configured to "
+            "backfill the image attachments that earlier runs left blank."
+        ),
+    )
+    args = parser.parse_args()
+
     settings = get_settings()
     cfg = _get_config()
     if cfg is None:
@@ -258,6 +422,9 @@ def run() -> int:
             "Airtable is not configured (AIRTABLE_API_TOKEN / AIRTABLE_BASE_ID missing)."
         )
         return 1
+
+    if args.update_images:
+        return run_update_images(cfg)
 
     logger.info("=" * 60)
     logger.info(f"Airtable backfill starting (base={cfg['base_id']}, table={cfg['table']})")

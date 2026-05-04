@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     # Airtable Configuration (write-only backup data repository)
     airtable_api_token: Optional[str] = Field(default=None, env="AIRTABLE_API_TOKEN", repr=False)
     airtable_base_id: str = Field(default="", env="AIRTABLE_BASE_ID")
-    airtable_table_name: str = Field(default="Evaluated Products", env="AIRTABLE_TABLE_NAME")
+    airtable_table_name: str = Field(default="Appliance Evaluations", env="AIRTABLE_TABLE_NAME")
 
     # Google Vertex AI Configuration (secondary evaluation via Gemini)
     google_vertex_credentials_file: str = Field(default="", env="GOOGLE_VERTEX_CREDENTIALS_FILE")
