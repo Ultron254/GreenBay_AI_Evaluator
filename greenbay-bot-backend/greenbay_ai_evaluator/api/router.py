@@ -43,6 +43,7 @@ from greenbay_ai_evaluator.engine.negotiation_engine import (
 from greenbay_ai_evaluator.engine.offer_engine import (
     Comparable,
     PricingPolicyData,
+    _round_kes_500,
     compute_valuation,
     reconcile_retail_price,
 )
@@ -73,6 +74,7 @@ from greenbay_ai_evaluator.services.image_hash_service import (
 from app.database.models import ExpertPriceFeedback, PickupRequest, ShopifyProduct, TradeInSession
 # Airtable backup data repository (write-only; never blocks the response)
 from greenbay_ai_evaluator.services.airtable_service import (
+    get_historical_accuracy_ratio,
     write_evaluation_async as airtable_write_async,
 )
 
@@ -627,7 +629,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Historical price lookup failed: {e}")
 
-        # --- Reconcile all sources (CR-2: 60/40 rebalance) ---
+        # --- Reconcile all sources (60% human intelligence / 40% AI market) ---
+        db_comparables_avg = (
+            comp_result.weighted_average if comp_result.count > 0 else None
+        )
         try:
             price_verification = reconcile_retail_price(
                 frontend_price=req.retail_price,
@@ -636,6 +641,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 shopify_avg=shopify_avg,
                 expert_avg=expert_avg,
                 historical_avg=historical_avg,
+                comparables_avg=db_comparables_avg,
             )
 
             # Add detailed breakdown if sources responded
@@ -675,6 +681,25 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "confidence": 80.0,
                 }
 
+            # Learning loop: Airtable-derived human/AI ratio (never mixed inside reconcile).
+            try:
+                learn_ratio = get_historical_accuracy_ratio(req.brand, req.category)
+                if (
+                    learn_ratio is not None
+                    and price_verification.get("reconciled_price")
+                ):
+                    pre_airtable = float(price_verification["reconciled_price"])
+                    adjusted = _round_kes_500(pre_airtable * learn_ratio)
+                    price_verification["reconciled_price_pre_airtable_learning"] = pre_airtable
+                    price_verification["airtable_accuracy_ratio_applied"] = learn_ratio
+                    price_verification["reconciled_price"] = adjusted
+                    logger.info(
+                        f"Airtable accuracy learning: ratio={learn_ratio} "
+                        f"reconciled KES {pre_airtable:,.0f} -> {adjusted:,.0f}"
+                    )
+            except Exception as ae:
+                logger.warning(f"Airtable accuracy learning skipped: {ae}")
+
             logger.info(
                 f"Price verification: {price_verification['num_sources']} sources, "
                 f"reconciled={price_verification['reconciled_price']}, "
@@ -703,6 +728,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     shopify_avg=shopify_avg,
                     expert_avg=expert_avg,
                     historical_avg=None,
+                    comparables_avg=db_comparables_avg,
                 )
             src_list = []
             if price_verification and price_verification.get("sources"):
@@ -713,7 +739,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 f"brand={req.brand!r} category={req.category!r} "
                 f"db_comparables_count={comp_result.count} db_sources={sb} "
                 f"sheets_historical_kes={historical_avg} "
-                "airtable_comparables_in_offer_engine=false "
+                "airtable_not_in_reconcile_blend=true "
                 f"tavily_internet_kes={internet_price} marketplace_avg_kes={marketplace_avg} "
                 f"shopify_inventory_kes={shopify_avg} expert_feedback_kes={expert_avg} "
                 f"vertex_secondary_opinion_kes={vpx} "

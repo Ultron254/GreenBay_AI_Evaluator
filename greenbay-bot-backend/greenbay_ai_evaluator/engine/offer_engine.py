@@ -210,8 +210,18 @@ def _round_kes_500(value: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Multi-source price reconciliation (CR-2: 60/40 rebalance)
+# Multi-source price reconciliation (60% human intelligence / 40% AI market)
 # ---------------------------------------------------------------------------
+def _tier_weighted_average(entries: list[tuple[float, float]]) -> float | None:
+    """Weighted mean of (price, intra-tier weight). None if no entries."""
+    if not entries:
+        return None
+    tw = sum(w for _, w in entries)
+    if tw <= 0:
+        return None
+    return sum(p * w for p, w in entries) / tw
+
+
 def reconcile_retail_price(
     *,
     frontend_price: float,
@@ -220,78 +230,96 @@ def reconcile_retail_price(
     shopify_avg: float | None = None,
     expert_avg: float | None = None,
     historical_avg: float | None = None,
+    comparables_avg: float | None = None,
 ) -> dict[str, Any]:
-    """Reconcile retail price from multiple sources.
+    """Reconcile retail price from multiple independent signals.
 
-    CR-2: Rebalanced to 60% historical/expert, 40% web.
-    Weights are tuned so that when all sources are present,
-    historical+expert+shopify = ~60% and web = ~40%.
+    Philosophy (60 / 40):
+      * **Human intelligence (~60%)** — Ground truth from operations and history:
+        pricing learner (Google Sheets), expert feedback (Postgres), and DB
+        comparables (weighted inventory / historical resale anchors).
+      * **AI market research (~40%)** — Automated probes of the wider market:
+        Tavily internet lookup, Jiji/Jumia scrape, Shopify snapshot, and the
+        frontend/AI retail hint.
+
+    Within each tier, relative weights below determine how multiple simultaneous
+    inputs blend **before** the 60/40 cross-tier blend.
+
+    **Airtable is intentionally not a reconcile source.** It mirrors Sheet and
+    DB human prices; ingesting it here would double-count. The Airtable-derived
+    accuracy ratio is applied **after** this function returns (see evaluator router).
 
     Returns a dict with the reconciled price and breakdown of sources.
     """
-    sources = []
-    total_weight = 0.0
-    weighted_sum = 0.0
+    sources: list[dict[str, Any]] = []
 
-    # --- Historical/Expert sources (target: 60% total) ---
+    # --- Tier 1: Historical / human intelligence (internal weights 8 / 7 / 5) ---
+    human_specs: list[tuple[str, float | None, float]] = [
+        ("historical_sheet", historical_avg, 8.0),
+        ("expert_feedback", expert_avg, 7.0),
+        ("database_comparables", comparables_avg, 5.0),
+    ]
+    human_entries: list[tuple[float, float]] = []
+    for key, price, w in human_specs:
+        if price is not None and price > 0:
+            human_entries.append((price, w))
+            sources.append({
+                "source": key,
+                "price": price,
+                "weight": w,
+                "tier": "human_intelligence",
+            })
 
-    # Google Sheet historical (CR-2/CR-4 self-learning — weight 6.0)
-    if historical_avg and historical_avg > 0:
-        sources.append({"source": "historical_sheet", "price": historical_avg, "weight": 6.0})
-        weighted_sum += historical_avg * 6.0
-        total_weight += 6.0
+    # --- Tier 2: AI market research (internal weights 3 / 2.5 / 2 / 1) ---
+    ai_specs: list[tuple[str, float | None, float]] = [
+        ("internet_lookup", internet_price, 3.0),
+        ("marketplace_jiji_jumia", marketplace_avg, 2.5),
+        ("shopify_inventory", shopify_avg, 2.0),
+        ("frontend", frontend_price if frontend_price > 0 else None, 1.0),
+    ]
+    ai_entries: list[tuple[float, float]] = []
+    for key, price, w in ai_specs:
+        if price is not None and price > 0:
+            ai_entries.append((price, w))
+            sources.append({
+                "source": key,
+                "price": price,
+                "weight": w,
+                "tier": "ai_market_research",
+            })
 
-    # Expert feedback (weight 5.0 — human-assessed prices)
-    if expert_avg and expert_avg > 0:
-        sources.append({"source": "expert_feedback", "price": expert_avg, "weight": 5.0})
-        weighted_sum += expert_avg * 5.0
-        total_weight += 5.0
+    human_avg = _tier_weighted_average(human_entries)
+    ai_avg = _tier_weighted_average(ai_entries)
 
-    # Our Shopify inventory average (weight 4.0 — our own verified prices)
-    if shopify_avg and shopify_avg > 0:
-        sources.append({"source": "shopify_inventory", "price": shopify_avg, "weight": 4.0})
-        weighted_sum += shopify_avg * 4.0
-        total_weight += 4.0
-
-    # --- Web sources (target: 40% total) ---
-
-    # Marketplace average from Jiji/Jumia (weight 2.0)
+    # Outlier guard: live marketplace / Tavily vs human tier — discard AI tier if absurd
+    web_probe: float | None = None
     if marketplace_avg and marketplace_avg > 0:
-        sources.append({"source": "marketplace_jiji_jumia", "price": marketplace_avg, "weight": 2.0})
-        weighted_sum += marketplace_avg * 2.0
-        total_weight += 2.0
+        web_probe = marketplace_avg
+    elif internet_price and internet_price > 0:
+        web_probe = internet_price
 
-    # Internet lookup via Tavily (weight 1.5)
-    if internet_price and internet_price > 0:
-        sources.append({"source": "internet_lookup", "price": internet_price, "weight": 1.5})
-        weighted_sum += internet_price * 1.5
-        total_weight += 1.5
+    discard_ai_tier = False
+    if human_avg is not None and web_probe is not None and human_avg > 0:
+        probe_ratio = web_probe / human_avg
+        if probe_ratio > 2.0 or probe_ratio < 0.3:
+            discard_ai_tier = True
+            for s in sources:
+                if s.get("tier") == "ai_market_research":
+                    s["discarded"] = True
+                    s["discard_reason"] = (
+                        f"Outlier vs human-intelligence tier: web probe {probe_ratio:.2f}x"
+                    )
 
-    # Frontend / AI-provided price (weight 0.5 — lowest, just a fallback)
-    if frontend_price and frontend_price > 0:
-        sources.append({"source": "frontend", "price": frontend_price, "weight": 0.5})
-        weighted_sum += frontend_price * 0.5
-        total_weight += 0.5
-
-    reconciled = weighted_sum / total_weight if total_weight > 0 else frontend_price
-
-    # CR-2: Outlier guard — if web data diverges wildly from historical, discard web
-    historical_ref = historical_avg or expert_avg or shopify_avg
-    web_ref = marketplace_avg or internet_price
-    if historical_ref and web_ref and historical_ref > 0:
-        ratio = web_ref / historical_ref
-        if ratio > 2.0 or ratio < 0.3:
-            # Web data is an outlier — use 100% historical
-            hist_sources = [s for s in sources if s["source"] in ("historical_sheet", "expert_feedback", "shopify_inventory")]
-            if hist_sources:
-                hist_weight = sum(s["weight"] for s in hist_sources)
-                hist_sum = sum(s["price"] * s["weight"] for s in hist_sources)
-                reconciled = hist_sum / hist_weight
-                # Mark web sources as discarded
-                for s in sources:
-                    if s["source"] not in ("historical_sheet", "expert_feedback", "shopify_inventory", "frontend"):
-                        s["discarded"] = True
-                        s["discard_reason"] = f"Outlier: {ratio:.1f}x vs historical"
+    if discard_ai_tier and human_avg is not None:
+        reconciled = human_avg
+    elif human_avg is not None and ai_avg is not None:
+        reconciled = 0.6 * human_avg + 0.4 * ai_avg
+    elif human_avg is not None:
+        reconciled = human_avg
+    elif ai_avg is not None:
+        reconciled = ai_avg
+    else:
+        reconciled = frontend_price if frontend_price > 0 else 0.0
 
     num_sources = len(sources)
 
@@ -299,6 +327,8 @@ def reconcile_retail_price(
         "reconciled_price": _round_kes_500(reconciled),
         "sources": sources,
         "num_sources": num_sources,
+        "human_intelligence_avg": round(human_avg, 2) if human_avg is not None else None,
+        "ai_market_research_avg": round(ai_avg, 2) if ai_avg is not None else None,
         "confidence": min(100.0, num_sources * 20.0 + 10.0),
         "frontend_price": frontend_price,
     }

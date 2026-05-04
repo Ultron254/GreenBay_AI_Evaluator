@@ -145,6 +145,91 @@ def _post_record(cfg: dict[str, str], fields: dict) -> tuple[bool, Optional[str]
         return False, f"{type(e).__name__}: {e}"
 
 
+def _patch_record(cfg: dict[str, str], record_id: str, fields: dict) -> tuple[bool, Optional[str]]:
+    """PATCH fields on an existing Airtable record."""
+    import requests
+
+    from urllib.parse import quote
+
+    table = quote(cfg["table"])
+    url = f"https://api.airtable.com/v0/{cfg['base_id']}/{table}/{record_id}"
+    body = {"fields": fields, "typecast": True}
+    try:
+        resp = requests.patch(
+            url,
+            headers=_auth_headers(cfg),
+            json=body,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            return True, None
+        return False, f"HTTP {resp.status_code}: {resp.text[:240]}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def list_records_paginated(
+    cfg: dict[str, str],
+    *,
+    fields: Optional[list[str]] = None,
+    page_size: int = 100,
+) -> list[dict]:
+    """Fetch all records from the evaluations table (paginated GET).
+
+    Returns raw Airtable records ``{"id", "fields", ...}``.
+    """
+    import requests
+
+    out: list[dict] = []
+    offset: Optional[str] = None
+    params_base: dict[str, Any] = {"pageSize": max(1, min(page_size, 100))}
+    if fields:
+        for i, fname in enumerate(fields):
+            params_base[f"fields[{i}]"] = fname
+
+    while True:
+        params = dict(params_base)
+        if offset:
+            params["offset"] = offset
+        try:
+            resp = requests.get(
+                _base_url(cfg),
+                headers=_auth_headers(cfg),
+                params=params,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Airtable list_records_paginated: HTTP {resp.status_code} {resp.text[:200]}"
+                )
+                break
+            payload = resp.json()
+        except Exception as e:
+            logger.warning(f"Airtable list_records_paginated failed: {e}")
+            break
+
+        out.extend(payload.get("records", []))
+        offset = payload.get("offset")
+        if not offset:
+            break
+        time.sleep(RATE_LIMIT_DELAY)
+
+    return out
+
+
+def patch_in_house_evaluator_price(record_id: str, price_kes: float) -> bool:
+    """Set In-House Evaluator Price (KES) on one record."""
+    cfg = _get_config()
+    if cfg is None:
+        return False
+    field = "In-House Evaluator Price (KES)"
+    ok, err = _patch_record(cfg, record_id, {field: float(price_kes)})
+    if ok:
+        return True
+    logger.warning(f"Airtable PATCH {record_id}: {err}")
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Public API — WRITE
 # ---------------------------------------------------------------------------
@@ -327,8 +412,9 @@ def get_historical_accuracy_ratio(brand: str, category: str) -> Optional[float]:
 
     Returns None if fewer than 3 valid data points are available.
 
-    NOTE: This is NOT currently called from the live evaluator. It is exposed
-    for future use once the learning loop is formally enabled.
+    Used **after** ``reconcile_retail_price()`` in the evaluator router as a
+    separate learning multiplier (Sheet/DB drive reconciliation; Airtable ratio
+    corrects systematic AI-vs-human bias without double-counting Sheet rows).
     """
     comps = read_comparables(brand=brand, category=category, limit=25)
     ratios: list[float] = []

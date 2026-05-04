@@ -244,6 +244,26 @@ async def lifespan(app: FastAPI):
     learner_task = asyncio.create_task(pricing_learner_loop())
     logger.info("Pricing learner started (initial load + 1-hour refresh)")
 
+    # Sheet → Airtable: human evaluator prices (J/K) into In-House Evaluator Price (30 min).
+    async def _sheet_human_price_sync_loop():
+        from greenbay_ai_evaluator.services.sheet_to_airtable_human_price_sync import (
+            sync_human_evaluator_prices_from_sheet,
+        )
+
+        while True:
+            try:
+                await sync_human_evaluator_prices_from_sheet()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Sheet→Airtable human price sync loop error: {e}")
+            await asyncio.sleep(1800)  # 30 minutes
+
+    human_price_sync_task = asyncio.create_task(_sheet_human_price_sync_loop())
+    logger.info(
+        "Sheet→Airtable human price sync started (30-minute cycle; Sheet → Airtable only)"
+    )
+
     yield
 
     # Shutdown — cancel any background tasks we started above.
@@ -251,6 +271,7 @@ async def lifespan(app: FastAPI):
     for task_name, task in (
         ("Shopify scraper", scraper_task),
         ("Pricing learner", learner_task),
+        ("Human price Sheet→Airtable sync", human_price_sync_task),
     ):
         task.cancel()
         try:
