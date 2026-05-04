@@ -518,7 +518,7 @@ def _call_evaluator(session: dict) -> dict | None:
         # Internal call to our own API
         with httpx.Client(timeout=120.0) as client:
             resp = client.post(
-                "http://127.0.0.1:8000/tradein/evaluate",
+                "http://127.0.0.1:9100/tradein/evaluate",
                 json=payload,
             )
             resp.raise_for_status()
@@ -558,7 +558,7 @@ def _handle_counter(session: dict, text: str) -> dict | None:
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
-                f"http://127.0.0.1:8000/tradein/{eval_session_id}/counter",
+                f"http://127.0.0.1:9100/tradein/{eval_session_id}/counter",
                 json={"seller_counter": counter_amount},
             )
             resp.raise_for_status()

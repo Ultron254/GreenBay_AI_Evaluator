@@ -9,3 +9,5 @@
 *.pyo
 *.pyd
 logs/
+credentials/
+airtable_fallback/

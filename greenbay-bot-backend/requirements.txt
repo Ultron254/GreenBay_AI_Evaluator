@@ -83,3 +83,19 @@ anthropic>=0.40.0,<1.0
 
 # Image Quality Analysis (OpenCV)
 opencv-python-headless
+
+# Google Sheets Integration (CR-4)
+gspread>=6.0.0
+google-auth>=2.20.0
+
+# Airtable Integration (backup data repository)
+pyairtable>=2.0.0
+
+# Google Vertex AI (secondary evaluation via Gemini)
+google-cloud-aiplatform>=1.40.0
+
+# Video Processing (CR-1)
+ffmpeg-python>=0.2.0
+
+# Web scraping (for marketplace data)
+beautifulsoup4>=4.12.0

@@ -11,6 +11,8 @@ Scoring breakdown (total 100):
   - Brightness (mean luminance): 0-20 pts
   - Contrast (std deviation): 0-10 pts
   - Image count bonus: 0-10 pts
+
+CR-7: Added hard rejection for images below minimum quality thresholds.
 """
 
 from __future__ import annotations
@@ -32,6 +34,40 @@ class ImageQualityResult:
     details: dict
 
 
+@dataclass
+class ImageRejection:
+    """Per-image rejection detail (CR-7)."""
+
+    index: int
+    rejected: bool
+    reasons: list[str]
+    width: int = 0
+    height: int = 0
+    blur_variance: float = 0.0
+    mean_brightness: float = 0.0
+
+
+@dataclass
+class ImageQualityWithRejections:
+    """Extended result with per-image rejection details (CR-7)."""
+
+    quality: ImageQualityResult
+    rejections: list[ImageRejection]
+    any_rejected: bool
+    rejected_count: int
+    passed_count: int
+
+
+# ---------------------------------------------------------------------------
+# CR-7: Hard rejection thresholds
+# ---------------------------------------------------------------------------
+MIN_WIDTH = 640
+MIN_HEIGHT = 480
+MIN_BRIGHTNESS = 40
+MAX_BRIGHTNESS = 240
+MIN_BLUR_VARIANCE = 50  # Laplacian variance below this = extremely blurry
+
+
 def _decode_image(data: str) -> "np.ndarray | None":
     """Decode a base64 or data-URL image string to an OpenCV ndarray."""
     try:
@@ -50,6 +86,54 @@ def _decode_image(data: str) -> "np.ndarray | None":
         return None
 
 
+def _check_rejection(img: "np.ndarray", index: int) -> ImageRejection:
+    """CR-7: Check if a single image fails hard quality thresholds."""
+    import cv2
+    import numpy as np
+
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    mean_brightness = float(np.mean(gray))
+
+    reasons = []
+
+    # Resolution check
+    if w < MIN_WIDTH or h < MIN_HEIGHT:
+        reasons.append(
+            f"Image too small ({w}x{h}px). Minimum required: {MIN_WIDTH}x{MIN_HEIGHT}px"
+        )
+
+    # Brightness check
+    if mean_brightness < MIN_BRIGHTNESS:
+        reasons.append(
+            f"Image too dark (brightness: {mean_brightness:.0f}/255). "
+            f"Please use better lighting"
+        )
+    elif mean_brightness > MAX_BRIGHTNESS:
+        reasons.append(
+            f"Image too bright/overexposed (brightness: {mean_brightness:.0f}/255). "
+            f"Avoid direct flash or harsh lighting"
+        )
+
+    # Blur check
+    if lap_var < MIN_BLUR_VARIANCE:
+        reasons.append(
+            f"Image too blurry (sharpness: {lap_var:.0f}). "
+            f"Hold the camera steady and tap to focus"
+        )
+
+    return ImageRejection(
+        index=index,
+        rejected=len(reasons) > 0,
+        reasons=reasons,
+        width=w,
+        height=h,
+        blur_variance=round(lap_var, 1),
+        mean_brightness=round(mean_brightness, 1),
+    )
+
+
 def _score_single_image(img: "np.ndarray") -> dict:
     """Score a single image on blur, resolution, brightness, contrast."""
     import cv2
@@ -59,7 +143,6 @@ def _score_single_image(img: "np.ndarray") -> dict:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # --- Blur (Laplacian variance) ---
-    # Higher variance = sharper image.  Typical range: 10-2000+
     lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
     if lap_var >= 500:
         blur_score = 35.0
@@ -89,7 +172,6 @@ def _score_single_image(img: "np.ndarray") -> dict:
 
     # --- Brightness (mean luminance) ---
     mean_brightness = float(np.mean(gray))
-    # Good range: 80-180. Too dark (<50) or too bright (>220) is bad.
     if 80 <= mean_brightness <= 180:
         bright_score = 20.0
     elif 60 <= mean_brightness <= 200:
@@ -148,10 +230,8 @@ def score_images(
     -------
     ImageQualityResult
     """
-    # Collect all image sources
     base64_images = list(image_data or [])
 
-    # If no base64 data, fall back to default scoring based on count
     if not base64_images:
         image_count = len(image_urls or [])
         bonus = min(10.0, image_count * 2.0)
@@ -167,7 +247,6 @@ def score_images(
             },
         )
 
-    # Try OpenCV analysis
     try:
         import cv2  # noqa: F401
     except ImportError:
@@ -181,7 +260,6 @@ def score_images(
             details={"note": "OpenCV not available"},
         )
 
-    # Analyze each image
     per_image_details = []
     per_image_scores = []
 
@@ -197,7 +275,6 @@ def score_images(
         per_image_scores.append(detail["per_image_score"])
 
     if not per_image_scores:
-        # All images failed to decode
         return ImageQualityResult(
             score=50.0,
             needs_review=True,
@@ -209,10 +286,7 @@ def score_images(
             },
         )
 
-    # Average the per-image scores (out of 90 max per image)
     avg_score = sum(per_image_scores) / len(per_image_scores)
-
-    # Multi-angle bonus (up to 10 pts): more photos = better coverage
     count_bonus = min(10.0, len(per_image_scores) * 2.5)
     final_score = min(100.0, avg_score + count_bonus)
 
@@ -233,4 +307,83 @@ def score_images(
             "count_bonus": count_bonus,
             "per_image": per_image_details,
         },
+    )
+
+
+def score_images_with_rejections(
+    image_urls: list[str] | None = None,
+    image_data: list[str] | None = None,
+) -> ImageQualityWithRejections:
+    """CR-7: Score images AND check each image against hard rejection thresholds.
+
+    Returns both the overall quality score and per-image rejection details.
+    Images that fail hard thresholds (too small, too dark, too blurry) get
+    flagged with human-readable rejection reasons.
+
+    Parameters
+    ----------
+    image_urls : list[str], optional
+        URLs of uploaded images.
+    image_data : list[str], optional
+        Base64-encoded image data for analysis.
+
+    Returns
+    -------
+    ImageQualityWithRejections
+    """
+    quality = score_images(image_urls=image_urls, image_data=image_data)
+
+    rejections: list[ImageRejection] = []
+    base64_images = list(image_data or [])
+
+    if not base64_images:
+        return ImageQualityWithRejections(
+            quality=quality,
+            rejections=[],
+            any_rejected=False,
+            rejected_count=0,
+            passed_count=len(image_urls or []),
+        )
+
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        logger.warning("OpenCV not available — skipping rejection checks")
+        return ImageQualityWithRejections(
+            quality=quality,
+            rejections=[],
+            any_rejected=False,
+            rejected_count=0,
+            passed_count=len(base64_images),
+        )
+
+    for i, data in enumerate(base64_images[:8]):
+        img = _decode_image(data)
+        if img is None:
+            rejections.append(
+                ImageRejection(
+                    index=i,
+                    rejected=True,
+                    reasons=["Could not process this image. Please upload a JPEG or PNG file."],
+                )
+            )
+            continue
+
+        rejection = _check_rejection(img, i)
+        rejections.append(rejection)
+
+    rejected_count = sum(1 for r in rejections if r.rejected)
+    passed_count = len(rejections) - rejected_count
+
+    if rejected_count > 0:
+        logger.warning(
+            f"CR-7 Image rejection: {rejected_count}/{len(rejections)} images failed quality checks"
+        )
+
+    return ImageQualityWithRejections(
+        quality=quality,
+        rejections=rejections,
+        any_rejected=rejected_count > 0,
+        rejected_count=rejected_count,
+        passed_count=passed_count,
     )

@@ -709,7 +709,7 @@ async function startAnalysis() {
         const chatMsgs = [
             ` Brand verified: <strong>${a.brand}</strong>`,
             ` Condition: Grade <strong>${a.conditionGrade}</strong> , ${CONDITION_LABELS[a.condition]}`,
-            ' Market data found , checking Jiji, Jumia, and Facebook Marketplace',
+            ' Finding you the best offer price based on current market data',
             ' Calculating your offer...',
         ];
         addChatMessage('bot', chatMsgs[i]);

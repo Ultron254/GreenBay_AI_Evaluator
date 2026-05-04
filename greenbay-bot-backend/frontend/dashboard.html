@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreenBay AI Evaluator | Ops Dashboard</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <style>
+        :root {
+            --green-primary: #0D9F4F;
+            --green-light: #E8F8EF;
+            --green-dark: #087A3B;
+            --forest: #064E3B;
+            --cream: #FDFBF7;
+            --slate: #334155;
+            --muted: #64748B;
+            --white: #FFFFFF;
+            --gold: #F59E0B;
+            --red: #EF4444;
+            --border: #E5E7EB;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .04);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, .07);
+            --radius: 14px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'DM Sans', system-ui, sans-serif;
+            background: var(--cream);
+            color: var(--slate);
+            min-height: 100vh;
+            padding: 24px;
+        }
+        h1, h2, h3 { font-family: 'Fraunces', serif; color: var(--forest); }
+        h1 { font-size: 28px; font-weight: 700; }
+        h2 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+        .container { max-width: 1240px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid var(--border);
+        }
+        .header .meta { font-size: 14px; color: var(--muted); }
+        .header .refresh {
+            background: var(--green-primary);
+            color: var(--white);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .header .refresh:hover { background: var(--green-dark); }
+        .section { margin-bottom: 36px; }
+        .grid-services {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+        }
+        .service-card {
+            background: var(--white);
+            border-radius: var(--radius);
+            padding: 18px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border);
+        }
+        .service-card h3 {
+            font-size: 15px;
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 600;
+            color: var(--forest);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-online { background: var(--green-primary); box-shadow: 0 0 0 3px rgba(13, 159, 79, 0.18); }
+        .status-idle { background: var(--muted); box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.14); }
+        .status-degraded { background: var(--gold); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18); }
+        .status-disabled { background: #cbd5e1; }
+        .status-offline { background: var(--red); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18); }
+        .service-card .kv {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin: 4px 0;
+            color: var(--muted);
+        }
+        .service-card .kv b { color: var(--slate); font-weight: 500; }
+        .service-card .note {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border);
+        }
+        .error-note { color: var(--red); font-size: 12px; margin-top: 6px; }
+        .panels {
+            display: grid;
+            grid-template-columns: 1.3fr 1fr;
+            gap: 24px;
+        }
+        @media (max-width: 880px) {
+            .panels { grid-template-columns: 1fr; }
+        }
+        .panel {
+            background: var(--white);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border);
+        }
+        .recent-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            font-size: 13px;
+        }
+        .recent-row:last-child { border-bottom: none; }
+        .recent-title { font-weight: 500; color: var(--slate); }
+        .recent-sub { font-size: 12px; color: var(--muted); }
+        .chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .chip-accept { background: var(--green-light); color: var(--green-dark); }
+        .chip-negotiate { background: #FEF3C7; color: #92400E; }
+        .chip-reject { background: #FEE2E2; color: #991B1B; }
+        .chip-review { background: #E0E7FF; color: #3730A3; }
+        .chip-neutral { background: #F1F5F9; color: var(--slate); }
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .metric {
+            background: var(--green-light);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+        }
+        .metric .v {
+            font-family: 'Fraunces', serif;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--forest);
+            line-height: 1;
+        }
+        .metric .l {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        .bar-list { margin-top: 12px; }
+        .bar-row {
+            display: grid;
+            grid-template-columns: 130px 1fr auto;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 13px;
+        }
+        .bar { height: 8px; background: var(--green-light); border-radius: 999px; overflow: hidden; }
+        .bar > span { display: block; height: 100%; background: var(--green-primary); }
+        .bar-val { color: var(--muted); font-size: 12px; min-width: 40px; text-align: right; }
+        .denied {
+            max-width: 420px;
+            margin: 100px auto;
+            text-align: center;
+            background: var(--white);
+            padding: 40px;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
+        }
+        .denied h1 { margin-bottom: 10px; }
+        .denied p { color: var(--muted); }
+        .loading { color: var(--muted); font-size: 13px; text-align: center; padding: 16px; }
+    </style>
+</head>
+<body>
+
+<div id="denied" class="denied" style="display:none;">
+    <h1>Access denied</h1>
+    <p>This page is restricted. Append the access key to the URL to continue.</p>
+</div>
+
+<div id="app" class="container" style="display:none;">
+    <div class="header">
+        <div>
+            <h1>GreenBay Ops Dashboard</h1>
+            <div class="meta" id="meta">Loading…</div>
+        </div>
+        <button class="refresh" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="section">
+        <h2>Service status</h2>
+        <div id="services" class="grid-services">
+            <div class="loading">Loading service status…</div>
+        </div>
+    </div>
+
+    <div class="panels">
+        <div class="panel">
+            <h2>Recent evaluations</h2>
+            <div id="recent"><div class="loading">Loading…</div></div>
+        </div>
+        <div class="panel">
+            <h2>Analytics (last 90 days)</h2>
+            <div id="analytics"><div class="loading">Loading…</div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    const params = new URLSearchParams(window.location.search);
+    const key = params.get('key') || '';
+    if (!key) {
+        document.getElementById('denied').style.display = 'block';
+        return;
+    }
+    document.getElementById('app').style.display = 'block';
+
+    const q = '?key=' + encodeURIComponent(key);
+
+    async function fetchJson(path) {
+        const r = await fetch(path + q, { credentials: 'same-origin' });
+        if (!r.ok) throw new Error(path + ' → HTTP ' + r.status);
+        return r.json();
+    }
+
+    function fmt(v) {
+        if (v === null || v === undefined || v === '') return '—';
+        return v;
+    }
+    function fmtNum(v) {
+        if (v === null || v === undefined) return '—';
+        try { return Number(v).toLocaleString(); } catch(_) { return String(v); }
+    }
+    function fmtTime(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            const now = new Date();
+            const diffMin = Math.round((now - d) / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + ' min ago';
+            if (diffMin < 60 * 24) return Math.round(diffMin / 60) + ' hr ago';
+            return d.toLocaleDateString();
+        } catch(_) { return iso; }
+    }
+    function statusClass(s) {
+        s = (s || '').toLowerCase();
+        if (s === 'online') return 'status-online';
+        if (s === 'idle') return 'status-idle';
+        if (s === 'degraded' || s === 'warn') return 'status-degraded';
+        if (s === 'disabled' || s === 'not_configured') return 'status-disabled';
+        return 'status-offline';
+    }
+
+    function serviceCard(svc) {
+        const rows = (svc.rows || []).map(r =>
+            '<div class="kv"><span>' + fmt(r[0]) + '</span><b>' + fmt(r[1]) + '</b></div>'
+        ).join('');
+        const err = svc.error ? '<div class="error-note">' + svc.error + '</div>' : '';
+        const note = svc.note ? '<div class="note">' + svc.note + '</div>' : '';
+        return '<div class="service-card">' +
+            '<h3><span class="status-dot ' + statusClass(svc.status) + '"></span>' + svc.label + '</h3>' +
+            rows + err + note +
+            '</div>';
+    }
+
+    function renderStatus(data) {
+        const S = data.services || {};
+        const cards = [];
+
+        // Primary Vision (Claude)
+        cards.push(serviceCard({
+            label: 'Primary Vision (Claude)',
+            status: S.anthropic?.status,
+            rows: [
+                ['Configured', S.anthropic?.configured ? 'yes' : 'no'],
+                ['Model', S.anthropic?.model || '—'],
+            ],
+        }));
+        // Vertex AI
+        cards.push(serviceCard({
+            label: 'Vertex AI (Gemini)',
+            status: S.vertex?.status,
+            rows: [
+                ['Project', S.vertex?.project || '—'],
+                ['Model', S.vertex?.model || '—'],
+                ['Calls today', fmtNum(S.vertex?.calls_today)],
+                ['Last success', fmtTime(S.vertex?.last_success_at)],
+            ],
+            error: S.vertex?.last_error,
+            note: 'Monitor credit usage in Google Cloud Console.',
+        }));
+        // Airtable
+        cards.push(serviceCard({
+            label: 'Airtable (Data Repository)',
+            status: S.airtable?.status,
+            rows: [
+                ['Base', S.airtable?.base_id || '—'],
+                ['Table', S.airtable?.table || '—'],
+                ['Writes today', fmtNum(S.airtable?.writes_today)],
+                ['Pending fallback', fmtNum(S.airtable?.pending_fallback_records)],
+                ['Last success', fmtTime(S.airtable?.last_successful_write)],
+            ],
+            error: S.airtable?.last_error,
+        }));
+        // Google Sheets
+        cards.push(serviceCard({
+            label: 'Google Sheets',
+            status: S.sheets?.status,
+            rows: [
+                ['Credentials', S.sheets?.credentials_source || '—'],
+                ['Sheet', S.sheets?.sheet_id || '—'],
+            ],
+        }));
+        // Tavily
+        cards.push(serviceCard({
+            label: 'Tavily (Web Search)',
+            status: S.tavily?.status,
+            rows: [['Configured', S.tavily?.configured ? 'yes' : 'no']],
+        }));
+        // AWS S3
+        cards.push(serviceCard({
+            label: 'AWS S3',
+            status: S.s3?.status,
+            rows: [
+                ['Configured', S.s3?.configured ? 'yes' : 'no'],
+                ['Bucket', S.s3?.bucket || '—'],
+                ['Region', S.s3?.region || '—'],
+            ],
+        }));
+        // Database
+        cards.push(serviceCard({
+            label: 'Database',
+            status: S.database?.status,
+            rows: [
+                ['Dialect', S.database?.dialect || '—'],
+                ['Valuations', fmtNum(S.database?.valuation_count)],
+            ],
+            error: S.database?.error,
+        }));
+        // Redis
+        cards.push(serviceCard({
+            label: 'Redis',
+            status: S.redis?.status,
+            rows: [['Host', S.redis?.host || '—']],
+            error: S.redis?.error,
+        }));
+        // Qdrant
+        cards.push(serviceCard({
+            label: 'Qdrant',
+            status: S.qdrant?.status,
+            rows: [['URL', S.qdrant?.url || '—']],
+            error: S.qdrant?.error,
+        }));
+        // Flowcart
+        cards.push(serviceCard({
+            label: 'Flowcart (WhatsApp)',
+            status: S.flowcart?.status,
+            rows: [['Webhook secret', S.flowcart?.configured ? 'configured' : 'missing']],
+        }));
+
+        document.getElementById('services').innerHTML = cards.join('');
+        document.getElementById('meta').textContent =
+            'Environment: ' + (data.app || 'app') +
+            ' · version ' + (data.version || '?') +
+            ' · checked ' + fmtTime(data.checked_at);
+    }
+
+    function decisionChip(d) {
+        d = (d || '').toLowerCase();
+        if (d === 'accept') return '<span class="chip chip-accept">accept</span>';
+        if (d === 'negotiate') return '<span class="chip chip-negotiate">negotiate</span>';
+        if (d === 'reject' || d === 'decline') return '<span class="chip chip-reject">' + d + '</span>';
+        if (d === 'review' || d === 'redirect_to_agents') return '<span class="chip chip-review">' + d + '</span>';
+        return '<span class="chip chip-neutral">' + (d || '—') + '</span>';
+    }
+
+    function renderRecent(data) {
+        const rows = (data.sessions || []).map(s => {
+            const brand = s.brand || 'Unknown';
+            const model = s.model ? ' ' + s.model : '';
+            const offer = s.opening_offer != null
+                ? 'KES ' + fmtNum(Math.round(s.opening_offer))
+                : '—';
+            return '<div class="recent-row">' +
+                '<div>' +
+                '<div class="recent-title">' + brand + model + '</div>' +
+                '<div class="recent-sub">' + (s.category || '—') + ' · ' + fmtTime(s.created_at) + ' · confidence ' + fmtNum(Math.round(s.confidence_score || 0)) + '</div>' +
+                '</div>' +
+                '<div style="text-align:right;">' +
+                '<div><b>' + offer + '</b></div>' +
+                '<div>' + decisionChip(s.decision) + '</div>' +
+                '</div>' +
+                '</div>';
+        }).join('') || '<div class="loading">No evaluations yet.</div>';
+        document.getElementById('recent').innerHTML = rows;
+    }
+
+    function renderAnalytics(data) {
+        const metrics =
+            '<div class="analytics-grid">' +
+            '<div class="metric"><div class="v">' + fmtNum(data.total_evaluations) + '</div><div class="l">Total evaluations</div></div>' +
+            '<div class="metric"><div class="v">' + fmtNum(Math.round(data.mean_confidence || 0)) + '</div><div class="l">Avg confidence</div></div>' +
+            '<div class="metric"><div class="v">KES ' + fmtNum(Math.round(data.mean_offer || 0)) + '</div><div class="l">Avg offer</div></div>' +
+            '<div class="metric"><div class="v">' + fmtNum(data.evaluations_today) + '</div><div class="l">Today</div></div>' +
+            '</div>';
+
+        function bars(title, items) {
+            if (!items || !items.length) return '';
+            const max = items.reduce((m, x) => Math.max(m, x.count), 0) || 1;
+            const rows = items.map(x =>
+                '<div class="bar-row">' +
+                '<span>' + (x.label || '—') + '</span>' +
+                '<div class="bar"><span style="width:' + Math.max(4, (x.count / max) * 100) + '%"></span></div>' +
+                '<span class="bar-val">' + fmtNum(x.count) + '</span>' +
+                '</div>'
+            ).join('');
+            return '<h3 style="font-family:DM Sans;font-weight:600;font-size:14px;margin-top:10px;color:var(--forest)">' + title + '</h3>' +
+                '<div class="bar-list">' + rows + '</div>';
+        }
+
+        const html = metrics +
+            bars('Decision distribution', data.decisions) +
+            bars('Top brands', data.top_brands) +
+            bars('Top categories', data.top_categories);
+
+        document.getElementById('analytics').innerHTML = html || '<div class="loading">No data yet.</div>';
+    }
+
+    async function load() {
+        try {
+            const [status, recent, analytics] = await Promise.all([
+                fetchJson('/dashboard/status'),
+                fetchJson('/dashboard/recent'),
+                fetchJson('/dashboard/analytics'),
+            ]);
+            renderStatus(status);
+            renderRecent(recent);
+            renderAnalytics(analytics);
+        } catch (e) {
+            document.getElementById('services').innerHTML =
+                '<div class="loading" style="color:var(--red)">' + e.message + '</div>';
+        }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+    load();
+})();
+</script>
+
+</body>
+</html>

@@ -9,7 +9,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -50,14 +50,28 @@ from greenbay_ai_evaluator.models.evaluator_models import (
     ValuationSession,
 )
 from greenbay_ai_evaluator.services.comparables_service import get_comparables
-from greenbay_ai_evaluator.services.image_quality_service import score_images
+from greenbay_ai_evaluator.services.image_quality_service import (
+    score_images,
+    score_images_with_rejections,
+)
 from greenbay_ai_evaluator.services.market_price_service import search_internet_price
 from greenbay_ai_evaluator.services.marketplace_scraper import get_marketplace_prices
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
 from greenbay_ai_evaluator.services.google_lens_service import identify_product_multi
+# CR-2: Self-learning pricing from Google Sheet
+from greenbay_ai_evaluator.services.pricing_learner import get_historical_price
+# CR-3: Image duplicate detection
+from greenbay_ai_evaluator.services.image_hash_service import (
+    check_duplicates,
+    store_session_hashes,
+)
 
-from app.database.models import ExpertPriceFeedback, PickupRequest, ShopifyProduct
+from app.database.models import ExpertPriceFeedback, PickupRequest, ShopifyProduct, TradeInSession
+# Airtable backup data repository (write-only; never blocks the response)
+from greenbay_ai_evaluator.services.airtable_service import (
+    write_evaluation_async as airtable_write_async,
+)
 
 evaluator_router = APIRouter()
 
@@ -98,6 +112,108 @@ def _policy_to_data(policy: PricingPolicy) -> PricingPolicyData:
         brand_premium_json=policy.brand_premium_json or {},
         condition_multiplier_json=policy.condition_multiplier_json or {},
     )
+
+
+def _repressign_images_for_airtable(
+    req_image_urls: list[str],
+    trade_in_session_id: int | None,
+    db: Session,
+    expires_in_seconds: int = 7 * 24 * 3600,
+) -> list[dict]:
+    """Build a list of `{"url": "..."}` dicts for Airtable attachments.
+
+    When S3 is configured and a `TradeInSession` is on record, re-presign each
+    stored s3 key for *expires_in_seconds* (default 7 days) so Airtable can
+    fetch the image long after the original 1-hour presigned URL has expired.
+
+    On any failure (S3 disabled, session not found, presign error), falls back
+    to the raw URLs that arrived with the request.
+    """
+    raw_urls = [u for u in (req_image_urls or []) if u]
+    raw_attachments = [{"url": u} for u in raw_urls]
+
+    if not trade_in_session_id:
+        return raw_attachments
+
+    try:
+        from app.services.s3_service import s3_client, settings as s3_settings
+    except Exception:
+        return raw_attachments
+
+    if not s3_client or not getattr(s3_settings, "aws_s3_bucket", None):
+        return raw_attachments
+
+    try:
+        tis = (
+            db.query(TradeInSession)
+            .filter(TradeInSession.id == trade_in_session_id)
+            .first()
+        )
+        if not tis or not tis.s3_keys:
+            return raw_attachments
+        keys = tis.s3_keys if isinstance(tis.s3_keys, list) else []
+    except Exception as e:
+        logger.warning(f"TradeInSession lookup for Airtable images failed: {e}")
+        return raw_attachments
+
+    fresh: list[dict] = []
+    for key in keys[:8]:
+        try:
+            url = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": s3_settings.aws_s3_bucket, "Key": key},
+                ExpiresIn=expires_in_seconds,
+            )
+            if f".s3.{s3_settings.aws_region}.amazonaws.com" not in url:
+                url = url.replace(
+                    ".s3.amazonaws.com",
+                    f".s3.{s3_settings.aws_region}.amazonaws.com",
+                )
+            fresh.append({"url": url})
+        except Exception as e:
+            logger.warning(f"Airtable: 7-day presign failed for {key}: {e}")
+
+    return fresh or raw_attachments
+
+
+def _build_airtable_payload(
+    vs: ValuationSession,
+    req: EvaluateRequest,
+    grade: str,
+    images_for_airtable: list[dict],
+    vertex_result: dict | None,
+) -> dict:
+    """Assemble the Airtable 'Evaluated Products' record from the evaluation."""
+    product_name = " ".join(
+        part for part in [
+            (req.brand or "").strip(),
+            (req.model or "").strip(),
+            (req.category or "").strip(),
+        ] if part
+    ) or (req.category or "Unknown")
+
+    vertex_price = 0.0
+    if isinstance(vertex_result, dict):
+        try:
+            vertex_price = float(vertex_result.get("estimated_price_kes") or 0) or 0.0
+        except (TypeError, ValueError):
+            vertex_price = 0.0
+
+    payload: dict[str, Any] = {
+        "Date Submitted": datetime.now(timezone.utc).isoformat(),
+        "Product Name": product_name,
+        "Brand": req.brand or "",
+        "Model Number": req.model or "",
+        "Category": req.category or "",
+        "Age (Years)": float(req.age_years or 0),
+        "Condition": grade,
+        "Product Images": images_for_airtable,
+        "Customer Asking Price (KES)": float(req.seller_asking_price or 0),
+        "AI Evaluated Price (KES)": float(vs.opening_offer or 0),
+        "Vertex AI Price (KES)": vertex_price,
+        # In-House Evaluator Price (KES) is intentionally omitted — filled by humans.
+    }
+    return payload
 
 
 def _policy_snapshot(policy: PricingPolicy) -> dict:
@@ -169,6 +285,42 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
             except Exception as ve:
                 logger.warning(f"Vision analysis skipped: {ve}")
+
+        # 3b-ii. Vertex AI (Gemini) secondary evaluation — advisory only.
+        # Runs in a separate thread with its own event loop, matches the vision
+        # analysis pattern above. Never blocks; any failure is logged and
+        # `vertex_result` stays None.
+        vertex_result = None
+        if req.image_data:
+            try:
+                import asyncio
+                import concurrent.futures
+                from greenbay_ai_evaluator.services.vertex_ai_service import vertex_evaluate
+
+                def _run_vertex():
+                    loop = asyncio.new_event_loop()
+                    try:
+                        return loop.run_until_complete(
+                            vertex_evaluate(
+                                images_base64=req.image_data[:3],
+                                category=req.category,
+                                brand=req.brand,
+                                age=req.age_years,
+                                working_status=req.condition_grade,
+                            )
+                        )
+                    finally:
+                        loop.close()
+
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    vertex_result = pool.submit(_run_vertex).result(timeout=35)
+                if vertex_result:
+                    logger.info(
+                        f"Vertex AI: grade={vertex_result.get('condition_grade')}, "
+                        f"price={vertex_result.get('estimated_price_kes')}"
+                    )
+            except Exception as ve:
+                logger.warning(f"Vertex AI skipped: {ve}")
 
         # 3c. Google Cloud Vision product identification (Google Lens equivalent)
         lens_result = None
@@ -356,7 +508,27 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Expert feedback lookup failed: {e}")
 
-        # --- Reconcile all sources ---
+        # --- Source E: Google Sheet historical prices (CR-2/CR-4) ---
+        historical_avg = None
+        try:
+            hist_data = get_historical_price(
+                brand=req.brand,
+                model=req.model,
+                category=req.category,
+                condition_grade=grade,
+                age_years=req.age_years,
+            )
+            if hist_data:
+                historical_avg = hist_data["price"]
+                logger.info(
+                    f"Historical price (Sheet): avg={historical_avg}, "
+                    f"confidence={hist_data['confidence']}, "
+                    f"points={hist_data['data_points']}"
+                )
+        except Exception as e:
+            logger.warning(f"Historical price lookup failed: {e}")
+
+        # --- Reconcile all sources (CR-2: 60/40 rebalance) ---
         try:
             price_verification = reconcile_retail_price(
                 frontend_price=req.retail_price,
@@ -364,6 +536,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 marketplace_avg=marketplace_avg,
                 shopify_avg=shopify_avg,
                 expert_avg=expert_avg,
+                historical_avg=historical_avg,
             )
 
             # Add detailed breakdown if sources responded
@@ -429,6 +602,46 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             price_verification=price_verification,
         )
 
+        # CR-7: Check per-image rejections
+        rejected_images_data = None
+        try:
+            iq_with_rejections = score_images_with_rejections(
+                image_urls=req.image_urls,
+                image_data=req.image_data,
+            )
+            if iq_with_rejections.any_rejected:
+                rejected_images_data = [
+                    {
+                        "index": r.index,
+                        "reasons": r.reasons,
+                        "width": r.width,
+                        "height": r.height,
+                    }
+                    for r in iq_with_rejections.rejections
+                    if r.rejected
+                ]
+                logger.info(f"CR-7: {iq_with_rejections.rejected_count} images rejected")
+        except Exception as e:
+            logger.warning(f"CR-7 image rejection check failed: {e}")
+
+        # CR-3: Check for duplicate/resubmitted images
+        redirect_info = None
+        try:
+            dup_check = check_duplicates(
+                image_data_list=req.image_data,
+                current_session_id="",
+            )
+            if dup_check.is_duplicate:
+                result.decision = "redirect_to_agents"
+                result.decision_reason = dup_check.message
+                redirect_info = {
+                    "whatsapp_number": "+254705919099",
+                    "message": dup_check.message,
+                }
+                logger.info(f"CR-3: Duplicate detected, redirecting to agents")
+        except Exception as e:
+            logger.warning(f"CR-3 duplicate check failed: {e}")
+
         # Override decision based on rejection pre-screening
         if is_hard_reject:
             reject_reasons = []
@@ -439,7 +652,20 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             result.decision = "reject"
             result.decision_reason = "Product does not meet minimum quality standards. " + "; ".join(reject_reasons)
             logger.info(f"Hard reject: {reject_reasons}")
-        elif is_review_flag and result.decision not in ("reject",):
+        # CR-3: Smart rejection — age > 2 years + extensive wear = redirect
+        elif req.age_years > 2 and grade_lower in ("d", "poor", "not working", "partially working", "working_issues"):
+            result.decision = "redirect_to_agents"
+            result.decision_reason = (
+                f"Your {req.brand} {req.category} is {req.age_years:.0f} years old "
+                f"with condition '{req.condition_grade}'. Our team can give you "
+                f"a more accurate assessment. Please contact us directly."
+            )
+            redirect_info = {
+                "whatsapp_number": "+254705919099",
+                "message": result.decision_reason,
+            }
+            logger.info(f"CR-3 Smart redirect: age={req.age_years}, grade={grade_lower}")
+        elif is_review_flag and result.decision not in ("reject", "redirect_to_agents"):
             review_reasons = []
             if req.age_years > 5:
                 review_reasons.append(f"Product age ({req.age_years:.0f} years) exceeds 5-year threshold")
@@ -529,6 +755,65 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             f"offer={result.opening_offer}"
         )
 
+        # CR-3: Store image hashes for rejected sessions
+        try:
+            store_session_hashes(
+                image_data_list=req.image_data,
+                session_id=str(vs.id),
+                decision=result.decision,
+            )
+        except Exception as e:
+            logger.warning(f"CR-3 hash storage failed: {e}")
+
+        # Airtable: backup data repository (async, non-blocking, write-only)
+        try:
+            images_for_airtable = _repressign_images_for_airtable(
+                req_image_urls=req.image_urls,
+                trade_in_session_id=req.trade_in_session_id,
+                db=db,
+            )
+            airtable_payload = _build_airtable_payload(
+                vs=vs,
+                req=req,
+                grade=grade,
+                images_for_airtable=images_for_airtable,
+                vertex_result=locals().get("vertex_result"),
+            )
+            airtable_write_async(airtable_payload)
+            logger.info("Airtable: write dispatched (fire-and-forget)")
+        except Exception as e:
+            logger.warning(f"Airtable dispatch failed: {e}")
+
+        # CR-4: Auto-populate Google Sheet (async, non-blocking)
+        try:
+            import asyncio
+            import concurrent.futures
+
+            def _append_sheet():
+                from greenbay_ai_evaluator.services.google_sheets_service import append_evaluation_row
+                append_evaluation_row(
+                    category=req.category,
+                    brand=req.brand,
+                    model=req.model,
+                    condition=req.condition_grade,
+                    condition_grade=grade,
+                    age_years=req.age_years,
+                    retail_price_estimate=req.retail_price,
+                    wants_trade_in=True,
+                    ai_price=result.opening_offer,
+                    ai_confidence=result.confidence_score,
+                    customer_asking_price=req.seller_asking_price,
+                    status="",
+                    notes="",
+                    decision=result.decision,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(_append_sheet)  # Fire and forget
+            logger.info("CR-4: Google Sheet append queued")
+        except Exception as e:
+            logger.warning(f"CR-4 Google Sheet append failed: {e}")
+
         return EvaluateResponse(
             session_id=vs.id,
             estimated_resale_value=result.estimated_resale_value,
@@ -545,6 +830,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 str(policy.updated_at) if policy.updated_at else str(policy.created_at)
             ),
             price_verification=price_verification,
+            rejected_images=rejected_images_data,
+            redirect_info=redirect_info,
         )
 
     except HTTPException:

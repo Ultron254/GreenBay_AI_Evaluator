@@ -37,6 +37,8 @@ services:
       - ./temp_images:/app/temp_images
       - ./logs:/app/logs
       - ./receipts:/app/receipts
+      - ./credentials:/app/credentials:ro
+      - ./airtable_fallback:/app/airtable_fallback
     restart: unless-stopped
     networks:
       - greenbay-network

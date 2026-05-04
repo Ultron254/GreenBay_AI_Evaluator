@@ -200,7 +200,17 @@ def _compute_confidence(
 
 
 # ---------------------------------------------------------------------------
-# Multi-source price reconciliation
+# CR-2: Round to nearest KES 500
+# ---------------------------------------------------------------------------
+def _round_kes_500(value: float) -> float:
+    """Round a KES price to the nearest 500."""
+    if value <= 0:
+        return 0.0
+    return round(value / 500) * 500
+
+
+# ---------------------------------------------------------------------------
+# Multi-source price reconciliation (CR-2: 60/40 rebalance)
 # ---------------------------------------------------------------------------
 def reconcile_retail_price(
     *,
@@ -209,51 +219,84 @@ def reconcile_retail_price(
     marketplace_avg: float | None = None,
     shopify_avg: float | None = None,
     expert_avg: float | None = None,
+    historical_avg: float | None = None,
 ) -> dict[str, Any]:
     """Reconcile retail price from multiple sources.
 
+    CR-2: Rebalanced to 60% historical/expert, 40% web.
+    Weights are tuned so that when all sources are present,
+    historical+expert+shopify = ~60% and web = ~40%.
+
     Returns a dict with the reconciled price and breakdown of sources.
-    Each source gets a weight based on reliability.
     """
     sources = []
     total_weight = 0.0
     weighted_sum = 0.0
 
-    # Frontend / AI-provided price (weight 1.0 — baseline)
-    if frontend_price and frontend_price > 0:
-        sources.append({"source": "frontend", "price": frontend_price, "weight": 1.0})
-        weighted_sum += frontend_price * 1.0
-        total_weight += 1.0
+    # --- Historical/Expert sources (target: 60% total) ---
 
-    # Internet lookup (weight 2.0 — real retail data)
-    if internet_price and internet_price > 0:
-        sources.append({"source": "internet_lookup", "price": internet_price, "weight": 2.0})
-        weighted_sum += internet_price * 2.0
-        total_weight += 2.0
+    # Google Sheet historical (CR-2/CR-4 self-learning — weight 6.0)
+    if historical_avg and historical_avg > 0:
+        sources.append({"source": "historical_sheet", "price": historical_avg, "weight": 6.0})
+        weighted_sum += historical_avg * 6.0
+        total_weight += 6.0
 
-    # Marketplace average from Jiji/Jumia (weight 2.5 — actual secondhand market)
-    if marketplace_avg and marketplace_avg > 0:
-        sources.append({"source": "marketplace_jiji_jumia", "price": marketplace_avg, "weight": 2.5})
-        weighted_sum += marketplace_avg * 2.5
-        total_weight += 2.5
-
-    # Our Shopify inventory average (weight 3.0 — our own verified prices)
-    if shopify_avg and shopify_avg > 0:
-        sources.append({"source": "shopify_inventory", "price": shopify_avg, "weight": 3.0})
-        weighted_sum += shopify_avg * 3.0
-        total_weight += 3.0
-
-    # Expert feedback (weight 4.0 — highest reliability)
+    # Expert feedback (weight 5.0 — human-assessed prices)
     if expert_avg and expert_avg > 0:
-        sources.append({"source": "expert_feedback", "price": expert_avg, "weight": 4.0})
-        weighted_sum += expert_avg * 4.0
+        sources.append({"source": "expert_feedback", "price": expert_avg, "weight": 5.0})
+        weighted_sum += expert_avg * 5.0
+        total_weight += 5.0
+
+    # Our Shopify inventory average (weight 4.0 — our own verified prices)
+    if shopify_avg and shopify_avg > 0:
+        sources.append({"source": "shopify_inventory", "price": shopify_avg, "weight": 4.0})
+        weighted_sum += shopify_avg * 4.0
         total_weight += 4.0
 
+    # --- Web sources (target: 40% total) ---
+
+    # Marketplace average from Jiji/Jumia (weight 2.0)
+    if marketplace_avg and marketplace_avg > 0:
+        sources.append({"source": "marketplace_jiji_jumia", "price": marketplace_avg, "weight": 2.0})
+        weighted_sum += marketplace_avg * 2.0
+        total_weight += 2.0
+
+    # Internet lookup via Tavily (weight 1.5)
+    if internet_price and internet_price > 0:
+        sources.append({"source": "internet_lookup", "price": internet_price, "weight": 1.5})
+        weighted_sum += internet_price * 1.5
+        total_weight += 1.5
+
+    # Frontend / AI-provided price (weight 0.5 — lowest, just a fallback)
+    if frontend_price and frontend_price > 0:
+        sources.append({"source": "frontend", "price": frontend_price, "weight": 0.5})
+        weighted_sum += frontend_price * 0.5
+        total_weight += 0.5
+
     reconciled = weighted_sum / total_weight if total_weight > 0 else frontend_price
+
+    # CR-2: Outlier guard — if web data diverges wildly from historical, discard web
+    historical_ref = historical_avg or expert_avg or shopify_avg
+    web_ref = marketplace_avg or internet_price
+    if historical_ref and web_ref and historical_ref > 0:
+        ratio = web_ref / historical_ref
+        if ratio > 2.0 or ratio < 0.3:
+            # Web data is an outlier — use 100% historical
+            hist_sources = [s for s in sources if s["source"] in ("historical_sheet", "expert_feedback", "shopify_inventory")]
+            if hist_sources:
+                hist_weight = sum(s["weight"] for s in hist_sources)
+                hist_sum = sum(s["price"] * s["weight"] for s in hist_sources)
+                reconciled = hist_sum / hist_weight
+                # Mark web sources as discarded
+                for s in sources:
+                    if s["source"] not in ("historical_sheet", "expert_feedback", "shopify_inventory", "frontend"):
+                        s["discarded"] = True
+                        s["discard_reason"] = f"Outlier: {ratio:.1f}x vs historical"
+
     num_sources = len(sources)
 
     return {
-        "reconciled_price": round(reconciled, 2),
+        "reconciled_price": _round_kes_500(reconciled),
         "sources": sources,
         "num_sources": num_sources,
         "confidence": min(100.0, num_sources * 20.0 + 10.0),
@@ -393,14 +436,14 @@ def compute_valuation(
     needs_review_image = image_quality_score < 30
 
     # -- STEP 6: Estimated resale value --------------------------------------
-    estimated_resale_value = round(max(0.0, after_defects), 2)
+    estimated_resale_value = _round_kes_500(max(0.0, after_defects))
 
-    # -- STEP 7-9: Ceiling, opening, walkaway --------------------------------
-    acquisition_ceiling = round(estimated_resale_value * pricing_policy.max_offer_pct, 2)
-    opening_offer = round(
-        estimated_resale_value * (pricing_policy.max_offer_pct - pricing_policy.margin_pct), 2
+    # -- STEP 7-9: Ceiling, opening, walkaway (CR-2: all rounded to KES 500) -
+    acquisition_ceiling = _round_kes_500(estimated_resale_value * pricing_policy.max_offer_pct)
+    opening_offer = _round_kes_500(
+        estimated_resale_value * (pricing_policy.max_offer_pct - pricing_policy.margin_pct)
     )
-    walkaway_limit = round(estimated_resale_value * pricing_policy.walkaway_pct, 2)
+    walkaway_limit = _round_kes_500(estimated_resale_value * pricing_policy.walkaway_pct)
 
     # -- STEP 10: Confidence score -------------------------------------------
     num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0

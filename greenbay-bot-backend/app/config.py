@@ -114,6 +114,21 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=60, env="RATE_LIMIT_PER_MINUTE")
     rate_limit_per_hour: int = Field(default=1000, env="RATE_LIMIT_PER_HOUR")
     
+    # Google Sheets Integration (CR-4)
+    google_sheets_credentials_file: Optional[str] = Field(default=None, env="GOOGLE_SHEETS_CREDENTIALS_FILE")
+    google_sheets_id: str = Field(default="1DCKTWSxvGYQzuEPoJanQFF5ssM9oWnqVmEoEmh1MhAU", env="GOOGLE_SHEETS_ID")
+
+    # Airtable Configuration (write-only backup data repository)
+    airtable_api_token: Optional[str] = Field(default=None, env="AIRTABLE_API_TOKEN", repr=False)
+    airtable_base_id: str = Field(default="", env="AIRTABLE_BASE_ID")
+    airtable_table_name: str = Field(default="Evaluated Products", env="AIRTABLE_TABLE_NAME")
+
+    # Google Vertex AI Configuration (secondary evaluation via Gemini)
+    google_vertex_credentials_file: str = Field(default="", env="GOOGLE_VERTEX_CREDENTIALS_FILE")
+    google_vertex_project: str = Field(default="greenbay-ai-evaluator", env="GOOGLE_VERTEX_PROJECT")
+    google_vertex_region: str = Field(default="us-central1", env="GOOGLE_VERTEX_REGION")
+    google_vertex_model: str = Field(default="gemini-2.0-flash", env="GOOGLE_VERTEX_MODEL")
+
     # LangSmith Configuration
     langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY", repr=False)
     langsmith_project: str = Field(default="greenbay-chatbot", env="LANGSMITH_PROJECT")
@@ -146,6 +161,8 @@ def get_settings() -> Settings:
             ("anthropic_api_key", "Anthropic Vision"),
             ("tavily_api_key", "Tavily Search"),
             ("google_cloud_api_key", "Google Cloud Vision"),
+            ("airtable_api_token", "Airtable Data Repository"),
+            ("google_vertex_credentials_file", "Google Vertex AI"),
         ]
         for attr, label in _critical_keys:
             val = getattr(_settings, attr, None)

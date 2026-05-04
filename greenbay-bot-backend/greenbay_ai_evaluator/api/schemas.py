@@ -123,13 +123,19 @@ class EvaluateResponse(BaseModel):
     acquisition_ceiling: float
     opening_offer: float
     walkaway_limit: float
-    decision: str
+    decision: str  # "accept" | "negotiate" | "decline" | "review" | "reject" | "redirect_to_agents"
     decision_reason: str
     condition_grade: str
     risk_score: float
     comparable_count: int
     pricing_policy_version: str | None = None
     price_verification: dict | None = None
+    # CR-7: Per-image rejection details
+    rejected_images: list[dict] | None = None
+    # CR-3: Agent redirect info
+    redirect_info: dict | None = None
+    # CR-1: Video analysis results
+    video_analysis: dict | None = None
 
 
 class ExpertFeedbackRequest(BaseModel):
