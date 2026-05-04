@@ -32,15 +32,45 @@ jobs:
             echo "=== Rebuilding containers ==="
             cd greenbay-bot-backend
             sudo docker compose build
-            sudo docker compose up -d
+
+            # Bring everything up. If up fails, dump the app container logs so we
+            # can diagnose without needing to SSH in.
+            if ! sudo docker compose up -d; then
+              echo "::error::docker compose up -d failed; dumping app logs..."
+              sudo docker compose logs --tail=300 app || true
+              exit 1
+            fi
+
+            # Wait (up to 3 min) for the app container to become healthy before
+            # moving on. The Dockerfile healthcheck uses start_period=180s.
+            echo "=== Waiting for greenbay-bot to become healthy ==="
+            healthy=""
+            for i in $(seq 1 36); do
+              status="$(sudo docker inspect -f '{{.State.Health.Status}}' greenbay-bot 2>/dev/null || echo unknown)"
+              echo "  attempt $i: $status"
+              if [ "$status" = "healthy" ]; then healthy=1; break; fi
+              if [ "$status" = "unhealthy" ]; then
+                echo "::error::greenbay-bot went unhealthy; dumping logs..."
+                sudo docker compose logs --tail=300 app || true
+                exit 1
+              fi
+              sleep 5
+            done
+            if [ -z "$healthy" ]; then
+              echo "::error::greenbay-bot never became healthy after 3 min; dumping logs..."
+              sudo docker compose logs --tail=300 app || true
+              exit 1
+            fi
 
             echo "=== Seeding pricing policies ==="
-            sleep 10
-            sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py
+            sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py || true
 
-            echo "=== Verifying ==="
-            sleep 5
-            curl -sf http://localhost:9100/health || (echo "HEALTH CHECK FAILED" && exit 1)
+            echo "=== Verifying HTTP /health ==="
+            curl -sf http://localhost:9100/health || (
+              echo "HEALTH CHECK FAILED"
+              sudo docker compose logs --tail=200 app || true
+              exit 1
+            )
             echo ""
             echo "=== Deploy successful ==="
             sudo docker ps --format '{{.Names}} {{.Status}}'
