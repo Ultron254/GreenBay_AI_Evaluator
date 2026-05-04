@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           script_stop: true
-          command_timeout: 10m
+          command_timeout: 25m
           script: |
             cd /opt/greenbay/greenbay-bot-backend
             echo "=== Pulling latest code ==="

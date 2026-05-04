@@ -91,8 +91,10 @@ google-auth>=2.20.0
 # Airtable Integration (backup data repository)
 pyairtable>=2.0.0
 
-# Google Vertex AI (secondary evaluation via Gemini)
-google-cloud-aiplatform>=1.40.0
+# Google Vertex AI (Gemini) — we call the REST endpoint via httpx, so we only
+# need OAuth from google-auth (already above). NOT pulling google-cloud-aiplatform
+# here, because it transitively requires torch + full NVIDIA CUDA wheels (~1.5GB),
+# which blows past the CI SSH deploy timeout and isn't needed for our usage.
 
 # Video Processing (CR-1)
 ffmpeg-python>=0.2.0
