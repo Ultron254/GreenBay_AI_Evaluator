@@ -38,7 +38,10 @@ jobs:
             # that with the host directory's permissions, which can be root:root
             # after a `stop + rm` cycle. Fixing it here keeps the deploy idempotent.
             sudo mkdir -p logs temp_images receipts airtable_fallback credentials
-            sudo chmod 777 logs temp_images receipts airtable_fallback
+            # Recursive chmod so existing files (e.g. a pre-existing
+            # greenbay.log owned by root) also become writable by the
+            # container's non-root appuser.
+            sudo chmod -R 777 logs temp_images receipts airtable_fallback
             sudo chmod 755 credentials
 
             sudo docker compose build
