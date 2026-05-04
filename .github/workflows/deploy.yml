@@ -33,9 +33,17 @@ jobs:
             cd greenbay-bot-backend
             sudo docker compose build
 
+            # Stop and remove the two containers we always rebuild. Previous
+            # deploys occasionally left `greenbay-shopify-sync` in a stuck
+            # "running but not removable" state, which caused `up -d` to abort
+            # with "cannot remove container". Doing this explicitly first is
+            # deterministic and keeps postgres/redis/qdrant up for fast recovery.
+            sudo docker compose stop app shopify-sync || true
+            sudo docker compose rm -f app shopify-sync || true
+
             # Bring everything up. If up fails, dump the app container logs so we
             # can diagnose without needing to SSH in.
-            if ! sudo docker compose up -d; then
+            if ! sudo docker compose up -d --remove-orphans; then
               echo "::error::docker compose up -d failed; dumping app logs..."
               sudo docker compose logs --tail=300 app || true
               exit 1
