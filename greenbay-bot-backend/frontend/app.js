@@ -28,6 +28,7 @@ const state = {
         sellerName: '',
         sellerPhone: '',
         photos: [], // { file, dataUrl, id }
+        video: null, // { s3_key, url, keyframes:[{id,dataUrl}], duration, note }
         price: null,
     },
     evaluation: null,
@@ -59,10 +60,22 @@ function saveState() {
     try {
         // Don't persist completed evaluations — they'll reset on reload
         if (state.currentStep > TOTAL_STEPS) return;
-        const toSave = { ...state, answers: { ...state.answers, photos: [], modelPhoto: null } };
+        const toSave = { ...state, answers: { ...state.answers, photos: [], modelPhoto: null, video: null } };
         localStorage.setItem('gb_eval_state', JSON.stringify(toSave));
     } catch (_) { /* ignore */ }
 }
+
+/**
+ * Hard reset: wipe all client-side state and do a full page reload for a
+ * guaranteed clean UI. Used by every "Start New Evaluation" button across
+ * the result screens.
+ */
+function startNewEvaluation() {
+    try { localStorage.removeItem('gb_eval_state'); } catch (_) { /* ignore */ }
+    // Preserve any access key or query params that should persist across reloads.
+    window.location.href = window.location.pathname + window.location.hash;
+}
+window.startNewEvaluation = startNewEvaluation;
 
 function resetWizard() {
     // Clear all state
@@ -483,6 +496,106 @@ function handlePhotoUpload(files) {
     });
 }
 
+/* ============================================================
+ VIDEO UPLOAD (optional)
+ ============================================================ */
+async function handleVideoUpload(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const MAX_MB = 45;
+
+    const statusEl = document.getElementById('videoStatus');
+    const framesEl = document.getElementById('videoKeyframes');
+    if (!statusEl || !framesEl) return;
+
+    const show = (html) => {
+        statusEl.style.display = 'block';
+        statusEl.innerHTML = html;
+    };
+
+    if (!file.type.startsWith('video/') &&
+        !/\.(mp4|mov|webm|mkv)$/i.test(file.name || '')) {
+        show('<span style="color:var(--red);">Please choose an MP4, MOV or WebM video.</span>');
+        return;
+    }
+    if (file.size > MAX_MB * 1024 * 1024) {
+        const mb = (file.size / 1024 / 1024).toFixed(1);
+        show(`<span style="color:var(--red);">Video is ${mb} MB; max ${MAX_MB} MB.</span>`);
+        return;
+    }
+
+    show(`<span style="color:var(--muted);">Uploading ${(file.size/1024/1024).toFixed(1)} MB video and extracting keyframes…</span>`);
+    framesEl.innerHTML = '';
+
+    try {
+        const form = new FormData();
+        form.append('video', file, file.name || 'appliance.mp4');
+        if (state.answers.sellerPhone) {
+            form.append('user_phone', state.answers.sellerPhone);
+        }
+
+        const resp = await fetch(`${API_BASE}/tradein/upload-video`, {
+            method: 'POST',
+            body: form,
+        });
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 160)}`);
+        }
+        const data = await resp.json();
+
+        const frames = Array.isArray(data.keyframes_base64) ? data.keyframes_base64 : [];
+        state.answers.video = {
+            s3_key: data.video_s3_key || null,
+            url: data.video_url || null,
+            keyframes: frames.map((b64, i) => ({
+                id: 'vf_' + Date.now() + '_' + i,
+                dataUrl: 'data:image/jpeg;base64,' + b64,
+            })),
+            duration: data.duration_seconds || null,
+            note: data.note || null,
+        };
+
+        renderVideoKeyframes();
+
+        const bits = [];
+        if (data.duration_seconds) bits.push(data.duration_seconds.toFixed(1) + 's');
+        if (frames.length) bits.push(frames.length + ' keyframes');
+        if (data.video_s3_key) bits.push('saved to S3');
+        const subtitle = bits.join(' · ') || 'uploaded';
+        const noteHtml = data.note
+            ? `<div style="margin-top:6px;color:var(--gold);">${data.note}</div>` : '';
+        show(`<span style="color:var(--green-primary);font-weight:600;">✓ Video uploaded</span> <span style="color:var(--muted);">(${subtitle})</span>${noteHtml}`);
+        addChatMessage(
+            'bot',
+            frames.length
+                ? `Got your video — I pulled ${frames.length} frames from it to improve the assessment. Thanks!`
+                : `Got your video — I'll include it with the submission. The team will review it personally.`
+        );
+        saveState();
+    } catch (e) {
+        console.error('Video upload failed:', e);
+        show(`<span style="color:var(--red);">Video upload failed: ${e.message || e}</span>`);
+        state.answers.video = null;
+    }
+}
+
+function renderVideoKeyframes() {
+    const el = document.getElementById('videoKeyframes');
+    if (!el) return;
+    const frames = (state.answers.video && state.answers.video.keyframes) || [];
+    if (!frames.length) { el.innerHTML = ''; return; }
+    el.innerHTML = frames.map(f => `
+<div class="photo-thumb" style="position:relative;">
+  <img src="${f.dataUrl}" alt="Video keyframe">
+  <div style="position:absolute;top:4px;left:4px;background:rgba(13,78,59,.85);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">
+    VIDEO
+  </div>
+</div>
+`).join('');
+}
+window.handleVideoUpload = handleVideoUpload;
+
 function compressImage(dataUrl, maxDim, quality, callback) {
     const img = new Image();
     img.onload = () => {
@@ -766,6 +879,17 @@ async function callEvaluationAPI() {
         other: 30000,
     };
 
+    // Combine uploaded photos with any video keyframes.
+    // Priority: up to 5 user photos, then fill the remaining slots with
+    // video keyframes (max 8 total because vision truncates to 8 on the backend).
+    const photoUrls = a.photos.map(p => p.dataUrl);
+    const videoFrameUrls = (a.video && a.video.keyframes)
+        ? a.video.keyframes.map(f => f.dataUrl) : [];
+    const photosTaken = photoUrls.slice(0, Math.min(5, photoUrls.length));
+    const remaining = 8 - photosTaken.length;
+    const framesTaken = videoFrameUrls.slice(0, Math.max(0, remaining));
+    const combinedImageData = [...photosTaken, ...framesTaken];
+
     const payload = {
         category: a.category,
         brand: a.brand,
@@ -776,7 +900,7 @@ async function callEvaluationAPI() {
         defects: defects,
         seller_asking_price: a.price || null,
         image_urls: [],
-        image_data: a.photos.slice(0, 8).map(p => p.dataUrl), // Send base64 photos for vision analysis
+        image_data: combinedImageData,
         retail_price: defaultRetail[a.category] || 35000,
         retail_price_source: 'category_default',
     };
@@ -893,12 +1017,13 @@ function showResults(data) {
  <a href="https://greenbay.market" target="_blank" class="btn btn-primary" style="width:100%;">
  🛒 Browse GreenBay Marketplace
  </a>
- <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
- Evaluate Another Appliance
- </button>
- </div>
- </div>
- `;
+<button class="btn btn-outline" onclick="startNewEvaluation()" style="width:100%;">
+<i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
+Start New Evaluation
+</button>
+</div>
+</div>
+`;
         addChatMessage('bot', `I'm sorry, but your ${a.brand} ${CATEGORY_NAMES[a.category]} doesn't meet our minimum standards for trade-in. ${data.decision_reason || ''} You can speak to our team for other options.`);
         lucide.createIcons();
         return;
@@ -953,14 +1078,14 @@ function showResults(data) {
  </div>
  </div>
 
- <div style="text-align:center; margin-top:1.2rem;">
- <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
- <i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
- Evaluate Another Appliance
- </button>
- </div>
- </div>
- `;
+<div style="text-align:center; margin-top:1.2rem;">
+<button class="btn btn-outline" onclick="startNewEvaluation()" style="width:100%;">
+<i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
+Start New Evaluation
+</button>
+</div>
+</div>
+`;
         addChatMessage('bot', `I'd like an expert to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. The preliminary estimate is KES ${formatKES(offer)}, but our team can give you a more precise valuation. Click the WhatsApp button to connect with them!`);
         lucide.createIcons();
         return;
@@ -1040,13 +1165,13 @@ function showResults(data) {
  </div>
  </div>
 
- <div style="text-align:center; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
- <button class="btn btn-outline" onclick="resetWizard()" style="width:100%;">
- <i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
- Evaluate Another Appliance
- </button>
- </div>
- `;
+<div style="text-align:center; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+<button class="btn btn-outline" onclick="startNewEvaluation()" style="width:100%;">
+<i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
+Start New Evaluation
+</button>
+</div>
+`;
 
     // Chat panel , show the offer
     hideTypingIndicator();
@@ -1556,9 +1681,10 @@ function showFinalConfirmation(amount, method, address, day) {
  </div>
  </div>
  
- <button class="btn btn-primary" onclick="resetEvaluator()" style="width:100%;margin-top:20px;">
- Evaluate Another Appliance
- </button>
+<button class="btn btn-primary" onclick="startNewEvaluation()" style="width:100%;margin-top:20px;">
+<i data-lucide="rotate-ccw" style="width:16px;height:16px;margin-right:6px;"></i>
+Start New Evaluation
+</button>
  
  <div class="whatsapp-bridge" style="margin-top:20px;">
  <div class="whatsapp-bridge-icon">💬</div>
@@ -1629,8 +1755,11 @@ function showNoDeal(lastOffer) {
  <p>Our offer of <strong>KES ${formatKES(lastOffer)}</strong> for your ${a.brand} ${CATEGORY_NAMES[a.category]} is still available.</p>
  
  <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;">
- <button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept KES ${formatKES(lastOffer)}</button>
- <button class="btn btn-secondary" onclick="resetEvaluator()">New Valuation</button>
+<button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept KES ${formatKES(lastOffer)}</button>
+<button class="btn btn-secondary" onclick="startNewEvaluation()">
+  <i data-lucide="rotate-ccw" style="width:14px;height:14px;margin-right:4px;"></i>
+  Start New Evaluation
+</button>
  </div>
  
  <div class="whatsapp-bridge" style="margin-top:20px;">

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -870,6 +870,156 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         tb = traceback.format_exc()
         logger.opt(raw=True).error(f"Evaluation failed: {tb}\n")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST /upload-video
+# ---------------------------------------------------------------------------
+# Accept one MP4/MOV/WebM file (<=45 MB) from the frontend, store it in S3
+# (7-day presigned GET url), and extract up to 5 evenly-spaced JPEG keyframes
+# that the caller can then pass into /evaluate via `image_data`.
+
+_VIDEO_ALLOWED_MIME = {
+    "video/mp4",
+    "video/quicktime",  # .mov
+    "video/webm",
+    "video/x-matroska",
+    "application/octet-stream",  # some mobile browsers send this for .mov
+}
+_VIDEO_MAX_BYTES = 45 * 1024 * 1024  # keep below the 50 MB request limit
+_VIDEO_KEYFRAME_COUNT = 5
+
+
+@evaluator_router.post("/upload-video")
+async def upload_video(
+    video: UploadFile = File(..., description="MP4 / MOV / WebM video, max 45 MB"),
+    user_phone: str = Form("", max_length=30),
+):
+    """Store a short appliance video in S3 and return keyframes for analysis.
+
+    Response:
+        {
+          "video_s3_key": "videos/254.../....mp4",
+          "video_url":    "<7-day presigned URL>",
+          "keyframes_base64": ["<b64>", ...],
+          "frame_count":  5,
+          "duration_seconds": 12.3,
+          "note": null | "<why frames are missing>"
+        }
+
+    The caller should append `keyframes_base64` to `image_data` when calling
+    /evaluate so the vision models can factor the video into the assessment.
+    Video storage in S3 is best-effort - if S3 is disabled we still return
+    keyframes (from a transient temp copy) so the evaluation is not blocked.
+    """
+    import mimetypes
+    import os as _os
+    import tempfile
+    import uuid as _uuid
+
+    from app.services.video_service import extract_keyframes, frame_to_base64, video_duration_seconds
+
+    mime = (video.content_type or "").lower()
+    ext_guess = mimetypes.guess_extension(mime) or ""
+    # Trust the filename extension as a fallback signal (browsers often lie about MIME for .mov)
+    original_name = video.filename or ""
+    _, file_ext = _os.path.splitext(original_name.lower())
+    if not file_ext:
+        file_ext = ext_guess or ".mp4"
+    if mime and mime not in _VIDEO_ALLOWED_MIME and file_ext not in {".mp4", ".mov", ".webm", ".mkv"}:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported video type: {mime or file_ext or 'unknown'}",
+        )
+
+    # Read into a temp file, streaming-capped so we don't eat memory.
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=file_ext, prefix="gb_vid_")
+    total = 0
+    try:
+        with _os.fdopen(tmp_fd, "wb") as out:
+            while True:
+                chunk = await video.read(1024 * 1024)  # 1 MB at a time
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _VIDEO_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Video exceeds max size of {_VIDEO_MAX_BYTES // (1024*1024)} MB",
+                    )
+                out.write(chunk)
+        await video.close()
+
+        # Best-effort: upload original video to S3 (7-day presigned URL)
+        video_s3_key: str | None = None
+        video_url: str | None = None
+        try:
+            from app.config import get_settings as _gs
+            from app.services.s3_service import s3_client, settings as s3_settings
+            _s = _gs()
+            if s3_client and _s.aws_s3_bucket:
+                safe_phone = "".join(
+                    c for c in (user_phone or "anonymous")
+                    if c.isalnum() or c in "+-_"
+                ) or "anonymous"
+                ts = int(datetime.now(timezone.utc).timestamp())
+                key = f"videos/{safe_phone}/{ts}_{_uuid.uuid4().hex[:10]}{file_ext}"
+                content_type = mime or "video/mp4"
+                with open(tmp_path, "rb") as fh:
+                    s3_client.put_object(
+                        Bucket=_s.aws_s3_bucket,
+                        Key=key,
+                        Body=fh.read(),
+                        ContentType=content_type,
+                    )
+                try:
+                    url = s3_client.generate_presigned_url(
+                        "get_object",
+                        Params={"Bucket": _s.aws_s3_bucket, "Key": key},
+                        ExpiresIn=7 * 24 * 3600,
+                    )
+                    if f".s3.{_s.aws_region}.amazonaws.com" not in url:
+                        url = url.replace(
+                            ".s3.amazonaws.com",
+                            f".s3.{_s.aws_region}.amazonaws.com",
+                        )
+                    video_url = url
+                except Exception as e:
+                    logger.warning(f"upload-video: presign failed: {e}")
+                video_s3_key = key
+                logger.info(f"upload-video: stored {key} ({total} bytes)")
+        except Exception as e:
+            logger.warning(f"upload-video: S3 store failed: {e}")
+
+        # Extract keyframes (best-effort)
+        duration = video_duration_seconds(tmp_path)
+        frames = extract_keyframes(tmp_path, count=_VIDEO_KEYFRAME_COUNT)
+        note: str | None = None
+        if not frames:
+            note = (
+                "Video stored for human review; automatic keyframe extraction "
+                "was unavailable (ffmpeg missing or corrupt input)."
+            )
+
+        return {
+            "video_s3_key": video_s3_key,
+            "video_url": video_url,
+            "keyframes_base64": [frame_to_base64(b) for b in frames],
+            "frame_count": len(frames),
+            "duration_seconds": duration,
+            "note": note,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error(f"upload-video failed: {e}")
+        raise HTTPException(status_code=500, detail="upload-video failed")
+    finally:
+        try:
+            _os.remove(tmp_path)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

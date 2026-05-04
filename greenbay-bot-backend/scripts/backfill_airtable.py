@@ -303,21 +303,48 @@ def build_record(
 
 
 def run_update_images(cfg: dict[str, str]) -> int:
-    """PATCH-only pass: attach fresh 7-day presigned URLs to already-backfilled
-    rows. Useful when the initial backfill ran before S3 was configured.
+    """PATCH-only pass for rows already in Airtable:
+
+      * Re-presigns S3 keys (7-day URLs) and attaches them as Product Images,
+        if S3 is configured and the TradeInSession has s3_keys.
+      * Merges Google Sheet columns J/K (Internal Team Price / Final Price
+        Offered) into the In-House Evaluator Price (KES) field, if Sheets is
+        reachable. This is the second-pass catch-up once the Sheets API is
+        enabled post-first-backfill.
+      * Opportunistically fills Customer Name, Customer Phone, Evaluation
+        Status and Notes that the initial (pre-schema-fix) backfill left blank.
+
+    This mode NEVER creates new records - it only updates existing ones,
+    located by (Date Submitted prefix, Product Name).
     """
     logger.info("=" * 60)
-    logger.info("Airtable image-update pass starting (PATCH-only, no inserts)")
+    logger.info("Airtable update pass starting (PATCH-only, no inserts)")
     logger.info("=" * 60)
 
     try:
         from app.services.s3_service import s3_client
     except Exception:
         s3_client = None
-    if not s3_client:
+    s3_ok = bool(s3_client)
+    if not s3_ok:
+        logger.warning(
+            "S3 client unavailable - images will NOT be refreshed. "
+            "Set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to enable. "
+            "Proceeding to patch Sheet-derived prices + metadata only."
+        )
+
+    # Load Google Sheet index so we can patch In-House Evaluator Price.
+    sheet_index = _load_sheet_index()
+    sheet_ok = bool(sheet_index)
+    if not sheet_ok:
+        logger.warning(
+            "Google Sheet index empty - human evaluator prices (J/K) will NOT "
+            "be patched. Ensure Sheets API is enabled and try again."
+        )
+
+    if not s3_ok and not sheet_ok:
         logger.error(
-            "S3 client unavailable - set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
-            "in the EC2 .env and restart before running this."
+            "Both S3 and Sheets are unavailable - nothing to do. Exiting."
         )
         return 3
 
@@ -338,16 +365,30 @@ def run_update_images(cfg: dict[str, str]) -> int:
             )
             trade_in_map = {t.id: t for t in tis_rows}
 
-        counters = {"found": len(sessions), "patched": 0, "no_images": 0, "not_in_airtable": 0, "failed": 0}
+        # Expert price feedback (for In-House fallback when Sheet is blank)
+        session_ids = [vs.id for vs in sessions]
+        expert_map: dict[str, ExpertPriceFeedback] = {}
+        if session_ids:
+            expert_rows = (
+                db.query(ExpertPriceFeedback)
+                .filter(ExpertPriceFeedback.valuation_session_id.in_(session_ids))
+                .order_by(ExpertPriceFeedback.created_at.desc())
+                .all()
+            )
+            for row in expert_rows:
+                if row.valuation_session_id not in expert_map:
+                    expert_map[row.valuation_session_id] = row
+
+        counters = {
+            "found": len(sessions),
+            "patched": 0,
+            "not_in_airtable": 0,
+            "nothing_to_patch": 0,
+            "failed": 0,
+        }
 
         for batch in _chunked(sessions, BATCH_SIZE):
             for vs in batch:
-                tis = trade_in_map.get(vs.trade_in_session_id)
-                images = _image_attachments_from_trade_in(tis)
-                if not images:
-                    counters["no_images"] += 1
-                    continue
-
                 date_iso = _iso_date(vs.created_at)
                 prod_name = _product_name(vs)
                 record_id = _find_in_airtable(cfg, date_iso, prod_name)
@@ -356,31 +397,60 @@ def run_update_images(cfg: dict[str, str]) -> int:
                     logger.debug(f"Skip (not in Airtable): {prod_name} @ {date_iso}")
                     continue
 
-                img_count = len(images)
-                summary = (
-                    f"{img_count} product image{'s' if img_count != 1 else ''} "
-                    f"(7-day presigned URL{'s' if img_count != 1 else ''})"
-                )
-                patch_fields: dict[str, Any] = {
-                    "Product Images": images,
-                    "Attachment Summary": summary,
-                }
-                # While we're patching, also backfill the enriched metadata
-                # fields that earlier runs never populated.
+                patch_fields: dict[str, Any] = {}
+
+                # Fresh 7-day presigned images
+                tis = trade_in_map.get(vs.trade_in_session_id)
+                if s3_ok:
+                    images = _image_attachments_from_trade_in(tis)
+                    if images:
+                        img_count = len(images)
+                        patch_fields["Product Images"] = images
+                        patch_fields["Attachment Summary"] = (
+                            f"{img_count} product image{'s' if img_count != 1 else ''} "
+                            f"(7-day presigned URL{'s' if img_count != 1 else ''})"
+                        )
+
+                # In-House Evaluator Price from Sheet (J preferred, K fallback)
+                # with Expert feedback as a further fallback.
+                in_house: Optional[float] = None
+                if sheet_ok:
+                    sheet_internal, sheet_final = _lookup_sheet_prices(sheet_index, vs)
+                    if sheet_internal and sheet_internal > 0:
+                        in_house = float(sheet_internal)
+                    elif sheet_final and sheet_final > 0:
+                        in_house = float(sheet_final)
+                expert = expert_map.get(vs.id)
+                if in_house is None and expert and expert.expert_price:
+                    in_house = float(expert.expert_price)
+                if in_house is not None:
+                    patch_fields["In-House Evaluator Price (KES)"] = in_house
+
+                # Metadata fields that earlier runs missed
                 if vs.seller_name:
-                    patch_fields["Customer Name"] = vs.seller_name
+                    patch_fields.setdefault("Customer Name", vs.seller_name)
                 if vs.seller_phone:
-                    patch_fields["Customer Phone"] = vs.seller_phone
+                    patch_fields.setdefault("Customer Phone", vs.seller_phone)
                 if vs.decision:
-                    patch_fields["Evaluation Status"] = vs.decision
+                    patch_fields.setdefault("Evaluation Status", vs.decision)
                 if vs.decision_reason:
-                    patch_fields["Notes"] = str(vs.decision_reason)[:2000]
+                    patch_fields.setdefault("Notes", str(vs.decision_reason)[:2000])
+
+                if not patch_fields:
+                    counters["nothing_to_patch"] += 1
+                    continue
 
                 ok, err = _patch_record(cfg, record_id, patch_fields)
                 if ok:
                     counters["patched"] += 1
+                    bits = []
+                    if "Product Images" in patch_fields:
+                        bits.append(f"+{len(patch_fields['Product Images'])} imgs")
+                    if "In-House Evaluator Price (KES)" in patch_fields:
+                        bits.append(f"in-house={patch_fields['In-House Evaluator Price (KES)']:.0f}")
                     logger.info(
-                        f"Patched {counters['patched']}: {prod_name} (+{img_count} images)"
+                        f"Patched {counters['patched']}/{counters['found']}: "
+                        f"{prod_name} ({', '.join(bits) or 'metadata'})"
                     )
                 else:
                     counters["failed"] += 1
@@ -389,11 +459,11 @@ def run_update_images(cfg: dict[str, str]) -> int:
 
         logger.info("=" * 60)
         logger.info(
-            "Image-update summary: "
+            "Update summary: "
             f"found={counters['found']} | "
             f"patched={counters['patched']} | "
-            f"no_images={counters['no_images']} | "
             f"not_in_airtable={counters['not_in_airtable']} | "
+            f"nothing_to_patch={counters['nothing_to_patch']} | "
             f"failed={counters['failed']}"
         )
         logger.info("=" * 60)

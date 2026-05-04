@@ -788,6 +788,30 @@
                             <div class="photo-count" id="photoCount">
                                 <span class="count-num">0</span> / 3 minimum photos (5 HD ideal)
                             </div>
+
+                            <!-- Optional video upload -->
+                            <div class="video-upload-block" style="margin-top:1.5rem; padding:1.25rem; border-radius:var(--radius); background:var(--warm); border:1px dashed rgba(13,159,79,0.35);">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                                    <div>
+                                        <h4 style="margin:0; color:var(--forest); font-size:0.98rem;">
+                                            <i data-lucide="video" style="width:16px;height:16px;vertical-align:-3px;"></i>
+                                            Short video (optional)
+                                        </h4>
+                                        <p style="margin:4px 0 0; color:var(--muted); font-size:0.82rem;">
+                                            10-20s walk-around of the appliance. MP4 or MOV, up to 45 MB.
+                                            We'll sample 5 frames and add them to the analysis.
+                                        </p>
+                                    </div>
+                                    <label class="btn btn-secondary btn-sm" for="videoFileInput" style="cursor:pointer;">
+                                        <i data-lucide="upload" style="width:14px;height:14px;margin-right:4px;"></i>
+                                        Choose video
+                                    </label>
+                                    <input type="file" id="videoFileInput" accept="video/mp4,video/quicktime,video/webm,video/*"
+                                        style="display:none;" onchange="handleVideoUpload(this.files)">
+                                </div>
+                                <div id="videoStatus" style="display:none; margin-top:12px; font-size:0.85rem;"></div>
+                                <div id="videoKeyframes" class="photo-grid" style="margin-top:8px;"></div>
+                            </div>
                         </div>
 
                         <!-- STEP 11: Price -->

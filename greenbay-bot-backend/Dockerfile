@@ -9,10 +9,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install system dependencies
+# ffmpeg is required for video keyframe extraction (video_service.py)
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
     libpq-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

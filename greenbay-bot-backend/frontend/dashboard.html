@@ -59,6 +59,72 @@
             font-size: 14px;
         }
         .header .refresh:hover { background: var(--green-dark); }
+        .header .refresh:disabled { opacity: 0.6; cursor: wait; }
+        .header .controls {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .header .autorefresh {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--muted);
+            user-select: none;
+            cursor: pointer;
+        }
+        .header .autorefresh input { cursor: pointer; accent-color: var(--green-primary); }
+        .resources-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 14px;
+        }
+        .resource-card {
+            background: var(--white);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border);
+        }
+        .resource-card h4 {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .resource-card .big {
+            font-family: 'Fraunces', serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--forest);
+            margin-bottom: 6px;
+            line-height: 1.1;
+        }
+        .resource-card .sub {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+        .usage-bar {
+            height: 8px;
+            border-radius: 999px;
+            background: #F1F5F9;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .usage-bar > span {
+            display: block;
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.4s ease;
+        }
+        .usage-ok > span    { background: var(--green-primary); }
+        .usage-warn > span  { background: var(--gold); }
+        .usage-crit > span  { background: var(--red); }
         .section { margin-bottom: 36px; }
         .grid-services {
             display: grid;
@@ -214,13 +280,26 @@
             <h1>GreenBay Ops Dashboard</h1>
             <div class="meta" id="meta">Loading…</div>
         </div>
-        <button class="refresh" id="refreshBtn">Refresh</button>
+        <div class="controls">
+            <label class="autorefresh" title="Auto-refresh every 30 seconds">
+                <input type="checkbox" id="autoRefreshToggle" checked>
+                Auto-refresh 30s
+            </label>
+            <button class="refresh" id="refreshBtn">Refresh now</button>
+        </div>
     </div>
 
     <div class="section">
         <h2>Service status</h2>
         <div id="services" class="grid-services">
             <div class="loading">Loading service status…</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Resource usage</h2>
+        <div id="resources" class="resources-grid">
+            <div class="loading">Loading resource usage…</div>
         </div>
     </div>
 
@@ -391,10 +470,6 @@
         }));
 
         document.getElementById('services').innerHTML = cards.join('');
-        document.getElementById('meta').textContent =
-            'Environment: ' + (data.app || 'app') +
-            ' · version ' + (data.version || '?') +
-            ' · checked ' + fmtTime(data.checked_at);
     }
 
     function decisionChip(d) {
@@ -458,23 +533,166 @@
         document.getElementById('analytics').innerHTML = html || '<div class="loading">No data yet.</div>';
     }
 
+    function usageClass(pct) {
+        if (pct === null || pct === undefined || isNaN(pct)) return 'usage-ok';
+        if (pct >= 80) return 'usage-crit';
+        if (pct >= 50) return 'usage-warn';
+        return 'usage-ok';
+    }
+
+    function resourceCard({ title, big, sub, percent, extra }) {
+        const pct = (typeof percent === 'number' && !isNaN(percent))
+            ? Math.max(0, Math.min(100, percent)) : null;
+        const bar = pct === null ? '' :
+            '<div class="usage-bar ' + usageClass(pct) + '">' +
+            '<span style="width:' + pct.toFixed(1) + '%"></span></div>';
+        const extraHtml = extra ? '<div class="sub">' + extra + '</div>' : '';
+        return '<div class="resource-card">' +
+            '<h4>' + title + '</h4>' +
+            '<div class="big">' + fmt(big) + '</div>' +
+            (sub ? '<div class="sub">' + sub + '</div>' : '') +
+            bar +
+            extraHtml +
+            '</div>';
+    }
+
+    function renderResources(data) {
+        if (!data) {
+            document.getElementById('resources').innerHTML =
+                '<div class="loading">No resource data yet.</div>';
+            return;
+        }
+        const cards = [];
+
+        // CPU
+        cards.push(resourceCard({
+            title: 'CPU',
+            big: data.cpu?.display || '—',
+            sub: data.cpu?.cores ? (data.cpu.cores + ' cores') : '',
+            percent: data.cpu?.percent,
+        }));
+        // Memory
+        cards.push(resourceCard({
+            title: 'Memory',
+            big: (data.memory?.percent != null ? data.memory.percent.toFixed(0) + '%' : '—'),
+            sub: data.memory?.display || '',
+            percent: data.memory?.percent,
+        }));
+        // Disk
+        cards.push(resourceCard({
+            title: 'Disk',
+            big: (data.disk?.percent != null ? data.disk.percent.toFixed(0) + '%' : '—'),
+            sub: data.disk?.display || '',
+            percent: data.disk?.percent,
+        }));
+        // Uptime
+        cards.push(resourceCard({
+            title: 'Process uptime',
+            big: data.uptime?.display || '—',
+            sub: data.uptime?.started_at ? ('started ' + fmtTime(data.uptime.started_at)) : '',
+        }));
+        // Database
+        cards.push(resourceCard({
+            title: 'Database size',
+            big: data.database?.display || '—',
+            sub: data.database?.error ? ('error: ' + data.database.error) : 'postgres',
+        }));
+        // Redis
+        cards.push(resourceCard({
+            title: 'Redis memory',
+            big: data.redis?.display || '—',
+            sub: data.redis?.percent != null ? (data.redis.percent.toFixed(0) + '% of max') : 'no maxmemory set',
+            percent: data.redis?.percent,
+        }));
+        // Qdrant
+        cards.push(resourceCard({
+            title: 'Qdrant vectors',
+            big: data.qdrant?.display || '—',
+            sub: data.qdrant?.collection ? ('collection: ' + data.qdrant.collection) : '',
+        }));
+        // S3
+        cards.push(resourceCard({
+            title: 'S3 storage',
+            big: data.s3?.display || '—',
+            sub: data.s3?.videos_objects
+                ? (fmtNum(data.s3.videos_objects) + ' videos · ' + (data.s3.bucket || ''))
+                : (data.s3?.bucket || ''),
+        }));
+        // Vertex AI calls
+        cards.push(resourceCard({
+            title: 'Vertex AI (Gemini)',
+            big: (data.api_counters?.vertex?.total_calls ?? 0).toLocaleString(),
+            sub: data.api_counters?.vertex?.display || 'total calls',
+            extra: data.api_counters?.vertex?.last_success_at
+                ? ('last ' + fmtTime(data.api_counters.vertex.last_success_at))
+                : '',
+        }));
+        // Airtable writes
+        cards.push(resourceCard({
+            title: 'Airtable writes',
+            big: (data.api_counters?.airtable?.total_writes ?? 0).toLocaleString(),
+            sub: data.api_counters?.airtable?.display || 'total writes',
+            extra: data.api_counters?.airtable?.pending_fallback
+                ? ('pending fallback: ' + data.api_counters.airtable.pending_fallback)
+                : '',
+        }));
+
+        document.getElementById('resources').innerHTML = cards.join('');
+    }
+
+    let _autoTimer = null;
+    function setAutoRefresh(on) {
+        if (_autoTimer) {
+            clearInterval(_autoTimer);
+            _autoTimer = null;
+        }
+        if (on) {
+            _autoTimer = setInterval(load, 30000);
+        }
+    }
+
     async function load() {
+        const btn = document.getElementById('refreshBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
         try {
-            const [status, recent, analytics] = await Promise.all([
+            const [status, resources, recent, analytics] = await Promise.all([
                 fetchJson('/dashboard/status'),
+                fetchJson('/dashboard/resources').catch(() => null),
                 fetchJson('/dashboard/recent'),
                 fetchJson('/dashboard/analytics'),
             ]);
             renderStatus(status);
+            renderResources(resources);
             renderRecent(recent);
             renderAnalytics(analytics);
+            const now = new Date();
+            document.getElementById('meta').textContent =
+                'Environment: ' + (status.app || 'app') +
+                ' · version ' + (status.version || '?') +
+                ' · last updated ' + now.toLocaleTimeString();
         } catch (e) {
             document.getElementById('services').innerHTML =
                 '<div class="loading" style="color:var(--red)">' + e.message + '</div>';
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Refresh now'; }
         }
     }
 
-    document.getElementById('refreshBtn').addEventListener('click', load);
+    const refreshBtn = document.getElementById('refreshBtn');
+    refreshBtn.addEventListener('click', load);
+    const autoToggle = document.getElementById('autoRefreshToggle');
+    autoToggle.addEventListener('change', () => setAutoRefresh(autoToggle.checked));
+    setAutoRefresh(autoToggle.checked);
+    // Pause auto-refresh when the tab is hidden; resume when it comes back.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            setAutoRefresh(false);
+        } else if (autoToggle.checked) {
+            setAutoRefresh(true);
+            load();
+        }
+    });
+
     load();
 })();
 </script>

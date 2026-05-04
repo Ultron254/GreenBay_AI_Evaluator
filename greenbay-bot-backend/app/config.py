@@ -9,7 +9,7 @@ Security notes:
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 
 class Settings(BaseSettings):
@@ -81,8 +81,17 @@ class Settings(BaseSettings):
     # AWS S3 Configuration
     aws_access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID", repr=False)
     aws_secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY", repr=False)
-    aws_region: str = Field(default="eu-north-1", env="AWS_DEFAULT_REGION")
-    aws_s3_bucket: str = Field(default="greenbay-bucket", env="S3_BUCKET")
+    aws_region: str = Field(
+        default="eu-north-1",
+        validation_alias=AliasChoices("AWS_DEFAULT_REGION", "AWS_REGION"),
+    )
+    # Accept either S3_BUCKET (our convention) or AWS_S3_BUCKET (common convention).
+    # Default updated to the real production bucket so the startup banner never
+    # shows the legacy "greenbay-bucket" placeholder even if neither env var is set.
+    aws_s3_bucket: str = Field(
+        default="greenbay-evaluator-images",
+        validation_alias=AliasChoices("S3_BUCKET", "AWS_S3_BUCKET"),
+    )
     
     # Application Configuration
     app_name: str = Field(default="GreenBay Market Chatbot", env="APP_NAME")

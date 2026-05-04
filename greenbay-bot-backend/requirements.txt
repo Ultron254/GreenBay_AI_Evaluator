@@ -40,6 +40,9 @@ requests-oauthlib
 Pillow>=10.0.0,<11.0
 python-magic
 
+# System metrics (for the ops dashboard /dashboard/resources endpoint)
+psutil>=5.9.0,<7.0
+
 # PDF Generation (for receipts)
 reportlab
 weasyprint

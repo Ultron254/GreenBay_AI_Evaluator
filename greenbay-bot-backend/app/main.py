@@ -552,6 +552,250 @@ def create_app() -> FastAPI:
             },
         }
 
+    @app.get("/dashboard/resources")
+    async def dashboard_resources(_: str = Depends(_require_dashboard_key)):
+        """Resource usage metrics for the ops dashboard.
+
+        Returns CPU, memory, disk, Redis memory, Qdrant vectors, database
+        size, Docker/process uptime, S3 storage usage, and counters for AI
+        and Airtable API calls. Each numeric metric is returned as both a
+        raw value and a 0-100 percent where applicable, plus a human-friendly
+        display string. Never raises - individual probe failures land as
+        `null` fields with an `error` key.
+        """
+        from app.config import get_settings as _gs
+        s = _gs()
+
+        def _fmt_bytes(n: Optional[int]) -> str:
+            if n is None:
+                return "—"
+            units = ["B", "KB", "MB", "GB", "TB", "PB"]
+            size = float(n)
+            u = 0
+            while size >= 1024 and u < len(units) - 1:
+                size /= 1024
+                u += 1
+            return f"{size:.1f} {units[u]}" if u else f"{int(size)} {units[u]}"
+
+        def _fmt_duration(seconds: Optional[float]) -> str:
+            if seconds is None:
+                return "—"
+            s_int = int(seconds)
+            d, rem = divmod(s_int, 86400)
+            h, rem = divmod(rem, 3600)
+            m, sec = divmod(rem, 60)
+            if d:
+                return f"{d}d {h}h"
+            if h:
+                return f"{h}h {m}m"
+            if m:
+                return f"{m}m {sec}s"
+            return f"{sec}s"
+
+        # ---- System (container) ----
+        cpu_info: dict[str, Any] = {}
+        memory_info: dict[str, Any] = {}
+        disk_info: dict[str, Any] = {}
+        uptime_info: dict[str, Any] = {}
+        try:
+            import psutil
+            # cpu_percent with a short interval gives a meaningful sample.
+            cpu_pct = psutil.cpu_percent(interval=0.25)
+            cpu_info = {
+                "percent": round(cpu_pct, 1),
+                "cores": psutil.cpu_count(logical=True),
+                "display": f"{cpu_pct:.1f}%",
+            }
+            vm = psutil.virtual_memory()
+            memory_info = {
+                "percent": round(vm.percent, 1),
+                "used_bytes": int(vm.used),
+                "total_bytes": int(vm.total),
+                "display": f"{_fmt_bytes(vm.used)} / {_fmt_bytes(vm.total)}",
+            }
+            du = psutil.disk_usage("/app")
+            disk_info = {
+                "percent": round(du.percent, 1),
+                "used_bytes": int(du.used),
+                "total_bytes": int(du.total),
+                "display": f"{_fmt_bytes(du.used)} / {_fmt_bytes(du.total)}",
+            }
+            # Process uptime from our own process
+            try:
+                p = psutil.Process(os.getpid())
+                proc_uptime_s = (
+                    datetime.now(timezone.utc).timestamp() - p.create_time()
+                )
+                uptime_info = {
+                    "seconds": int(proc_uptime_s),
+                    "display": _fmt_duration(proc_uptime_s),
+                    "started_at": datetime.fromtimestamp(
+                        p.create_time(), timezone.utc
+                    ).isoformat(),
+                }
+            except Exception:
+                uptime_info = {"seconds": None, "display": "—"}
+        except Exception as e:
+            cpu_info = {"error": str(e), "display": "unavailable"}
+            memory_info = {"error": str(e), "display": "unavailable"}
+            disk_info = {"error": str(e), "display": "unavailable"}
+
+        # ---- Database size ----
+        db_size: dict[str, Any] = {}
+        try:
+            from app.database.db import SessionLocal
+            from sqlalchemy import text
+            d = SessionLocal()
+            try:
+                dialect = d.bind.dialect.name if d.bind else ""
+                if dialect == "postgresql":
+                    row = d.execute(
+                        text("SELECT pg_database_size(current_database())")
+                    ).scalar()
+                    db_size = {
+                        "bytes": int(row or 0),
+                        "display": _fmt_bytes(int(row or 0)),
+                    }
+                else:
+                    db_size = {"bytes": None, "display": f"n/a ({dialect})"}
+            finally:
+                d.close()
+        except Exception as e:
+            db_size = {"error": str(e), "display": "unavailable"}
+
+        # ---- Redis memory ----
+        redis_mem: dict[str, Any] = {}
+        try:
+            import redis as _redis
+            rc = _redis.Redis(
+                host=s.redis_host,
+                port=s.redis_port,
+                db=s.redis_db,
+                password=s.redis_password,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            info = rc.info(section="memory")
+            used = int(info.get("used_memory", 0) or 0)
+            max_mem = int(info.get("maxmemory", 0) or 0) or None
+            redis_mem = {
+                "used_bytes": used,
+                "max_bytes": max_mem,
+                "percent": round(100 * used / max_mem, 1) if max_mem else None,
+                "display": (
+                    f"{_fmt_bytes(used)} / {_fmt_bytes(max_mem)}"
+                    if max_mem else _fmt_bytes(used)
+                ),
+            }
+        except Exception as e:
+            redis_mem = {"error": str(e), "display": "unavailable"}
+
+        # ---- Qdrant vectors ----
+        qdrant_stats: dict[str, Any] = {}
+        try:
+            import httpx as _httpx
+            coll = s.qdrant_collection_name
+            resp = _httpx.get(f"{s.qdrant_url}/collections/{coll}", timeout=3)
+            if resp.status_code == 200:
+                result = resp.json().get("result", {}) or {}
+                pts = int(result.get("points_count") or result.get("vectors_count") or 0)
+                qdrant_stats = {
+                    "collection": coll,
+                    "points": pts,
+                    "display": f"{pts:,} vectors",
+                }
+            else:
+                qdrant_stats = {
+                    "collection": coll,
+                    "display": f"http {resp.status_code}",
+                }
+        except Exception as e:
+            qdrant_stats = {"error": str(e), "display": "unavailable"}
+
+        # ---- S3 storage (bucket-wide list; cached via a tiny module cache) ----
+        s3_usage: dict[str, Any] = {}
+        if s.aws_access_key_id and s.aws_secret_access_key and s.aws_s3_bucket:
+            try:
+                from app.services.s3_service import s3_client
+                if s3_client:
+                    total_bytes = 0
+                    total_objects = 0
+                    video_bytes = 0
+                    video_objects = 0
+                    paginator = s3_client.get_paginator("list_objects_v2")
+                    for page in paginator.paginate(
+                        Bucket=s.aws_s3_bucket, PaginationConfig={"MaxItems": 5000}
+                    ):
+                        for obj in page.get("Contents", []) or []:
+                            size = int(obj.get("Size") or 0)
+                            total_bytes += size
+                            total_objects += 1
+                            key = str(obj.get("Key") or "")
+                            if key.startswith("videos/"):
+                                video_bytes += size
+                                video_objects += 1
+                    s3_usage = {
+                        "bucket": s.aws_s3_bucket,
+                        "total_bytes": total_bytes,
+                        "total_objects": total_objects,
+                        "videos_bytes": video_bytes,
+                        "videos_objects": video_objects,
+                        "display": f"{_fmt_bytes(total_bytes)} ({total_objects:,} objects)",
+                    }
+                else:
+                    s3_usage = {"display": "client not initialised"}
+            except Exception as e:
+                s3_usage = {"error": str(e), "display": "unavailable"}
+        else:
+            s3_usage = {"display": "disabled (no credentials)"}
+
+        # ---- API call counters (from module state) ----
+        api_counters: dict[str, Any] = {}
+        try:
+            from greenbay_ai_evaluator.services.vertex_ai_service import (
+                get_service_status as vertex_status,
+            )
+            vstate = vertex_status()
+            api_counters["vertex"] = {
+                "calls_today": vstate.get("calls_today", 0),
+                "total_calls": vstate.get("total_calls", 0),
+                "total_failures": vstate.get("total_failures", 0),
+                "last_success_at": vstate.get("last_success_at"),
+                "display": f"{vstate.get('calls_today', 0)} today · {vstate.get('total_calls', 0)} total",
+            }
+        except Exception as e:
+            api_counters["vertex"] = {"error": str(e)}
+        try:
+            from greenbay_ai_evaluator.services.airtable_service import (
+                get_service_status as at_status,
+            )
+            astate = at_status()
+            api_counters["airtable"] = {
+                "writes_today": astate.get("writes_today", 0),
+                "total_writes": astate.get("total_writes", 0),
+                "total_failures": astate.get("total_failures", 0),
+                "pending_fallback": astate.get("pending_fallback_records", 0),
+                "display": (
+                    f"{astate.get('writes_today', 0)} writes today · "
+                    f"{astate.get('total_writes', 0)} total"
+                ),
+            }
+        except Exception as e:
+            api_counters["airtable"] = {"error": str(e)}
+
+        return {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "cpu": cpu_info,
+            "memory": memory_info,
+            "disk": disk_info,
+            "uptime": uptime_info,
+            "database": db_size,
+            "redis": redis_mem,
+            "qdrant": qdrant_stats,
+            "s3": s3_usage,
+            "api_counters": api_counters,
+        }
+
     @app.get("/dashboard/recent")
     async def dashboard_recent(
         _: str = Depends(_require_dashboard_key),
