@@ -37,6 +37,7 @@ _MIN_JPEG = bytes.fromhex(
 
 def _emit(component: str, ok: bool, detail: dict) -> None:
     print(json.dumps({"component": component, "ok": ok, **detail}, default=str))
+    sys.stdout.flush()
 
 
 def _backend_root() -> Path:
@@ -88,7 +89,7 @@ def main() -> int:
                 "content-type": "application/json",
             },
             json=payload,
-            timeout=60.0,
+            timeout=25.0,
         )
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
@@ -116,7 +117,7 @@ def main() -> int:
             brand="TestBrand",
             age=2.0,
             working_status="good",
-            timeout_seconds=45.0,
+            timeout_seconds=25.0,
         )
         return out
 

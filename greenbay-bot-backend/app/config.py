@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     google_vertex_project: str = Field(default="greenbay-ai-evaluator", env="GOOGLE_VERTEX_PROJECT")
     google_vertex_region: str = Field(default="us-central1", env="GOOGLE_VERTEX_REGION")
     google_vertex_model: str = Field(
-        default="gemini-1.5-flash",
+        default="gemini-2.5-flash",
         env="GOOGLE_VERTEX_MODEL",
     )
 

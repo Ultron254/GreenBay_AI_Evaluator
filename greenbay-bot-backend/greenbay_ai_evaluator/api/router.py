@@ -9,6 +9,9 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import io
 from datetime import datetime, timezone
 from typing import Any
 
@@ -114,52 +117,108 @@ def _policy_to_data(policy: PricingPolicy) -> PricingPolicyData:
     )
 
 
+def _eval_image_data_url_to_jpeg_bytes(data_url: str) -> bytes:
+    """Decode a data-URL or raw base64 appliance photo and normalize to JPEG bytes."""
+    from PIL import Image
+
+    payload = data_url.strip()
+    if "," in payload:
+        payload = payload.split(",", 1)[1]
+    raw = base64.b64decode(payload)
+    img = Image.open(io.BytesIO(raw))
+    if img.mode in ("RGBA", "P", "LA"):
+        img = img.convert("RGB")
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
+def _upload_eval_image_data_to_s3(image_data: list[str], folder_id: str) -> list[str]:
+    """Upload evaluation photos to S3 at uploads/{folder_id}/{index}.jpg. Best-effort."""
+    import concurrent.futures
+
+    from app.services.s3_service import upload_bytes_to_s3
+
+    async def _run() -> list[str]:
+        keys_out: list[str] = []
+        for i, data_url in enumerate(image_data[:8]):
+            if not (data_url or "").strip():
+                continue
+            try:
+                jpeg_bytes = _eval_image_data_url_to_jpeg_bytes(data_url)
+                key = f"uploads/{folder_id}/{i}.jpg"
+                await upload_bytes_to_s3(jpeg_bytes, key, content_type="image/jpeg")
+                keys_out.append(key)
+            except Exception as e:
+                logger.warning(f"Evaluate: S3 upload failed for image index {i}: {e}")
+        return keys_out
+
+    def _in_thread() -> list[str]:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_in_thread).result()
+
+
 def _repressign_images_for_airtable(
     req_image_urls: list[str],
     trade_in_session_id: int | None,
     db: Session,
     expires_in_seconds: int = 7 * 24 * 3600,
+    uploaded_s3_keys: list[str] | None = None,
 ) -> list[dict]:
     """Build a list of `{"url": "..."}` dicts for Airtable attachments.
 
-    When S3 is configured and a `TradeInSession` is on record, re-presign each
-    stored s3 key for *expires_in_seconds* (default 7 days) so Airtable can
-    fetch the image long after the original 1-hour presigned URL has expired.
+    Priority:
+      1. ``uploaded_s3_keys`` from this request (anonymous valuations / fresh keys).
+      2. Keys on ``TradeInSession`` when ``trade_in_session_id`` is set.
+      3. Raw ``req_image_urls`` (HTTP URLs).
 
-    On any failure (S3 disabled, session not found, presign error), falls back
-    to the raw URLs that arrived with the request.
+    When S3 is configured, re-presign each key for *expires_in_seconds* (default 7 days)
+    so Airtable can fetch the image after short-lived URLs expire.
     """
     raw_urls = [u for u in (req_image_urls or []) if u]
     raw_attachments = [{"url": u} for u in raw_urls]
 
-    if not trade_in_session_id:
+    keys_to_sign: list[str] = []
+    if uploaded_s3_keys:
+        keys_to_sign = [k for k in uploaded_s3_keys if k][:8]
+    elif trade_in_session_id:
+        try:
+            tis = (
+                db.query(TradeInSession)
+                .filter(TradeInSession.id == trade_in_session_id)
+                .first()
+            )
+            if tis and tis.s3_keys:
+                keys_to_sign = (
+                    list(tis.s3_keys) if isinstance(tis.s3_keys, list) else []
+                )[:8]
+        except Exception as e:
+            logger.warning(f"TradeInSession lookup for Airtable images failed: {e}")
+
+    if not keys_to_sign:
         return raw_attachments
 
     try:
-        from app.services.s3_service import s3_client, settings as s3_settings
+        from app.services.s3_service import _ensure_s3_client, settings as s3_settings
     except Exception:
         return raw_attachments
 
-    if not s3_client or not getattr(s3_settings, "aws_s3_bucket", None):
-        return raw_attachments
-
-    try:
-        tis = (
-            db.query(TradeInSession)
-            .filter(TradeInSession.id == trade_in_session_id)
-            .first()
-        )
-        if not tis or not tis.s3_keys:
-            return raw_attachments
-        keys = tis.s3_keys if isinstance(tis.s3_keys, list) else []
-    except Exception as e:
-        logger.warning(f"TradeInSession lookup for Airtable images failed: {e}")
+    client = _ensure_s3_client()
+    if not client or not getattr(s3_settings, "aws_s3_bucket", None):
         return raw_attachments
 
     fresh: list[dict] = []
-    for key in keys[:8]:
+    for key in keys_to_sign[:8]:
         try:
-            url = s3_client.generate_presigned_url(
+            url = client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": s3_settings.aws_s3_bucket, "Key": key},
                 ExpiresIn=expires_in_seconds,
@@ -182,6 +241,9 @@ def _build_airtable_payload(
     grade: str,
     images_for_airtable: list[dict],
     vertex_result: dict | None,
+    *,
+    had_image_inputs: bool = False,
+    s3_configured: bool = False,
 ) -> dict:
     """Assemble the Airtable 'Appliance Evaluations' record from the evaluation.
 
@@ -209,9 +271,16 @@ def _build_airtable_payload(
     # Attachment summary: short one-line description of what's attached
     img_count = len(images_for_airtable or [])
     if img_count:
-        attachment_summary = f"{img_count} product image{'s' if img_count != 1 else ''} (7-day presigned URL{'s' if img_count != 1 else ''})"
+        attachment_summary = (
+            f"{img_count} product image{'s' if img_count != 1 else ''} "
+            f"(7-day presigned URL{'s' if img_count != 1 else ''})"
+        )
+    elif not had_image_inputs:
+        attachment_summary = "No images submitted"
+    elif not s3_configured:
+        attachment_summary = "No images attached (S3 not configured)"
     else:
-        attachment_summary = "No images attached (S3 unavailable)"
+        attachment_summary = "Images not attached (upload or presign failed)"
 
     # Notes: combine the decision reason with any Vertex AI observations
     note_parts: list[str] = []
@@ -268,6 +337,8 @@ def _policy_snapshot(policy: PricingPolicy) -> dict:
 @evaluator_router.post("/evaluate", response_model=EvaluateResponse)
 def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
     """Create a deterministic valuation for a trade-in submission."""
+    eval_s3_keys: list[str] = []
+    s3_configured_for_airtable = False
     try:
         # 1. Load pricing policy
         policy = _load_policy(req.category, db)
@@ -816,6 +887,37 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             )
             db.add(round1)
 
+        try:
+            from app.config import get_settings as _get_s3_settings
+
+            _st = _get_s3_settings()
+            s3_configured_for_airtable = bool(
+                (_st.aws_s3_bucket or "").strip()
+                and (_st.aws_access_key_id or "").strip()
+                and (_st.aws_secret_access_key or "").strip()
+            )
+        except Exception:
+            s3_configured_for_airtable = False
+
+        if req.image_data and s3_configured_for_airtable:
+            try:
+                folder_id = (
+                    str(req.trade_in_session_id)
+                    if req.trade_in_session_id is not None
+                    else str(vs.id)
+                )
+                eval_s3_keys = _upload_eval_image_data_to_s3(req.image_data, folder_id)
+                if req.trade_in_session_id is not None and eval_s3_keys:
+                    tis_row = (
+                        db.query(TradeInSession)
+                        .filter(TradeInSession.id == req.trade_in_session_id)
+                        .first()
+                    )
+                    if tis_row:
+                        tis_row.s3_keys = eval_s3_keys
+            except Exception as e:
+                logger.warning(f"Evaluate: S3 persist for evaluation images failed: {e}")
+
         db.commit()
         db.refresh(vs)
 
@@ -840,6 +942,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 req_image_urls=req.image_urls,
                 trade_in_session_id=req.trade_in_session_id,
                 db=db,
+                uploaded_s3_keys=eval_s3_keys if eval_s3_keys else None,
             )
             airtable_payload = _build_airtable_payload(
                 vs=vs,
@@ -847,6 +950,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 grade=grade,
                 images_for_airtable=images_for_airtable,
                 vertex_result=locals().get("vertex_result"),
+                had_image_inputs=bool(req.image_data or req.image_urls),
+                s3_configured=s3_configured_for_airtable,
             )
             airtable_write_async(airtable_payload)
             logger.info("Airtable: write dispatched (fire-and-forget)")
