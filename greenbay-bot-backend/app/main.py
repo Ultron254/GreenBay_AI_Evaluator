@@ -38,7 +38,7 @@ except ImportError:
     HAS_SLOWAPI = False
     logger.warning("slowapi not installed, rate limiting disabled")
 
-from app.config import get_settings
+from app.config import get_settings, invalidate_settings_cache, runtime_s3_bucket_name
 from app.database.db import init_db
 from app.webhooks.whatsapp import whatsapp_router
 # CR-5: M-Pesa backend disabled — uncomment to re-enable
@@ -133,9 +133,12 @@ def _run_startup_health_check(settings) -> None:
     else:
         logger.warning("[WARN] Tavily: not configured — internet price lookup disabled")
 
-    # AWS S3
+    # AWS S3 — use runtime resolution so the banner matches Docker env, not a
+    # stale singleton from an early import.
     if settings.aws_access_key_id and settings.aws_secret_access_key:
-        logger.info(f"[OK]   AWS S3: configured (bucket: {settings.aws_s3_bucket})")
+        logger.info(
+            f"[OK]   AWS S3: configured (bucket: {runtime_s3_bucket_name()})"
+        )
     else:
         logger.warning("[WARN] AWS S3: not configured — image storage disabled")
 
@@ -166,7 +169,17 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     logger.info("Starting GreenBay Market Chatbot...")
-    
+
+    # Drop any settings snapshot from import-time so env matches runtime (S3 bucket, etc.).
+    invalidate_settings_cache()
+    try:
+        import app.services.s3_service as _s3mod
+
+        _s3mod.s3_client = None
+        _s3mod._s3_client_bucket = None
+    except Exception:
+        pass
+
     # Initialize LangSmith tracing
     settings = get_settings()
     if settings.langsmith_api_key and settings.langsmith_tracing:
@@ -473,10 +486,12 @@ def create_app() -> FastAPI:
             "configured": bool(s.tavily_api_key),
         }
         # S3
+        from app.config import runtime_s3_bucket_name as _s3_bucket_resolved
+
         s3_info: dict[str, Any] = {
             "status": "disabled",
             "configured": False,
-            "bucket": s.aws_s3_bucket or None,
+            "bucket": _s3_bucket_resolved() or None,
             "region": s.aws_region,
         }
         if s.aws_access_key_id and s.aws_secret_access_key and s.aws_s3_bucket:
@@ -712,19 +727,24 @@ def create_app() -> FastAPI:
         except Exception as e:
             qdrant_stats = {"error": str(e), "display": "unavailable"}
 
-        # ---- S3 storage (bucket-wide list; cached via a tiny module cache) ----
+        # ---- S3 storage (bucket-wide list; lazy-init client first) ----
         s3_usage: dict[str, Any] = {}
-        if s.aws_access_key_id and s.aws_secret_access_key and s.aws_s3_bucket:
+        from app.config import runtime_s3_bucket_name as _bucket_rt
+
+        bucket_rt = _bucket_rt()
+        if s.aws_access_key_id and s.aws_secret_access_key and bucket_rt:
             try:
-                from app.services.s3_service import s3_client
-                if s3_client:
+                from app.services.s3_service import _ensure_s3_client
+
+                client = _ensure_s3_client()
+                if client:
                     total_bytes = 0
                     total_objects = 0
                     video_bytes = 0
                     video_objects = 0
-                    paginator = s3_client.get_paginator("list_objects_v2")
+                    paginator = client.get_paginator("list_objects_v2")
                     for page in paginator.paginate(
-                        Bucket=s.aws_s3_bucket, PaginationConfig={"MaxItems": 5000}
+                        Bucket=bucket_rt, PaginationConfig={"MaxItems": 5000}
                     ):
                         for obj in page.get("Contents", []) or []:
                             size = int(obj.get("Size") or 0)
@@ -735,7 +755,7 @@ def create_app() -> FastAPI:
                                 video_bytes += size
                                 video_objects += 1
                     s3_usage = {
-                        "bucket": s.aws_s3_bucket,
+                        "bucket": bucket_rt,
                         "total_bytes": total_bytes,
                         "total_objects": total_objects,
                         "videos_bytes": video_bytes,
@@ -914,6 +934,51 @@ def create_app() -> FastAPI:
                 status_code=500,
                 content={"error": "analytics_query_failed", "message": str(e)},
             )
+
+    @app.get("/dashboard/learning-diagnostic")
+    async def dashboard_learning_diagnostic(
+        _: str = Depends(_require_dashboard_key),
+        brand: str = Query("LG", max_length=120),
+        category: str = Query("refrigerator", max_length=120),
+    ):
+        """Prove the Sheets pricing-learner cache is loaded and sample Airtable history.
+
+        ``mean_human_to_ai_price_ratio`` is mean(In-House / AI) on Airtable rows
+        with both prices; ``None`` if there are fewer than three such rows.
+        """
+        from greenbay_ai_evaluator.services.airtable_service import (
+            get_historical_accuracy_ratio,
+            read_comparables,
+        )
+        from greenbay_ai_evaluator.services.pricing_learner import (
+            learning_loop_diagnostic_snapshot,
+        )
+
+        b = brand.strip()
+        c = category.strip()
+        comps = read_comparables(brand=b, category=c, limit=25)
+        ratio = get_historical_accuracy_ratio(brand=b, category=c)
+
+        return {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "google_sheets_pricing_learner": learning_loop_diagnostic_snapshot(),
+            "airtable_sample": {
+                "brand": b,
+                "category": c,
+                "records_with_human_price": len(comps),
+                "mean_human_to_ai_price_ratio": ratio,
+                "notes": (
+                    "Airtable rows matched by exact Brand + Category with "
+                    "In-House Evaluator Price > 0. Ratio mean(human/ai); "
+                    "needs ≥3 pairs."
+                ),
+            },
+            "logs": (
+                "Each POST /evaluate emits one INFO line prefixed EVAL_PRICE_TRACE "
+                "(Sheets learner in/out reconciled retail, DB comps, Tavily, Shopify, "
+                "expert, Vertex advisory)."
+            ),
+        }
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

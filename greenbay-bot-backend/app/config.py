@@ -155,6 +155,33 @@ class Settings(BaseSettings):
 _settings: Optional[Settings] = None
 
 
+def invalidate_settings_cache() -> None:
+    """Clear the cached Settings singleton so the next get_settings() reloads env/.env.
+
+    Called once at FastAPI lifespan startup so module import order cannot pin an
+    outdated S3 bucket (or other fields) before the process environment is final.
+    """
+    global _settings
+    _settings = None
+
+
+def runtime_s3_bucket_name() -> str:
+    """Resolved S3 bucket for logging and health checks.
+
+    Explicit ``S3_BUCKET`` / ``AWS_S3_BUCKET`` environment variables win, then a
+    fresh ``Settings()`` read (not the singleton) so the name matches Docker/env
+    even if something called get_settings() very early during imports.
+    """
+    direct = (
+        os.environ.get("S3_BUCKET")
+        or os.environ.get("AWS_S3_BUCKET")
+        or ""
+    ).strip()
+    if direct:
+        return direct
+    return Settings().aws_s3_bucket
+
+
 def get_settings() -> Settings:
     """Get application settings.
 

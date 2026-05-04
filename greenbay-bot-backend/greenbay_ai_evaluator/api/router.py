@@ -612,6 +612,47 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as pve:
             logger.warning(f"Price reconciliation failed: {pve}")
 
+        # Per-request diagnostic: prove multi-source pricing + learning-loop delta
+        try:
+            sb = comp_result.sources_breakdown or {}
+            vpx = None
+            if vertex_result and isinstance(vertex_result, dict):
+                try:
+                    _vp = float(vertex_result.get("estimated_price_kes") or 0)
+                    vpx = _vp if _vp > 0 else None
+                except (TypeError, ValueError):
+                    vpx = None
+
+            pv_without = None
+            if price_verification:
+                pv_without = reconcile_retail_price(
+                    frontend_price=req.retail_price,
+                    internet_price=internet_price,
+                    marketplace_avg=marketplace_avg,
+                    shopify_avg=shopify_avg,
+                    expert_avg=expert_avg,
+                    historical_avg=None,
+                )
+            src_list = []
+            if price_verification and price_verification.get("sources"):
+                src_list = [x.get("source") for x in price_verification["sources"]]
+
+            logger.info(
+                "EVAL_PRICE_TRACE "
+                f"brand={req.brand!r} category={req.category!r} "
+                f"db_comparables_count={comp_result.count} db_sources={sb} "
+                f"sheets_historical_kes={historical_avg} "
+                "airtable_comparables_in_offer_engine=false "
+                f"tavily_internet_kes={internet_price} marketplace_avg_kes={marketplace_avg} "
+                f"shopify_inventory_kes={shopify_avg} expert_feedback_kes={expert_avg} "
+                f"vertex_secondary_opinion_kes={vpx} "
+                f"reconciled_retail_with_learner_kes={(price_verification or {}).get('reconciled_price')} "
+                f"reconciled_retail_without_sheet_learner_kes={(pv_without or {}).get('reconciled_price')} "
+                f"sources_used={src_list}"
+            )
+        except Exception as te:
+            logger.warning(f"EVAL_PRICE_TRACE diagnostic failed: {te}")
+
         # 6b. Run deterministic offer engine with price verification
         result = compute_valuation(
             category=req.category,

@@ -265,6 +265,33 @@ def get_accuracy_metrics() -> dict[str, Any]:
     }
 
 
+def total_human_evaluator_datapoints() -> int:
+    """Count of Sheet rows that contributed at least one human team price to the cache."""
+    return sum(entry["count"] for entry in _price_cache.values())
+
+
+def learning_loop_diagnostic_snapshot() -> dict[str, Any]:
+    """Structured snapshot for ops dashboard / diagnostics."""
+    m = get_accuracy_metrics()
+    return {
+        "human_evaluator_price_datapoints_loaded": total_human_evaluator_datapoints(),
+        "distinct_normalized_item_keys": len(_price_cache),
+        "sheet_ai_vs_team_accuracy": {
+            k: m[k]
+            for k in (
+                "total_comparisons",
+                "mean_error_pct",
+                "median_error_pct",
+                "within_20_pct",
+                "within_20_count",
+                "last_refresh",
+            )
+            if k in m
+        },
+        "cache_unique_keys": m.get("cache_size"),
+    }
+
+
 async def start_refresh_loop():
     """Background task: refresh pricing data on startup and every hour."""
     # Initial load

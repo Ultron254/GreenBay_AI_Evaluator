@@ -303,6 +303,23 @@
         </div>
     </div>
 
+    <div class="section">
+        <h2>Learning loop diagnostic</h2>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+            Confirms Google Sheets human-price cache and a sample Airtable human/AI ratio. Each evaluation logs <code style="font-size:12px;">EVAL_PRICE_TRACE</code> with before/after reconciled retail (with vs without Sheet learner).
+        </p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+            <label style="font-size:13px;">Brand<br>
+                <input id="diagBrand" type="text" value="LG" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);min-width:120px;margin-top:4px;">
+            </label>
+            <label style="font-size:13px;">Category<br>
+                <input id="diagCategory" type="text" value="refrigerator" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);min-width:140px;margin-top:4px;">
+            </label>
+            <button type="button" class="refresh" id="diagRefreshBtn">Load diagnostic</button>
+        </div>
+        <div id="learningDiag"><div class="loading">Loading…</div></div>
+    </div>
+
     <div class="panels">
         <div class="panel">
             <h2>Recent evaluations</h2>
@@ -325,10 +342,9 @@
     }
     document.getElementById('app').style.display = 'block';
 
-    const q = '?key=' + encodeURIComponent(key);
-
     async function fetchJson(path) {
-        const r = await fetch(path + q, { credentials: 'same-origin' });
+        const sep = path.includes('?') ? '&' : '?';
+        const r = await fetch(path + sep + 'key=' + encodeURIComponent(key), { credentials: 'same-origin' });
         if (!r.ok) throw new Error(path + ' → HTTP ' + r.status);
         return r.json();
     }
@@ -651,6 +667,46 @@
         }
     }
 
+    async function loadLearningDiagnostic() {
+        const el = document.getElementById('learningDiag');
+        if (!el) return;
+        const brandEl = document.getElementById('diagBrand');
+        const catEl = document.getElementById('diagCategory');
+        const db = (brandEl && brandEl.value.trim()) || 'LG';
+        const dc = (catEl && catEl.value.trim()) || 'refrigerator';
+        try {
+            el.innerHTML = '<div class="loading">Loading diagnostic…</div>';
+            const data = await fetchJson(
+                '/dashboard/learning-diagnostic?brand=' + encodeURIComponent(db) +
+                '&category=' + encodeURIComponent(dc)
+            );
+            const gs = data.google_sheets_pricing_learner || {};
+            const at = data.airtable_sample || {};
+            const acc = gs.sheet_ai_vs_team_accuracy || {};
+            el.innerHTML =
+                '<div class="panel" style="box-shadow:none;border-style:dashed;padding:16px;">' +
+                '<div class="analytics-grid">' +
+                '<div class="metric"><div class="v">' + fmtNum(gs.human_evaluator_price_datapoints_loaded) + '</div>' +
+                '<div class="l">Human prices loaded (Sheet cache)</div></div>' +
+                '<div class="metric"><div class="v">' + fmtNum(gs.distinct_normalized_item_keys) + '</div>' +
+                '<div class="l">Distinct item keys</div></div>' +
+                '<div class="metric"><div class="v">' + fmt(at.mean_human_to_ai_price_ratio) + '</div>' +
+                '<div class="l">Airtable mean human÷AI (' + fmt(at.brand) + ' · ' + fmt(at.category) + ')</div></div>' +
+                '<div class="metric"><div class="v">' + fmtNum(at.records_with_human_price) + '</div>' +
+                '<div class="l">Airtable rows (human price &gt; 0)</div></div>' +
+                '</div>' +
+                '<p style="font-size:12px;color:var(--muted);margin-top:12px;">' + fmt(data.logs) + '</p>' +
+                (acc.within_20_pct != null
+                    ? '<p style="font-size:12px;margin-top:8px;"><b>Sheet AI vs team (historical):</b> ' +
+                      Number(acc.within_20_pct).toFixed(1) + '% within 20% of team price (' +
+                      fmtNum(acc.within_20_count) + ' / ' + fmtNum(acc.total_comparisons) + ' comparisons).</p>'
+                    : '') +
+                '</div>';
+        } catch (e) {
+            el.innerHTML = '<div class="loading" style="color:var(--red)">' + e.message + '</div>';
+        }
+    }
+
     async function load() {
         const btn = document.getElementById('refreshBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
@@ -665,6 +721,7 @@
             renderResources(resources);
             renderRecent(recent);
             renderAnalytics(analytics);
+            await loadLearningDiagnostic();
             const now = new Date();
             document.getElementById('meta').textContent =
                 'Environment: ' + (status.app || 'app') +
@@ -680,6 +737,8 @@
 
     const refreshBtn = document.getElementById('refreshBtn');
     refreshBtn.addEventListener('click', load);
+    const diagBtn = document.getElementById('diagRefreshBtn');
+    if (diagBtn) diagBtn.addEventListener('click', loadLearningDiagnostic);
     const autoToggle = document.getElementById('autoRefreshToggle');
     autoToggle.addEventListener('change', () => setAutoRefresh(autoToggle.checked));
     setAutoRefresh(autoToggle.checked);

@@ -82,7 +82,11 @@ def _image_attachments_from_trade_in(
         return []
 
     try:
-        from app.services.s3_service import s3_client, settings as s3_settings
+        from app.services.s3_service import _ensure_s3_client
+        from app.config import get_settings
+
+        s3_client = _ensure_s3_client()
+        s3_settings = get_settings()
     except Exception:
         s3_client = None
         s3_settings = None
@@ -322,7 +326,9 @@ def run_update_images(cfg: dict[str, str]) -> int:
     logger.info("=" * 60)
 
     try:
-        from app.services.s3_service import s3_client
+        from app.services.s3_service import _ensure_s3_client
+
+        s3_client = _ensure_s3_client()
     except Exception:
         s3_client = None
     s3_ok = bool(s3_client)
