@@ -31,6 +31,16 @@ jobs:
 
             echo "=== Rebuilding containers ==="
             cd greenbay-bot-backend
+
+            # Ensure bind-mounted host directories exist and are writable by
+            # the non-root appuser inside the container. The Dockerfile chmods
+            # /app/logs etc. to 777 at image-build time, but bind mounts override
+            # that with the host directory's permissions, which can be root:root
+            # after a `stop + rm` cycle. Fixing it here keeps the deploy idempotent.
+            sudo mkdir -p logs temp_images receipts airtable_fallback credentials
+            sudo chmod 777 logs temp_images receipts airtable_fallback
+            sudo chmod 755 credentials
+
             sudo docker compose build
 
             # Stop and remove the two containers we always rebuild. Previous
