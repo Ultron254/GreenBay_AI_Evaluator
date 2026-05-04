@@ -5,13 +5,20 @@ Reads tab ``Customer Initiated Evaluation`` (same worksheet as CR-4 / pricing le
 Uses column K ``Final Price Offered`` when present, otherwise J ``Internal Team Price``.
 Prices are parsed with ``parse_sheet_price`` (shared with the pricing learner).
 
-Patches ``In-House Evaluator Price (KES)`` only when an Airtable row on the **same
-calendar day** still has a blank in-house field.
+Patches ``In-House Evaluator Price (KES)`` only when an Airtable row still has a
+blank in-house field.
+
+**Timezone:** Sheet ``Date`` is the evaluation **calendar day in Africa/Nairobi
+(EAT, UTC+3)**. ``Date Submitted`` in Airtable is UTC. The same Nairobi day spans
+two UTC calendar days (e.g. Nairobi ``2026-03-19`` includes submissions shown as
+``2026-03-18`` UTC late evening). Matching therefore considers **both** UTC date
+``D-1`` and ``D`` when the Sheet calendar day is ``D`` (``YYYY-MM-DD``).
 
 Matching is intentionally fuzzy — Sheet Item text (human) rarely equals machine-built
 Airtable ``Product Name``:
 
-  1. **Same date** (primary): Sheet ``Date`` vs Airtable ``Date Submitted`` (UTC day).
+  1. **Date** (primary): Sheet Nairobi calendar day vs Airtable ``Date Submitted``
+     **UTC** calendar day, allowing the previous UTC day as above.
   2. **Brand**: first whitespace-separated word of Item vs Product Name (case-insensitive).
      If exactly **one** pending Airtable row shares that brand on that date → patch it.
   3. If **multiple** same-brand rows on that date → narrow with a **category hint**
@@ -27,7 +34,7 @@ import asyncio
 import re
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from loguru import logger
@@ -66,9 +73,46 @@ def _airtable_date_day_key(iso_val: str | None) -> str | None:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc)
+        else:
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         return None
+
+
+def _nairobi_sheet_calendar_date(date_str: str) -> date | None:
+    """Parse Sheet ``Date`` cell as a **calendar date** (Nairobi / team-local).
+
+    Accepts ``DD/MM/YY``, ``DD/MM/YYYY``, ``YYYY-MM-DD``. Two-digit years use
+    Python ``strptime`` rules (``00``–``68`` → 2000–2068, ``69``–``99`` → 1969–1999),
+    so ``19/3/26`` → ``2026-03-19``, not 1926.
+    """
+    dt = _parse_date(date_str.strip())
+    return dt.date() if dt else None
+
+
+def _utc_day_keys_for_nairobi_calendar_day(cal: date) -> tuple[str, str]:
+    """UTC calendar days that can correspond to Nairobi calendar day ``cal``."""
+    prev = cal - timedelta(days=1)
+    return (prev.isoformat(), cal.isoformat())
+
+
+def _merge_pending_for_utc_days(
+    pending_by_day: dict[str, list[tuple[str, str, str, str | None]]],
+    utc_day_a: str,
+    utc_day_b: str,
+) -> list[tuple[str, str, str, str | None]]:
+    """Union of pending rows for two UTC dates, stable order, deduped by record id."""
+    seen: set[str] = set()
+    out: list[tuple[str, str, str, str | None]] = []
+    for key in (utc_day_a, utc_day_b):
+        for entry in pending_by_day.get(key, []):
+            rid = entry[0]
+            if rid in seen:
+                continue
+            seen.add(rid)
+            out.append(entry)
+    return out
 
 
 def _sheet_row_human_price(row: dict[str, Any]) -> float | None:
@@ -220,12 +264,11 @@ def sync_human_evaluator_prices_from_sheet_sync() -> int:
         if not item:
             continue
 
-        dt = _parse_date(date_str)
-        if dt is None:
+        cal = _nairobi_sheet_calendar_date(date_str)
+        if cal is None:
             continue
-        day_key = dt.strftime("%Y-%m-%d")
-
-        bucket = pending_by_day.get(day_key, [])
+        utc_a, utc_b = _utc_day_keys_for_nairobi_calendar_day(cal)
+        bucket = _merge_pending_for_utc_days(pending_by_day, utc_a, utc_b)
         if not bucket:
             continue
 

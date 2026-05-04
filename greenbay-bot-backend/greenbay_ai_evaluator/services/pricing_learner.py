@@ -34,7 +34,12 @@ RECENCY_HALF_LIFE_DAYS = 90
 
 
 def _parse_date(text: str) -> datetime | None:
-    """Parse date from sheet (DD/MM/YY format)."""
+    """Parse date from sheet (DD/MM/YY or YYYY-MM-DD).
+
+    Two-digit years follow datetime/strptime ``%y`` rules (``00``–``68`` →
+    ``2000``–``2068``, ``69``–``99`` → ``1969``–``1999``), so ``26`` means ``2026``,
+    not ``1926``.
+    """
     for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d"):
         try:
             return datetime.strptime(text.strip(), fmt)
