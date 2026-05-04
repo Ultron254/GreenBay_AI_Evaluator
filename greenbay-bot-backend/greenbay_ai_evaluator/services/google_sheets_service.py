@@ -17,6 +17,10 @@ from typing import Any
 
 from loguru import logger
 
+from greenbay_ai_evaluator.services.sheet_price_parser import (
+    parse_sheet_price as _parse_sheet_price,
+)
+
 
 # ---------------------------------------------------------------------------
 # Lazy imports — gspread/google-auth may not be installed
@@ -271,34 +275,3 @@ def get_team_prices() -> dict[str, list[float]]:
 
     logger.info(f"Google Sheet: extracted team prices for {len(team_prices)} items")
     return team_prices
-
-
-def _parse_sheet_price(text: str) -> float | None:
-    """Parse a price string from the Google Sheet.
-
-    Handles formats like: "25k", "25,000", "KES 25000", "25k to 28k" (takes avg).
-    """
-    if not text:
-        return None
-
-    text = text.strip().lower()
-    text = text.replace("kes", "").replace(",", "").strip()
-
-    # Handle range: "25k to 28k" -> average
-    if " to " in text:
-        parts = text.split(" to ")
-        prices = [_parse_sheet_price(p.strip()) for p in parts]
-        valid = [p for p in prices if p is not None]
-        return sum(valid) / len(valid) if valid else None
-
-    # Handle "k" suffix
-    if text.endswith("k"):
-        try:
-            return float(text[:-1]) * 1000
-        except ValueError:
-            return None
-
-    try:
-        return float(text)
-    except ValueError:
-        return None

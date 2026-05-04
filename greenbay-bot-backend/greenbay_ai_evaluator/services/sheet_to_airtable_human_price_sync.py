@@ -3,15 +3,20 @@ One-way sync: Google Sheet human prices → Airtable.
 
 Reads tab ``Customer Initiated Evaluation`` (same worksheet as CR-4 / pricing learner).
 Uses column K ``Final Price Offered`` when present, otherwise J ``Internal Team Price``.
-Patches Airtable ``In-House Evaluator Price (KES)`` only when the Sheet has a numeric
-price and an Airtable row on the **same calendar day** still has a blank in-house field.
+Prices are parsed with ``parse_sheet_price`` (shared with the pricing learner).
 
-Matching (same day):
-  1. Normalized Sheet ``Item`` vs Airtable ``Product Name``: substring/containment
-     (either normalized key is contained in the other); catches ``Samsung RF28`` vs
-     ``Samsung RF28 refrigerator``.
-  2. If still unmatched: compare **first word** (brand token) of raw Item vs raw
-     Product Name.
+Patches ``In-House Evaluator Price (KES)`` only when an Airtable row on the **same
+calendar day** still has a blank in-house field.
+
+Matching is intentionally fuzzy — Sheet Item text (human) rarely equals machine-built
+Airtable ``Product Name``:
+
+  1. **Same date** (primary): Sheet ``Date`` vs Airtable ``Date Submitted`` (UTC day).
+  2. **Brand**: first whitespace-separated word of Item vs Product Name (case-insensitive).
+     If exactly **one** pending Airtable row shares that brand on that date → patch it.
+  3. If **multiple** same-brand rows on that date → narrow with a **category hint**
+     inferred from Sheet wording vs the **last token** of Product Name (evaluator slug),
+     e.g. ``refrigerator``, ``washing_machine``, ``tv_monitor``.
 
 Sheet → Airtable only; never writes back to the Sheet.
 """
@@ -19,6 +24,7 @@ Sheet → Airtable only; never writes back to the Sheet.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -26,6 +32,7 @@ from typing import Any
 
 from loguru import logger
 
+from greenbay_ai_evaluator.config import DEFECT_DEDUCTIONS
 from greenbay_ai_evaluator.services.airtable_service import (
     RATE_LIMIT_DELAY,
     _get_config,
@@ -33,7 +40,11 @@ from greenbay_ai_evaluator.services.airtable_service import (
     patch_in_house_evaluator_price,
 )
 from greenbay_ai_evaluator.services.google_sheets_service import read_historical_data
-from greenbay_ai_evaluator.services.pricing_learner import _normalize_key, _parse_date, _parse_price
+from greenbay_ai_evaluator.services.pricing_learner import _parse_date
+from greenbay_ai_evaluator.services.sheet_price_parser import parse_sheet_price
+
+# Last-token category slugs seen on machine-built Product Name values ("Samsung Unknown refrigerator").
+_AIRTABLE_CATEGORY_TOKENS: frozenset[str] = frozenset(DEFECT_DEDUCTIONS.keys())
 
 
 def _inhouse_is_blank(value: Any) -> bool:
@@ -64,30 +75,95 @@ def _sheet_row_human_price(row: dict[str, Any]) -> float | None:
     """Prefer Final Price Offered (K), then Internal Team Price (J)."""
     final_raw = (row.get("Final Price Offered") or "").strip()
     internal_raw = (row.get("Internal Team Price") or "").strip()
-    final_p = _parse_price(final_raw) if final_raw else None
+    final_p = parse_sheet_price(final_raw) if final_raw else None
     if final_p is not None and final_p > 0:
         return final_p
-    internal_p = _parse_price(internal_raw) if internal_raw else None
+    internal_p = parse_sheet_price(internal_raw) if internal_raw else None
     if internal_p is not None and internal_p > 0:
         return internal_p
     return None
 
 
-def _normalized_names_match_loose(sheet_norm: str, airtable_norm: str) -> bool:
-    """True if keys are equal or one normalized key is a substring of the other."""
-    if not sheet_norm or not airtable_norm:
-        return False
-    if sheet_norm == airtable_norm:
-        return True
-    if len(sheet_norm) < 2 or len(airtable_norm) < 2:
-        return False
-    return sheet_norm in airtable_norm or airtable_norm in sheet_norm
-
-
 def _first_word_brand(text: str) -> str:
-    """First whitespace-delimited token, lowercased (brand hint)."""
+    """First whitespace-delimited token, lowercased."""
     parts = (text or "").strip().split()
     return parts[0].lower() if parts else ""
+
+
+def _extract_airtable_category_slug(product_name: str) -> str | None:
+    """Category slug is typically the last token (e.g. ``tv_monitor``, ``refrigerator``)."""
+    parts = (product_name or "").strip().split()
+    if not parts:
+        return None
+    last = parts[-1].strip().lower()
+    if last in _AIRTABLE_CATEGORY_TOKENS:
+        return last
+    return None
+
+
+def _sheet_hint_matches_airtable_slug(hint: str, airtable_slug: str | None) -> bool:
+    """TV/cooker naming differs between Sheet wording and Airtable last token."""
+    if airtable_slug is None:
+        return False
+    if airtable_slug == hint:
+        return True
+    if hint == "tv_monitor" and airtable_slug == "tv":
+        return True
+    if hint == "cooker_oven" and airtable_slug == "cooker":
+        return True
+    return False
+
+
+def _infer_sheet_category_slug(item: str) -> str | None:
+    """Map free-text Sheet Item to evaluator category slug (must match Airtable last token)."""
+    low = " ".join((item or "").lower().split())
+
+    # Longer / more specific phrases first
+    if "washing machine" in low or re.search(r"\bwasher\b", low):
+        return "washing_machine"
+    if "microwave" in low:
+        return "microwave"
+    if "fridge" in low or "refrigerator" in low or "freezer" in low:
+        return "refrigerator"
+    if "tv" in low or "television" in low or re.search(r"\d+\s*inch", low):
+        return "tv_monitor"
+    if "cooker" in low or "oven" in low:
+        return "cooker_oven"
+
+    return None
+
+
+def _pick_airtable_record_for_sheet_row(
+    item: str,
+    bucket: list[tuple[str, str, str, str | None]],
+) -> str | None:
+    """At most one record id: same-day bucket entries are (rid, raw_name, brand, airtable_cat)."""
+    sheet_brand = _first_word_brand(item)
+    if not sheet_brand:
+        return None
+
+    same_brand = [e for e in bucket if e[2] == sheet_brand]
+    if len(same_brand) == 1:
+        return same_brand[0][0]
+    if len(same_brand) == 0:
+        return None
+
+    hint = _infer_sheet_category_slug(item)
+    if not hint:
+        logger.debug(
+            f"Sheet→Airtable: ambiguous brand={sheet_brand!r} ({len(same_brand)} rows), "
+            f"no category hint from item={item!r}"
+        )
+        return None
+
+    narrowed = [e for e in same_brand if _sheet_hint_matches_airtable_slug(hint, e[3])]
+    if len(narrowed) == 1:
+        return narrowed[0][0]
+    logger.debug(
+        f"Sheet→Airtable: brand={sheet_brand!r} hint={hint!r} "
+        f"narrowed to {len(narrowed)} (need exactly 1)"
+    )
+    return None
 
 
 def sync_human_evaluator_prices_from_sheet_sync() -> int:
@@ -112,7 +188,7 @@ def sync_human_evaluator_prices_from_sheet_sync() -> int:
         logger.info("Sheet→Airtable human price sync: no Airtable records fetched")
         return 0
 
-    pending_by_day: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    pending_by_day: dict[str, list[tuple[str, str, str, str | None]]] = defaultdict(list)
     for rec in records:
         rid = rec.get("id")
         f = rec.get("fields") or {}
@@ -122,11 +198,12 @@ def sync_human_evaluator_prices_from_sheet_sync() -> int:
         raw_name = (f.get("Product Name") or "").strip()
         if not day or not raw_name:
             continue
-        name_key = _normalize_key(raw_name)
-        if not name_key:
+        abrand = _first_word_brand(raw_name)
+        if not abrand:
             continue
+        acat = _extract_airtable_category_slug(raw_name)
         if _inhouse_is_blank(f.get("In-House Evaluator Price (KES)")):
-            pending_by_day[day].append((rid, name_key, raw_name))
+            pending_by_day[day].append((rid, raw_name, abrand, acat))
 
     patched_ids: set[str] = set()
     patched_count = 0
@@ -147,35 +224,19 @@ def sync_human_evaluator_prices_from_sheet_sync() -> int:
         if dt is None:
             continue
         day_key = dt.strftime("%Y-%m-%d")
-        sheet_key = _normalize_key(item)
-        if not sheet_key:
-            continue
 
         bucket = pending_by_day.get(day_key, [])
         if not bucket:
             continue
 
-        sheet_brand = _first_word_brand(item)
+        rid = _pick_airtable_record_for_sheet_row(item, bucket)
+        if rid is None or rid in patched_ids:
+            continue
 
-        # Pass 1: normalized substring / containment match
-        for rid, at_norm, raw_at in bucket:
-            if rid in patched_ids:
-                continue
-            if _normalized_names_match_loose(sheet_key, at_norm):
-                if patch_in_house_evaluator_price(rid, price):
-                    patched_count += 1
-                    patched_ids.add(rid)
-                    time.sleep(RATE_LIMIT_DELAY)
-
-        # Pass 2: same calendar day, first-word brand match (secondary)
-        for rid, at_norm, raw_at in bucket:
-            if rid in patched_ids:
-                continue
-            if sheet_brand and _first_word_brand(raw_at) == sheet_brand:
-                if patch_in_house_evaluator_price(rid, price):
-                    patched_count += 1
-                    patched_ids.add(rid)
-                    time.sleep(RATE_LIMIT_DELAY)
+        if patch_in_house_evaluator_price(rid, price):
+            patched_count += 1
+            patched_ids.add(rid)
+            time.sleep(RATE_LIMIT_DELAY)
 
     logger.info(
         f"Sheet→Airtable human price sync: patched {patched_count} record(s) "

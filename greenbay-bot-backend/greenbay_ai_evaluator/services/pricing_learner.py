@@ -18,6 +18,9 @@ from typing import Any
 
 from loguru import logger
 
+from greenbay_ai_evaluator.services.sheet_price_parser import (
+    parse_sheet_price as _parse_price,
+)
 
 # ---------------------------------------------------------------------------
 # In-memory price lookup cache
@@ -28,29 +31,6 @@ _accuracy_metrics: dict[str, Any] = {}
 
 # Recency half-life: prices older than this lose weight exponentially
 RECENCY_HALF_LIFE_DAYS = 90
-
-
-def _parse_price(text: str) -> float | None:
-    """Parse a price string from the sheet (handles 'k' suffix, ranges, KES prefix)."""
-    if not text:
-        return None
-    text = text.strip().lower().replace("kes", "").replace(",", "").strip()
-
-    if " to " in text:
-        parts = text.split(" to ")
-        prices = [_parse_price(p.strip()) for p in parts]
-        valid = [p for p in prices if p is not None]
-        return sum(valid) / len(valid) if valid else None
-
-    if text.endswith("k"):
-        try:
-            return float(text[:-1]) * 1000
-        except ValueError:
-            return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
 
 
 def _parse_date(text: str) -> datetime | None:
@@ -109,7 +89,9 @@ async def refresh_from_sheet() -> int:
             if not item:
                 continue
 
-            # Parse team price (column J — the ground truth)
+            # Parse team price (column J — the ground truth).
+            # Uses ``sheet_price_parser.parse_sheet_price`` (imported as ``_parse_price``):
+            # strips KES/ksh, commas, multiplies trailing k/K by 1000, rejects N/A sentinels.
             team_price_str = row.get("Internal Team Price", "").strip()
             team_price = _parse_price(team_price_str)
 
