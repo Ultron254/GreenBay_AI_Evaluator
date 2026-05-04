@@ -10,6 +10,10 @@ cached in memory and refreshed 5 minutes before expiry.
 
 Endpoint:
   https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/google/models/{model}:generateContent
+
+Model ID comes from Settings.google_vertex_model (env GOOGLE_VERTEX_MODEL).
+Common values: gemini-1.5-flash, gemini-1.5-pro; newer 2.x often needs a version suffix
+(e.g. gemini-2.0-flash-001). Requires Vertex AI API enabled on the GCP project.
 """
 
 from __future__ import annotations

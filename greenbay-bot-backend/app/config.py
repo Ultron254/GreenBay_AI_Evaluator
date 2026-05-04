@@ -136,7 +136,10 @@ class Settings(BaseSettings):
     google_vertex_credentials_file: str = Field(default="", env="GOOGLE_VERTEX_CREDENTIALS_FILE")
     google_vertex_project: str = Field(default="greenbay-ai-evaluator", env="GOOGLE_VERTEX_PROJECT")
     google_vertex_region: str = Field(default="us-central1", env="GOOGLE_VERTEX_REGION")
-    google_vertex_model: str = Field(default="gemini-2.0-flash", env="GOOGLE_VERTEX_MODEL")
+    google_vertex_model: str = Field(
+        default="gemini-1.5-flash",
+        env="GOOGLE_VERTEX_MODEL",
+    )
 
     # LangSmith Configuration
     langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY", repr=False)
