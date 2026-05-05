@@ -1,45 +1,37 @@
 """
-One-way sync: Google Sheet human prices → Airtable.
+One-way sync: Google Sheet human prices -> Airtable.
 
-Reads tab ``Customer Initiated Evaluation`` (same worksheet as CR-4 / pricing learner).
+Reads tab ``Customer Initiated Evaluation``.
 Uses column K ``Final Price Offered`` when present, otherwise J ``Internal Team Price``.
-Prices are parsed with ``parse_sheet_price`` (shared with the pricing learner).
 
-Patches ``In-House Evaluator Price (KES)`` only when an Airtable row still has a
-blank in-house field.
+Strategy (v3 -- complete rewrite):
+  1. Read ALL Airtable records.  Keep only those where In-House Evaluator
+     Price is blank ("pending").
+  2. Read ALL Sheet rows.  Keep only those with a numeric human price.
+  3. For each Sheet row, match against pending Airtable records using:
+       a. **Date**: Sheet calendar date (Nairobi) falls within +/-1 day of
+          the Airtable ``Date Submitted`` (UTC) calendar day.
+       b. **Brand**: the Airtable ``Product Name`` (lowered) **contains**
+          the first word of the Sheet ``Item`` (the brand).
+  4. If exactly **one** match -> patch it.
+  5. If multiple matches -> log and skip (ambiguous).
+  6. If zero matches -> log for manual review.
 
-**Timezone:** Sheet ``Date`` is the evaluation **calendar day in Africa/Nairobi
-(EAT, UTC+3)**. ``Date Submitted`` in Airtable is UTC. The same Nairobi day spans
-two UTC calendar days (e.g. Nairobi ``2026-03-19`` includes submissions shown as
-``2026-03-18`` UTC late evening). Matching therefore considers **both** UTC date
-``D-1`` and ``D`` when the Sheet calendar day is ``D`` (``YYYY-MM-DD``).
+Verbose debug logging is emitted for every Sheet row so we can diagnose
+mismatches row-by-row.
 
-Matching is intentionally fuzzy — Sheet Item text (human) rarely equals machine-built
-Airtable ``Product Name``:
-
-  1. **Date** (primary): Sheet Nairobi calendar day vs Airtable ``Date Submitted``
-     **UTC** calendar day, allowing the previous UTC day as above.
-  2. **Brand**: first whitespace-separated word of Item vs Product Name (case-insensitive).
-     If exactly **one** pending Airtable row shares that brand on that date → patch it.
-  3. If **multiple** same-brand rows on that date → narrow with a **category hint**
-     inferred from Sheet wording vs the **last token** of Product Name (evaluator slug),
-     e.g. ``refrigerator``, ``washing_machine``, ``tv_monitor``.
-
-Sheet → Airtable only; never writes back to the Sheet.
+Sheet -> Airtable only; never writes back to the Sheet.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
 import time
-from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from loguru import logger
 
-from greenbay_ai_evaluator.config import DEFECT_DEDUCTIONS
 from greenbay_ai_evaluator.services.airtable_service import (
     RATE_LIMIT_DELAY,
     _get_config,
@@ -47,11 +39,106 @@ from greenbay_ai_evaluator.services.airtable_service import (
     patch_in_house_evaluator_price,
 )
 from greenbay_ai_evaluator.services.google_sheets_service import read_historical_data
-from greenbay_ai_evaluator.services.pricing_learner import _parse_date
 from greenbay_ai_evaluator.services.sheet_price_parser import parse_sheet_price
 
-# Last-token category slugs seen on machine-built Product Name values ("Samsung Unknown refrigerator").
-_AIRTABLE_CATEGORY_TOKENS: frozenset[str] = frozenset(DEFECT_DEDUCTIONS.keys())
+# Category keywords found in Sheet Item text -> Airtable slug (last word of Product Name)
+_ITEM_TO_SLUG: list[tuple[str, str]] = [
+    ("washing machine", "washing_machine"),
+    ("washer", "washing_machine"),
+    ("microwave", "microwave"),
+    ("fridge", "refrigerator"),
+    ("refrigerator", "refrigerator"),
+    ("freezer", "refrigerator"),
+    ("chest freezer", "other"),
+    ("tv", "tv_monitor"),
+    ("television", "tv_monitor"),
+    ("inch", "tv_monitor"),
+    ("cooker", "cooker_oven"),
+    ("oven", "cooker_oven"),
+]
+
+
+def _infer_category_from_item(item: str) -> str | None:
+    """Map free-text Sheet Item to Airtable Product Name's category slug."""
+    low = " ".join((item or "").lower().split())
+    for keyword, slug in _ITEM_TO_SLUG:
+        if keyword in low:
+            return slug
+    return None
+
+
+def _airtable_category_slug(product_name: str) -> str | None:
+    """Last word of Airtable Product Name (e.g. 'refrigerator', 'tv_monitor')."""
+    parts = (product_name or "").strip().split()
+    return parts[-1].lower() if parts else None
+
+
+# ---- date parsing ---------------------------------------------------------
+
+def _parse_sheet_date(text: str) -> date | None:
+    """Parse Sheet ``Date`` cell into a ``date``.
+
+    Handles DD/MM/YY, DD/MM/YYYY, M/D/YY, M/D/YYYY, YYYY-MM-DD,
+    and ``D-Mon-YYYY`` / ``DD-Mon-YYYY`` (e.g. ``4-May-2026``).
+    Two-digit years: 00-68 -> 2000-2068, 69-99 -> 1969-1999.
+
+    When DD/MM and M/D are ambiguous (both would be valid), DD/MM wins
+    because the Nairobi team normally uses that format. When DD/MM fails
+    (e.g. ``4/13/26`` -- month 13 is impossible), M/D is tried as fallback.
+    """
+    s = (text or "").strip()
+    if not s:
+        return None
+    for fmt in (
+        "%d/%m/%y", "%d/%m/%Y",
+        "%m/%d/%y", "%m/%d/%Y",
+        "%Y-%m-%d",
+        "%d-%b-%Y", "%d-%b-%y",
+    ):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _airtable_utc_date(iso_val: str | None) -> date | None:
+    """Extract the UTC calendar date from an Airtable ISO timestamp."""
+    if not iso_val:
+        return None
+    s = str(iso_val).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+        return dt.date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _dates_within_one_day(a: date, b: date) -> bool:
+    return abs((a - b).days) <= 1
+
+
+# ---- price parsing --------------------------------------------------------
+
+def _sheet_row_human_price(row: dict[str, Any]) -> float | None:
+    """Prefer Final Price Offered (K), then Internal Team Price (J)."""
+    for col in ("Final Price Offered", "Internal Team Price"):
+        raw = (row.get(col) or "").strip()
+        if raw:
+            p = parse_sheet_price(raw)
+            if p is not None and p > 0:
+                return p
+    return None
+
+
+# ---- brand helpers --------------------------------------------------------
+
+def _first_word_lower(text: str) -> str:
+    """First whitespace-delimited token, lowercased."""
+    parts = (text or "").strip().split()
+    return parts[0].lower() if parts else ""
 
 
 def _inhouse_is_blank(value: Any) -> bool:
@@ -65,194 +152,61 @@ def _inhouse_is_blank(value: Any) -> bool:
         return True
 
 
-def _airtable_date_day_key(iso_val: str | None) -> str | None:
-    if not iso_val or not str(iso_val).strip():
-        return None
-    s = str(iso_val).strip().replace("Z", "+00:00")
-    try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc)
-        else:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return None
-
-
-def _nairobi_sheet_calendar_date(date_str: str) -> date | None:
-    """Parse Sheet ``Date`` cell as a **calendar date** (Nairobi / team-local).
-
-    Accepts ``DD/MM/YY``, ``DD/MM/YYYY``, ``YYYY-MM-DD``. Two-digit years use
-    Python ``strptime`` rules (``00``–``68`` → 2000–2068, ``69``–``99`` → 1969–1999),
-    so ``19/3/26`` → ``2026-03-19``, not 1926.
-    """
-    dt = _parse_date(date_str.strip())
-    return dt.date() if dt else None
-
-
-def _utc_day_keys_for_nairobi_calendar_day(cal: date) -> tuple[str, str]:
-    """UTC calendar days that can correspond to Nairobi calendar day ``cal``."""
-    prev = cal - timedelta(days=1)
-    return (prev.isoformat(), cal.isoformat())
-
-
-def _merge_pending_for_utc_days(
-    pending_by_day: dict[str, list[tuple[str, str, str, str | None]]],
-    utc_day_a: str,
-    utc_day_b: str,
-) -> list[tuple[str, str, str, str | None]]:
-    """Union of pending rows for two UTC dates, stable order, deduped by record id."""
-    seen: set[str] = set()
-    out: list[tuple[str, str, str, str | None]] = []
-    for key in (utc_day_a, utc_day_b):
-        for entry in pending_by_day.get(key, []):
-            rid = entry[0]
-            if rid in seen:
-                continue
-            seen.add(rid)
-            out.append(entry)
-    return out
-
-
-def _sheet_row_human_price(row: dict[str, Any]) -> float | None:
-    """Prefer Final Price Offered (K), then Internal Team Price (J)."""
-    final_raw = (row.get("Final Price Offered") or "").strip()
-    internal_raw = (row.get("Internal Team Price") or "").strip()
-    final_p = parse_sheet_price(final_raw) if final_raw else None
-    if final_p is not None and final_p > 0:
-        return final_p
-    internal_p = parse_sheet_price(internal_raw) if internal_raw else None
-    if internal_p is not None and internal_p > 0:
-        return internal_p
-    return None
-
-
-def _first_word_brand(text: str) -> str:
-    """First whitespace-delimited token, lowercased."""
-    parts = (text or "").strip().split()
-    return parts[0].lower() if parts else ""
-
-
-def _extract_airtable_category_slug(product_name: str) -> str | None:
-    """Category slug is typically the last token (e.g. ``tv_monitor``, ``refrigerator``)."""
-    parts = (product_name or "").strip().split()
-    if not parts:
-        return None
-    last = parts[-1].strip().lower()
-    if last in _AIRTABLE_CATEGORY_TOKENS:
-        return last
-    return None
-
-
-def _sheet_hint_matches_airtable_slug(hint: str, airtable_slug: str | None) -> bool:
-    """TV/cooker naming differs between Sheet wording and Airtable last token."""
-    if airtable_slug is None:
-        return False
-    if airtable_slug == hint:
-        return True
-    if hint == "tv_monitor" and airtable_slug == "tv":
-        return True
-    if hint == "cooker_oven" and airtable_slug == "cooker":
-        return True
-    return False
-
-
-def _infer_sheet_category_slug(item: str) -> str | None:
-    """Map free-text Sheet Item to evaluator category slug (must match Airtable last token)."""
-    low = " ".join((item or "").lower().split())
-
-    # Longer / more specific phrases first
-    if "washing machine" in low or re.search(r"\bwasher\b", low):
-        return "washing_machine"
-    if "microwave" in low:
-        return "microwave"
-    if "fridge" in low or "refrigerator" in low or "freezer" in low:
-        return "refrigerator"
-    if "tv" in low or "television" in low or re.search(r"\d+\s*inch", low):
-        return "tv_monitor"
-    if "cooker" in low or "oven" in low:
-        return "cooker_oven"
-
-    return None
-
-
-def _pick_airtable_record_for_sheet_row(
-    item: str,
-    bucket: list[tuple[str, str, str, str | None]],
-) -> str | None:
-    """At most one record id: same-day bucket entries are (rid, raw_name, brand, airtable_cat)."""
-    sheet_brand = _first_word_brand(item)
-    if not sheet_brand:
-        return None
-
-    same_brand = [e for e in bucket if e[2] == sheet_brand]
-    if len(same_brand) == 1:
-        return same_brand[0][0]
-    if len(same_brand) == 0:
-        return None
-
-    hint = _infer_sheet_category_slug(item)
-    if not hint:
-        logger.debug(
-            f"Sheet→Airtable: ambiguous brand={sheet_brand!r} ({len(same_brand)} rows), "
-            f"no category hint from item={item!r}"
-        )
-        return None
-
-    narrowed = [e for e in same_brand if _sheet_hint_matches_airtable_slug(hint, e[3])]
-    if len(narrowed) == 1:
-        return narrowed[0][0]
-    logger.debug(
-        f"Sheet→Airtable: brand={sheet_brand!r} hint={hint!r} "
-        f"narrowed to {len(narrowed)} (need exactly 1)"
-    )
-    return None
-
+# ---- main sync ------------------------------------------------------------
 
 def sync_human_evaluator_prices_from_sheet_sync() -> int:
-    """Blocking sync. Returns number of Airtable records patched this run."""
+    """Blocking sync.  Returns number of Airtable records patched."""
     cfg = _get_config()
     if cfg is None:
-        logger.debug("Sheet→Airtable human price sync: Airtable not configured, skip")
+        logger.debug("Sheet->Airtable sync: Airtable not configured, skip")
         return 0
 
-    rows = read_historical_data()
-    if not rows:
-        logger.info("Sheet→Airtable human price sync: no Sheet rows, skip")
-        return 0
-
-    fields = [
+    # Step 1: Read ALL Airtable records, keep those with blank In-House price
+    airtable_fields = [
         "Date Submitted",
         "Product Name",
+        "Brand",
         "In-House Evaluator Price (KES)",
     ]
-    records = list_records_paginated(cfg, fields=fields)
-    if not records:
-        logger.info("Sheet→Airtable human price sync: no Airtable records fetched")
+    all_records = list_records_paginated(cfg, fields=airtable_fields)
+    if not all_records:
+        logger.info("Sheet->Airtable sync: no Airtable records fetched")
         return 0
 
-    pending_by_day: dict[str, list[tuple[str, str, str, str | None]]] = defaultdict(list)
-    for rec in records:
+    # Build list of pending Airtable records: (record_id, utc_date, product_name, brand)
+    pending: list[tuple[str, date, str, str]] = []
+    for rec in all_records:
         rid = rec.get("id")
         f = rec.get("fields") or {}
         if not rid:
             continue
-        day = _airtable_date_day_key(f.get("Date Submitted"))
-        raw_name = (f.get("Product Name") or "").strip()
-        if not day or not raw_name:
+        if not _inhouse_is_blank(f.get("In-House Evaluator Price (KES)")):
             continue
-        abrand = _first_word_brand(raw_name)
-        if not abrand:
+        utc_d = _airtable_utc_date(f.get("Date Submitted"))
+        if utc_d is None:
             continue
-        acat = _extract_airtable_category_slug(raw_name)
-        if _inhouse_is_blank(f.get("In-House Evaluator Price (KES)")):
-            pending_by_day[day].append((rid, raw_name, abrand, acat))
+        product_name = (f.get("Product Name") or "").strip().lower()
+        brand = (f.get("Brand") or "").strip().lower()
+        if not product_name:
+            continue
+        pending.append((rid, utc_d, product_name, brand))
+
+    logger.info(
+        f"Sheet->Airtable sync: {len(all_records)} total Airtable records, "
+        f"{len(pending)} with blank In-House price"
+    )
+
+    # Step 2: Read Sheet rows
+    rows = read_historical_data()
+    if not rows:
+        logger.info("Sheet->Airtable sync: no Sheet rows, skip")
+        return 0
 
     patched_ids: set[str] = set()
     patched_count = 0
     sheet_with_price = 0
 
+    # Step 3: For each Sheet row with a price, find matching Airtable records
     for row in rows:
         price = _sheet_row_human_price(row)
         if price is None:
@@ -262,28 +216,96 @@ def sync_human_evaluator_prices_from_sheet_sync() -> int:
         date_str = (row.get("Date") or "").strip()
         item = (row.get("Item") or "").strip()
         if not item:
+            logger.debug(f"SYNC ROW SKIP: no Item | Date={date_str!r}")
             continue
 
-        cal = _nairobi_sheet_calendar_date(date_str)
-        if cal is None:
+        sheet_date = _parse_sheet_date(date_str)
+        sheet_brand = _first_word_lower(item)
+        if not sheet_date:
+            logger.warning(
+                f"SYNC ROW SKIP: unparseable date | "
+                f"Date={date_str!r} Item={item!r} Price={price}"
+            )
             continue
-        utc_a, utc_b = _utc_day_keys_for_nairobi_calendar_day(cal)
-        bucket = _merge_pending_for_utc_days(pending_by_day, utc_a, utc_b)
-        if not bucket:
+        if not sheet_brand:
+            logger.debug(
+                f"SYNC ROW SKIP: no brand extracted | "
+                f"Date={date_str!r} Item={item!r}"
+            )
             continue
 
-        rid = _pick_airtable_record_for_sheet_row(item, bucket)
-        if rid is None or rid in patched_ids:
+        sheet_iso = sheet_date.isoformat()
+
+        # Find candidates: date within +/-1 day AND product_name contains brand
+        candidates: list[tuple[str, date, str, str]] = []
+        for rid, at_date, at_product, at_brand in pending:
+            if rid in patched_ids:
+                continue
+            if not _dates_within_one_day(sheet_date, at_date):
+                continue
+            # Match brand: Airtable Product Name contains the Sheet brand word
+            if sheet_brand in at_product or sheet_brand == at_brand:
+                candidates.append((rid, at_date, at_product, at_brand))
+
+        date_window = [
+            (sheet_date - timedelta(days=1)).isoformat(),
+            sheet_iso,
+            (sheet_date + timedelta(days=1)).isoformat(),
+        ]
+
+        if len(candidates) == 0:
+            logger.warning(
+                f"SYNC NO MATCH | Sheet: Date={date_str!r} -> {sheet_iso}, "
+                f"Brand={sheet_brand!r}, Item={item!r}, Price={price} | "
+                f"Checked +/-1 day window {date_window} against {len(pending)} "
+                f"pending Airtable records"
+            )
             continue
 
-        if patch_in_house_evaluator_price(rid, price):
+        if len(candidates) > 1:
+            # Try narrowing by category slug inferred from Sheet Item text
+            sheet_cat = _infer_category_from_item(item)
+            if sheet_cat:
+                narrowed = [
+                    c for c in candidates
+                    if _airtable_category_slug(c[2]) == sheet_cat
+                ]
+                if len(narrowed) == 1:
+                    candidates = narrowed
+                    logger.debug(
+                        f"SYNC NARROWED by category={sheet_cat!r} | "
+                        f"Sheet: {date_str!r}, Item={item!r}"
+                    )
+            if len(candidates) > 1:
+                cand_names = [f"{c[0]}:{c[2]}" for c in candidates]
+                logger.warning(
+                    f"SYNC AMBIGUOUS ({len(candidates)} matches) | "
+                    f"Sheet: Date={date_str!r} -> {sheet_iso}, "
+                    f"Brand={sheet_brand!r}, Item={item!r}, Price={price} | "
+                    f"Candidates: {cand_names}"
+                )
+                continue
+
+        # Exactly one match
+        match_rid, match_date, match_product, match_brand = candidates[0]
+        logger.info(
+            f"SYNC MATCH | Sheet: {date_str!r} -> {sheet_iso}, "
+            f"Brand={sheet_brand!r}, Item={item!r}, Price={price} | "
+            f"Airtable: id={match_rid}, date={match_date.isoformat()}, "
+            f"product={match_product!r}"
+        )
+        if patch_in_house_evaluator_price(match_rid, price):
             patched_count += 1
-            patched_ids.add(rid)
+            patched_ids.add(match_rid)
             time.sleep(RATE_LIMIT_DELAY)
+        else:
+            logger.warning(f"SYNC PATCH FAILED for {match_rid}")
 
     logger.info(
-        f"Sheet→Airtable human price sync: patched {patched_count} record(s) "
-        f"(sheet rows with J/K price: {sheet_with_price}, airtable rows fetched: {len(records)})"
+        f"Sheet->Airtable sync DONE: patched {patched_count} record(s) "
+        f"(sheet rows with price: {sheet_with_price}, "
+        f"pending Airtable records: {len(pending)}, "
+        f"total Airtable: {len(all_records)})"
     )
     return patched_count
 
