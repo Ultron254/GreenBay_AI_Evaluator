@@ -279,8 +279,10 @@ async def vertex_evaluate(
     parsed = _extract_json(text)
     if not parsed:
         _bump_counter(success=False, error="parse: empty or invalid JSON")
-        logger.warning("Vertex AI: response had no parseable JSON")
+        logger.warning(f"Vertex AI: response had no parseable JSON. Raw text: {text[:500]}")
         return None
+
+    logger.debug(f"Vertex AI raw parsed JSON: {parsed}")
 
     grade = parsed.get("condition_grade")
     if isinstance(grade, str):
@@ -296,18 +298,32 @@ async def vertex_evaluate(
         except (TypeError, ValueError):
             return None
 
+    # Try multiple keys for the price field (Gemini sometimes varies the key name)
+    price_raw = parsed.get("estimated_price_kes")
+    if price_raw is None:
+        price_raw = parsed.get("estimated_price")
+    if price_raw is None:
+        price_raw = parsed.get("price_kes")
+    if price_raw is None:
+        price_raw = parsed.get("price")
+
+    estimated_price = _to_int(price_raw)
+    if estimated_price is None and price_raw is not None:
+        logger.warning(f"Vertex AI: could not parse price from value: {price_raw!r}")
+
     result = {
         "condition_grade": grade,
         "condition_score": _to_int(parsed.get("condition_score")),
-        "estimated_price_kes": _to_int(parsed.get("estimated_price_kes")),
+        "estimated_price_kes": estimated_price,
         "observations": str(parsed.get("observations") or "")[:400],
         "model": settings.google_vertex_model,
         "latency_ms": int((time.time() - start_ms) * 1000),
     }
     _bump_counter(success=True)
     logger.info(
-        f"Vertex AI: grade={result['condition_grade']}, "
-        f"price={result['estimated_price_kes']}, "
+        f"Vertex AI result: grade={result['condition_grade']}, "
+        f"price_kes={result['estimated_price_kes']}, "
+        f"score={result['condition_score']}, "
         f"latency={result['latency_ms']}ms"
     )
     return result

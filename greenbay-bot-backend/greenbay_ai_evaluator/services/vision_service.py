@@ -39,6 +39,16 @@ IMPORTANT rules:
 - Note completeness (missing shelves, knobs, accessories)
 - Score photo quality (sharp, well-lit = high score)
 
+CRITICAL AGE-BASED CONDITION CONSTRAINTS:
+- Grade A (Excellent) can ONLY be given to products under 2 years old that
+  appear near-perfect with no visible wear
+- Products 5+ years old must be Grade B or lower REGARDLESS of appearance
+  (age causes internal component degradation not visible in photos)
+- Products 10+ years old must be Grade C or lower
+- The customer-reported age MUST factor into your condition assessment
+- If the seller says the product is old but it looks new in photos, trust
+  the seller's age claim and downgrade accordingly
+
 Return ONLY valid JSON with this schema:
 {
   "brand_detected": "string or null",
@@ -62,6 +72,7 @@ async def analyze_images(
     category: str | None = None,
     brand_hint: str | None = None,
     model_hint: str | None = None,
+    age_years: float | None = None,
     api_key: str | None = None,
     primary_model: str = "claude-opus-4-20250514",
     fallback_model: str = "claude-sonnet-4-20250514",
@@ -74,6 +85,7 @@ async def analyze_images(
         category: Optional category hint (e.g. "refrigerator")
         brand_hint: Optional brand hint from seller
         model_hint: Optional model hint from seller
+        age_years: Customer-reported age of the product in years
         api_key: Anthropic API key
         primary_model: Primary Claude model to use
         fallback_model: Fallback model if primary fails
@@ -105,7 +117,7 @@ async def analyze_images(
             }
         })
 
-    # Add text prompt
+    # Add text prompt with age context for condition grading
     context_parts = []
     if category:
         context_parts.append(f"Category: {category}")
@@ -113,6 +125,16 @@ async def analyze_images(
         context_parts.append(f"Seller says brand: {brand_hint}")
     if model_hint:
         context_parts.append(f"Seller says model: {model_hint}")
+    if age_years is not None and age_years > 0:
+        context_parts.append(f"Customer-reported age: {age_years:.1f} years")
+        if age_years >= 10:
+            context_parts.append(
+                "IMPORTANT: This product is 10+ years old. Maximum grade is C regardless of appearance."
+            )
+        elif age_years >= 5:
+            context_parts.append(
+                "IMPORTANT: This product is 5+ years old. Maximum grade is B regardless of appearance."
+            )
 
     prompt = "Analyze these appliance photos and provide a structured evaluation."
     if context_parts:

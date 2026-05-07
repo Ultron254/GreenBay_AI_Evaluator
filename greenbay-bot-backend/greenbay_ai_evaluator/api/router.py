@@ -378,6 +378,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                                 category=req.category,
                                 brand_hint=req.brand,
                                 model_hint=req.model,
+                                age_years=req.age_years,
                                 api_key=settings.anthropic_api_key,
                             )
                         )
@@ -417,14 +418,15 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                         loop.close()
 
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    vertex_result = pool.submit(_run_vertex).result(timeout=35)
+                    vertex_result = pool.submit(_run_vertex).result(timeout=45)
                 if vertex_result:
                     logger.info(
                         f"Vertex AI: grade={vertex_result.get('condition_grade')}, "
-                        f"price={vertex_result.get('estimated_price_kes')}"
+                        f"price={vertex_result.get('estimated_price_kes')}, "
+                        f"observations={vertex_result.get('observations', '')[:100]}"
                     )
             except Exception as ve:
-                logger.warning(f"Vertex AI skipped: {ve}")
+                logger.warning(f"Vertex AI skipped (timeout or error): {ve}")
 
         # 3c. Google Cloud Vision product identification (Google Lens equivalent)
         lens_result = None
@@ -495,6 +497,15 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             viq = vision_result.get("photo_quality_score")
             if viq is not None:
                 iq_result.score = viq
+
+        # 5d. Age-based condition grade cap (hard rule)
+        # Products cannot be Grade A if old, regardless of what vision says
+        if req.age_years >= 10 and grade in ("A", "B"):
+            grade = "C"
+            logger.info(f"Condition capped to C: product is {req.age_years:.0f} years old")
+        elif req.age_years >= 5 and grade == "A":
+            grade = "B"
+            logger.info(f"Condition capped to B: product is {req.age_years:.0f} years old")
 
         # 6a. Quality rejection pre-screening
         HARD_REJECT_KEYWORDS = {
@@ -975,6 +986,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         # Airtable: backup data repository (async, non-blocking, write-only)
         try:
+            if not result.pricing_justification:
+                logger.warning("Pricing justification is empty — this should not happen")
+
             images_for_airtable = _repressign_images_for_airtable(
                 req_image_urls=req.image_urls,
                 trade_in_session_id=req.trade_in_session_id,
@@ -986,10 +1000,15 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 req=req,
                 grade=grade,
                 images_for_airtable=images_for_airtable,
-                vertex_result=locals().get("vertex_result"),
+                vertex_result=vertex_result,
                 had_image_inputs=bool(req.image_data or req.image_urls),
                 s3_configured=s3_configured_for_airtable,
                 pricing_justification=result.pricing_justification,
+            )
+            logger.info(
+                f"Airtable payload: justification_len={len(result.pricing_justification)}, "
+                f"vertex_price={airtable_payload.get('Vertex AI Price (KES)')}, "
+                f"customer_name={airtable_payload.get('Customer Name')!r}"
             )
             airtable_write_async(airtable_payload)
             logger.info("Airtable: write dispatched (fire-and-forget)")

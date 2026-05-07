@@ -262,9 +262,13 @@ def write_evaluation(data: dict) -> bool:
         logger.debug("Airtable: not configured, skipping write")
         return False
 
-    # Strip any keys whose value is None / empty string so we don't overwrite
-    # Airtable fields with blanks (Airtable treats "" differently from missing).
-    fields = {k: v for k, v in data.items() if v is not None and v != ""}
+    # Strip any keys whose value is None / empty string / empty list so we don't
+    # overwrite Airtable fields with blanks (Airtable treats "" differently from
+    # missing, and rejects empty attachment arrays).
+    fields = {
+        k: v for k, v in data.items()
+        if v is not None and v != "" and v != []
+    }
     if not fields:
         return False
 
