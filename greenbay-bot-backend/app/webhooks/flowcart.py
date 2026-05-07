@@ -412,15 +412,14 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                 ),
             }
         else:
-            # Counter-offer — try to call the real counter API
-            counter_result = _handle_counter(session, text)
-            if counter_result:
-                return counter_result
-
+            # NEGOTIATION PAUSED -- returning direct price only
+            # No counter-offers, no rounds, no walkaway.
+            # The opening_offer IS the final price.
             return {
                 "text": (
-                    f"I appreciate the counter. Unfortunately, KES {offer:,.0f} "
-                    "is the best I can offer for this unit based on current market data.\n\n"
+                    f"I appreciate the counter. Our best offer is KES {offer:,.0f} "
+                    "based on current market data and product condition.\n\n"
+                    "This is a fair price that includes free pickup and same-day M-Pesa payment.\n\n"
                     "Would you like to accept?"
                 ),
                 "buttons": [
@@ -536,72 +535,73 @@ def _call_evaluator(session: dict) -> dict | None:
 
 # ---------------------------------------------------------------------------
 # Counter-offer via real API
+# NEGOTIATION PAUSED -- returning direct price only
 # ---------------------------------------------------------------------------
-def _handle_counter(session: dict, text: str) -> dict | None:
-    """Process a counter-offer through the real negotiation API."""
-    import httpx
-
-    eval_session_id = session.get("evaluation_session_id")
-    if not eval_session_id:
-        return None
-
-    # Parse counter amount
-    try:
-        cleaned = text.lower().replace(",", "").replace("kes", "").strip()
-        if cleaned.endswith("k"):
-            counter_amount = float(cleaned[:-1]) * 1000
-        else:
-            counter_amount = float(cleaned)
-    except ValueError:
-        return None
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"http://127.0.0.1:9100/tradein/{eval_session_id}/counter",
-                json={"seller_counter": counter_amount},
-            )
-            resp.raise_for_status()
-            result = resp.json()
-
-        decision = result.get("decision", "")
-        system_offer = result.get("system_offer", 0)
-        rounds_remaining = result.get("rounds_remaining", 0)
-
-        # Update session with latest offer
-        if isinstance(session.get("evaluation"), dict):
-            session["evaluation"]["opening_offer"] = system_offer
-
-        if decision == "accept":
-            session["state"] = ConvoState.DEAL_CLOSED
-            return {
-                "text": (
-                    f"✅ We can do *KES {system_offer:,.0f}*!\n\n"
-                    "🎉 Deal confirmed!\n"
-                    f"Ref: GB-{session['session_id']}\n\n"
-                    "📍 Our team will call within 24 hours for FREE pickup.\n"
-                    "⚡ M-Pesa payment — same day.\n\n"
-                    "Asante sana! 💚"
-                ),
-            }
-        elif decision == "counter":
-            return {
-                "text": (
-                    f"I can adjust to *KES {system_offer:,.0f}*.\n"
-                    f"({rounds_remaining} negotiation rounds remaining)\n\n"
-                    "Would this work for you?"
-                ),
-                "buttons": [
-                    {"type": "reply", "title": "✅ Accept"},
-                    {"type": "reply", "title": "❌ No thanks"},
-                ],
-            }
-        else:
-            return None
-
-    except Exception as e:
-        logger.warning(f"Counter API call failed: {e}")
-        return None
+# def _handle_counter(session: dict, text: str) -> dict | None:
+#     """Process a counter-offer through the real negotiation API."""
+#     import httpx
+#
+#     eval_session_id = session.get("evaluation_session_id")
+#     if not eval_session_id:
+#         return None
+#
+#     # Parse counter amount
+#     try:
+#         cleaned = text.lower().replace(",", "").replace("kes", "").strip()
+#         if cleaned.endswith("k"):
+#             counter_amount = float(cleaned[:-1]) * 1000
+#         else:
+#             counter_amount = float(cleaned)
+#     except ValueError:
+#         return None
+#
+#     try:
+#         with httpx.Client(timeout=30.0) as client:
+#             resp = client.post(
+#                 f"http://127.0.0.1:9100/tradein/{eval_session_id}/counter",
+#                 json={"seller_counter": counter_amount},
+#             )
+#             resp.raise_for_status()
+#             result = resp.json()
+#
+#         decision = result.get("decision", "")
+#         system_offer = result.get("system_offer", 0)
+#         rounds_remaining = result.get("rounds_remaining", 0)
+#
+#         # Update session with latest offer
+#         if isinstance(session.get("evaluation"), dict):
+#             session["evaluation"]["opening_offer"] = system_offer
+#
+#         if decision == "accept":
+#             session["state"] = ConvoState.DEAL_CLOSED
+#             return {
+#                 "text": (
+#                     f"✅ We can do *KES {system_offer:,.0f}*!\n\n"
+#                     "🎉 Deal confirmed!\n"
+#                     f"Ref: GB-{session['session_id']}\n\n"
+#                     "📍 Our team will call within 24 hours for FREE pickup.\n"
+#                     "⚡ M-Pesa payment — same day.\n\n"
+#                     "Asante sana! 💚"
+#                 ),
+#             }
+#         elif decision == "counter":
+#             return {
+#                 "text": (
+#                     f"I can adjust to *KES {system_offer:,.0f}*.\n"
+#                     f"({rounds_remaining} negotiation rounds remaining)\n\n"
+#                     "Would this work for you?"
+#                 ),
+#                 "buttons": [
+#                     {"type": "reply", "title": "✅ Accept"},
+#                     {"type": "reply", "title": "❌ No thanks"},
+#                 ],
+#             }
+#         else:
+#             return None
+#
+#     except Exception as e:
+#         logger.warning(f"Counter API call failed: {e}")
+#         return None
 
 
 # ---------------------------------------------------------------------------
