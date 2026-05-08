@@ -8,10 +8,11 @@ before calling ``compute_valuation()``.
 Every intermediate value is returned in the ``ValuationResult`` so it can
 be stored for full auditability.
 """
-# Version marker for deployment verification
-ENGINE_VERSION = "2.0.0-calibrated-2026-05-07"
 
 from __future__ import annotations
+
+# Version marker for deployment verification
+ENGINE_VERSION = "2.0.0-calibrated-2026-05-07"
 
 from dataclasses import dataclass, field
 from typing import Any
