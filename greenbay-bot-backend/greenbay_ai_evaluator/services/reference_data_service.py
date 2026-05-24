@@ -158,13 +158,15 @@ def _read_pricing_matrix(gc) -> list[dict]:
             ws = spreadsheet.worksheet(tab_name)
             raw_rows = ws.get_all_values()
 
-            # Auto-detect header row: first row containing "Brand" and ("Model" or "Age")
+            # Auto-detect header: row containing "brand" AND "product name" (substring, case-insensitive)
             header_idx = None
             headers: list[str] = []
             for i, row in enumerate(raw_rows[:15]):
                 cells = [str(c).strip() for c in row]
                 lower_cells = [c.lower() for c in cells]
-                if "brand" in lower_cells and ("model" in lower_cells or "age" in lower_cells):
+                has_brand = "brand" in lower_cells
+                has_product_name = any("product name" in c for c in lower_cells)
+                if has_brand and has_product_name:
                     header_idx = i
                     headers = cells
                     break
@@ -172,11 +174,11 @@ def _read_pricing_matrix(gc) -> list[dict]:
             if header_idx is None:
                 logger.warning(
                     f"Reference data: tab '{tab_name}' — no header row found in first 15 rows. "
-                    f"Row samples: {[r[:5] for r in raw_rows[:5]]}"
+                    f"Row samples: {[r[:8] for r in raw_rows[:6]]}"
                 )
                 continue
 
-            # Filter out empty-name columns
+            # Filter out empty-name columns; build a lowercase lookup dict per row
             valid_cols = [(ci, h) for ci, h in enumerate(headers) if h]
             col_names = [h for _, h in valid_cols]
             col_indices = [ci for ci, _ in valid_cols]
@@ -188,24 +190,26 @@ def _read_pricing_matrix(gc) -> list[dict]:
             data_rows = raw_rows[header_idx + 1:]
             tab_count = 0
             for row in data_rows:
-                rec = {col_names[j]: str(row[ci]).strip() if ci < len(row) else ""
-                       for j, ci in enumerate(col_indices)}
-                # Skip fully-blank rows
-                if not any(rec.values()):
+                # Build case-insensitive dict (lowercase key -> value)
+                raw_rec = {col_names[j]: (str(row[ci]).strip() if ci < len(row) else "")
+                           for j, ci in enumerate(col_indices)}
+                if not any(raw_rec.values()):
                     continue
+                ci_rec = {k.lower().strip(): v for k, v in raw_rec.items()}
                 rows_out.append({
-                    "brand": rec.get("Brand", ""),
-                    "model": rec.get("Model", rec.get("Model Number", "")),
+                    "brand": ci_rec.get("brand", ""),
+                    "model": ci_rec.get("model number", ci_rec.get("model", "")),
+                    "product_name": ci_rec.get("product name", ""),
                     "category": category_slug,
-                    "age_band": rec.get("Age", rec.get("Age Band", "")),
-                    "base_min": _safe_float(rec.get("Base Min", rec.get("Base Min KES"))),
-                    "base_max": _safe_float(rec.get("Base Max", rec.get("Base Max KES"))),
-                    "condition_grade": rec.get("Condition Grade", rec.get("Grade", "")),
-                    "recommended_min": _safe_float(rec.get("Recommended Min", rec.get("Rec Min KES"))),
-                    "recommended_max": _safe_float(rec.get("Recommended Max", rec.get("Rec Max KES"))),
-                    "new_price": _safe_float(rec.get("New Price", rec.get("New Price KES"))),
+                    "age_band": ci_rec.get("age of appliance", ci_rec.get("age", ci_rec.get("age band", ""))),
+                    "base_min": _safe_float(ci_rec.get("base min", ci_rec.get("base min kes"))),
+                    "base_max": _safe_float(ci_rec.get("base max", ci_rec.get("base max kes"))),
+                    "condition_grade": ci_rec.get("condition grade", ci_rec.get("grade", "")),
+                    "recommended_min": _safe_float(ci_rec.get("recommended min", ci_rec.get("rec min kes"))),
+                    "recommended_max": _safe_float(ci_rec.get("recommended max", ci_rec.get("rec max kes"))),
+                    "new_price": _safe_float(ci_rec.get("new price", ci_rec.get("new price kes"))),
                     "sheet_tab": tab_name,
-                    "raw_json": _sanitize_for_json(rec),
+                    "raw_json": _sanitize_for_json(raw_rec),
                 })
                 tab_count += 1
             logger.info(
