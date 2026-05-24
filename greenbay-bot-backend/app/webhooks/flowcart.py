@@ -344,12 +344,27 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
             if pv and pv.get("num_sources", 0) > 1:
                 source_info = f"\n📊 Price verified against {pv['num_sources']} market sources"
 
+            _eval_currency = eval_result.get("currency_code", "KES")
+
+            # v6: If confidence < 80%, route to human review
+            if eval_result.get("confidence_score", 0) < 80 or eval_result.get("decision") == "review":
+                return {
+                    "text": (
+                        f"🔍 Analyzing your {session['answers'].get('brand', 'appliance')}...\n\n"
+                        f"Thank you for submitting your appliance for evaluation. "
+                        f"Our specialist team is reviewing your item to ensure you "
+                        f"get the best possible offer. We'll be in touch shortly.\n\n"
+                        f"📊 Confidence: {eval_result.get('confidence_score', 0):.0f}%\n"
+                        f"Ref: GB-{eval_result.get('session_id', session['session_id'])}"
+                    ),
+                }
+
             return {
                 "text": (
                     f"🔍 Analyzing your {session['answers'].get('brand', 'appliance')}...\n\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"💰 GreenBay Offer:\n"
-                    f"*KES {offer:,.0f}*\n"
+                    f"*{_eval_currency} {offer:,.0f}*\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"{source_info}\n"
                     f"Grade {eval_result.get('condition_grade', 'B')} | "
@@ -358,9 +373,8 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                     f"Free pickup + same-day M-Pesa payment!"
                 ),
                 "buttons": [
-                    {"type": "reply", "title": "✅ Accept"},
-                    {"type": "reply", "title": "💬 Counter"},
-                    {"type": "reply", "title": "❌ Decline"},
+                    {"type": "reply", "title": "✅ Accept Offer"},
+                    {"type": "reply", "title": "💬 Not Happy?"},
                 ],
             }
         else:
@@ -389,38 +403,117 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
     if current_state == ConvoState.NEGOTIATING:
         eval_data = session.get("evaluation", {})
         offer = eval_data.get("opening_offer", 0) if isinstance(eval_data, dict) else eval_data
+        _neg_currency = eval_data.get("currency_code", "KES") if isinstance(eval_data, dict) else "KES"
 
         if "accept" in text_lower or "yes" in text_lower or "deal" in text_lower:
             session["state"] = ConvoState.DEAL_CLOSED
+
+            # v6: Call backend accept-offer endpoint
+            _eval_sid = session.get("evaluation_session_id")
+            if _eval_sid:
+                try:
+                    import requests as _req
+                    from app.config import get_settings as _gs
+                    _base = getattr(_gs(), "app_base_url", None) or "http://127.0.0.1:9100"
+                    _req.post(f"{_base}/tradein/{_eval_sid}/accept-offer", timeout=5)
+                except Exception:
+                    pass
+
             return {
                 "text": (
                     "🎉 Deal confirmed!\n\n"
-                    f"Amount: KES {offer:,.0f}\n"
+                    f"Amount: {_neg_currency} {offer:,.0f}\n"
                     f"Ref: GB-{session['session_id']}\n\n"
                     "📍 Our team will call within 24 hours to arrange FREE pickup.\n"
                     "⚡ Payment via M-Pesa — same day.\n\n"
                     "Asante sana! 💚"
                 ),
             }
-        elif "decline" in text_lower or "no" in text_lower:
+
+        # v6 WS8: Rejection option selection (1/A/2/B/3/C)
+        elif any(x in text_lower for x in ["option a", "consignment", "1", "option 1"]):
             session["state"] = ConvoState.DEAL_CLOSED
+            _eval_sid = session.get("evaluation_session_id")
+            if _eval_sid:
+                try:
+                    import requests as _req
+                    from app.config import get_settings as _gs
+                    _base = getattr(_gs(), "app_base_url", None) or "http://127.0.0.1:9100"
+                    _req.post(f"{_base}/tradein/{_eval_sid}/rejection-choice", json={"option": "A"}, timeout=5)
+                except Exception:
+                    pass
             return {
                 "text": (
-                    f"I understand. Our offer of KES {offer:,.0f} "
-                    "stands for 7 days.\n\n"
-                    "Feel free to reach out anytime! 💚"
+                    "🏷️ *Consignment Selected*\n\n"
+                    "Your item will be listed on our marketplace at your preferred price. "
+                    "We handle listing, marketing, and buyer inquiries.\n\n"
+                    "Our team will contact you to arrange collection. 💚"
+                ),
+            }
+        elif any(x in text_lower for x in ["option b", "split", "10/90", "2", "option 2"]):
+            session["state"] = ConvoState.DEAL_CLOSED
+            upfront = round(offer * 0.10, -2)
+            balance = round(offer * 0.90, -2)
+            _eval_sid = session.get("evaluation_session_id")
+            if _eval_sid:
+                try:
+                    import requests as _req
+                    from app.config import get_settings as _gs
+                    _base = getattr(_gs(), "app_base_url", None) or "http://127.0.0.1:9100"
+                    _req.post(f"{_base}/tradein/{_eval_sid}/rejection-choice", json={"option": "B"}, timeout=5)
+                except Exception:
+                    pass
+            return {
+                "text": (
+                    f"💰 *10/90 Split Selected*\n\n"
+                    f"You'll receive:\n"
+                    f"• {_neg_currency} {upfront:,.0f} upfront today\n"
+                    f"• {_neg_currency} {balance:,.0f} when the item sells (within 90 days)\n\n"
+                    f"Our team will contact you to arrange collection. 💚"
+                ),
+            }
+        elif any(x in text_lower for x in ["option c", "team", "talk", "3", "option 3"]):
+            session["state"] = ConvoState.DEAL_CLOSED
+            _eval_sid = session.get("evaluation_session_id")
+            if _eval_sid:
+                try:
+                    import requests as _req
+                    from app.config import get_settings as _gs
+                    _base = getattr(_gs(), "app_base_url", None) or "http://127.0.0.1:9100"
+                    _req.post(f"{_base}/tradein/{_eval_sid}/rejection-choice", json={"option": "C"}, timeout=5)
+                except Exception:
+                    pass
+            return {
+                "text": (
+                    "🧑‍💼 *Connecting you with our team*\n\n"
+                    "A GreenBay specialist will reach out to you shortly "
+                    "to discuss your options. 💚"
+                ),
+            }
+
+        elif "decline" in text_lower or "no" in text_lower or "not happy" in text_lower or "not happ" in text_lower:
+            # v6: Show three rejection options
+            upfront = round(offer * 0.10, -2)
+            balance = round(offer * 0.90, -2)
+            return {
+                "text": (
+                    f"We understand. Here are your options:\n\n"
+                    f"*1️⃣ Consignment*\n"
+                    f"List at your price on our marketplace\n\n"
+                    f"*2️⃣ 10/90 Split*\n"
+                    f"{_neg_currency} {upfront:,.0f} upfront + {_neg_currency} {balance:,.0f} when sold\n\n"
+                    f"*3️⃣ Talk to Team*\n"
+                    f"Speak with a GreenBay specialist\n\n"
+                    f"Reply with 1, 2, or 3"
                 ),
             }
         else:
-            # NEGOTIATION PAUSED -- returning direct price only
-            # No counter-offers, no rounds, no walkaway.
-            # The opening_offer IS the final price.
             return {
                 "text": (
-                    f"I appreciate the counter. Our best offer is KES {offer:,.0f} "
+                    f"Our best offer is {_neg_currency} {offer:,.0f} "
                     "based on current market data and product condition.\n\n"
-                    "This is a fair price that includes free pickup and same-day M-Pesa payment.\n\n"
-                    "Would you like to accept?"
+                    "This includes free pickup and same-day M-Pesa payment.\n\n"
+                    "Reply *Accept* or *Not Happy* for alternatives."
                 ),
                 "buttons": [
                     {"type": "reply", "title": "✅ Accept"},
@@ -495,6 +588,11 @@ def _call_evaluator(session: dict) -> dict | None:
     }
     retail = cat_retail.get(answers.get("category", "other"), 30000)
 
+    # v6: Detect country from phone prefix
+    from greenbay_ai_evaluator.config import detect_country_from_phone
+    _wa_phone = session.get("phone", "")
+    _wa_country = detect_country_from_phone(_wa_phone)
+
     # Build the EvaluateRequest payload
     payload = {
         "category": answers.get("category", "other"),
@@ -511,6 +609,7 @@ def _call_evaluator(session: dict) -> dict | None:
         "image_data": image_data,
         "retail_price": retail,
         "retail_price_source": "whatsapp_category_estimate",
+        "country": _wa_country,
     }
 
     try:

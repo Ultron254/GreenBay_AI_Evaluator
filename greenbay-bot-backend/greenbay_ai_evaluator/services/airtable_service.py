@@ -217,6 +217,51 @@ def list_records_paginated(
     return out
 
 
+def patch_record_field(session_id: str, field_name: str, value) -> bool:
+    """Patch a single field on the Airtable record matching a session ID.
+
+    Finds the record by searching for the session_id in the Notes field
+    (which contains the session ID from the evaluation), then patches the field.
+    Best-effort — never raises.
+    """
+    cfg = _get_config()
+    if cfg is None:
+        return False
+
+    try:
+        import requests
+        from urllib.parse import quote
+
+        table = quote(cfg["table"])
+        # Search for a record that has this session_id in Notes
+        search_url = (
+            f"https://api.airtable.com/v0/{cfg['base_id']}/{table}"
+            f"?filterByFormula=FIND('{session_id[:8]}',{{Notes}})&maxRecords=1"
+        )
+        resp = requests.get(
+            search_url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            logger.debug(f"Airtable search for session {session_id[:8]} failed: {resp.status_code}")
+            return False
+
+        records = resp.json().get("records", [])
+        if not records:
+            logger.debug(f"Airtable: no record found for session {session_id[:8]}")
+            return False
+
+        record_id = records[0]["id"]
+        ok, err = _patch_record(cfg, record_id, {field_name: value})
+        if ok:
+            logger.info(f"Airtable: patched {field_name}={value} on {record_id}")
+            return True
+        logger.warning(f"Airtable PATCH {record_id}: {err}")
+        return False
+    except Exception as e:
+        logger.warning(f"Airtable patch_record_field failed: {e}")
+        return False
+
+
 def patch_in_house_evaluator_price(record_id: str, price_kes: float) -> bool:
     """Set In-House Evaluator Price (KES) on one record."""
     cfg = _get_config()

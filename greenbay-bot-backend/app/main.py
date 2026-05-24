@@ -127,11 +127,11 @@ def _run_startup_health_check(settings) -> None:
     else:
         logger.warning("[WARN] Google Sheets: no credentials found")
 
-    # Tavily
-    if settings.tavily_api_key:
-        logger.info("[OK]   Tavily: API key configured")
+    # v6: Gemini Search Grounding (replaces Tavily)
+    if vertex_creds and Path(vertex_creds).exists():
+        logger.info("[OK]   Gemini Search: using Vertex AI credentials for Google Search grounding")
     else:
-        logger.warning("[WARN] Tavily: not configured — internet price lookup disabled")
+        logger.warning("[WARN] Gemini Search: Vertex AI credentials needed for price research")
 
     # AWS S3 — use runtime resolution so the banner matches Docker env, not a
     # stale singleton from an early import.
@@ -158,6 +158,17 @@ def _run_startup_health_check(settings) -> None:
             logger.info("[OK]   Airtable recovery: no pending records")
     except Exception as e:
         logger.warning(f"[WARN] Airtable recovery: {e}")
+
+    # v6: Internal notification fallback replay
+    try:
+        from greenbay_ai_evaluator.services.internal_notification_service import retry_failed_notifications
+        recovered = retry_failed_notifications()
+        if recovered > 0:
+            logger.info(f"[OK]   Notification recovery: {recovered} pending notifications recovered")
+        else:
+            logger.info("[OK]   Notification recovery: no pending notifications")
+    except Exception as e:
+        logger.warning(f"[WARN] Notification recovery: {e}")
 
     logger.info("=" * 60)
     logger.info("STARTUP HEALTH CHECK COMPLETE")
@@ -244,6 +255,13 @@ async def lifespan(app: FastAPI):
     learner_task = asyncio.create_task(pricing_learner_loop())
     logger.info("Pricing learner started (initial load + 1-hour refresh)")
 
+    # v6: Reference data service — pricing matrix + sales stock from Google Sheets.
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        start_refresh_loop as reference_data_loop,
+    )
+    reference_data_task = asyncio.create_task(reference_data_loop())
+    logger.info("Reference data service started (initial load + 6-hour refresh)")
+
     # Sheet → Airtable: human evaluator prices (J/K) into In-House Evaluator Price (30 min).
     async def _sheet_human_price_sync_loop():
         from greenbay_ai_evaluator.services.sheet_to_airtable_human_price_sync import (
@@ -271,6 +289,7 @@ async def lifespan(app: FastAPI):
     for task_name, task in (
         ("Shopify scraper", scraper_task),
         ("Pricing learner", learner_task),
+        ("Reference data service", reference_data_task),
         ("Human price Sheet→Airtable sync", human_price_sync_task),
     ):
         task.cancel()

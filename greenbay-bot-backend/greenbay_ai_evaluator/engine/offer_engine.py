@@ -1,18 +1,24 @@
 """
-Deterministic offer engine for GreenBay trade-in valuations.
+Deterministic offer engine for GreenBay trade-in valuations (v6).
 
 This module contains PURE COMPUTATION — no LLM calls, no network calls.
-All data gathering (comparables, image scores, risk scores) must happen
-before calling ``compute_valuation()``.
+All data gathering (comparables, image scores, risk scores, reference data)
+must happen before calling ``compute_valuation()``.
 
 Every intermediate value is returned in the ``ValuationResult`` so it can
 be stored for full auditability.
+
+v6 changes:
+  - Data-driven acquisition ratios from 1,697 real sales
+  - Linear-interpolation depreciation curve with category modifiers
+  - Condition factors: A=1.00, B=0.85, C=0.70, D=route-to-human
+  - Confidence scoring aware of matrix + sales-stock matches
+  - 80% confidence floor for customer-facing prices
 """
 
 from __future__ import annotations
 
-# Version marker for deployment verification
-ENGINE_VERSION = "2.0.0-calibrated-2026-05-07"
+ENGINE_VERSION = "6.0.0-data-driven-2026-05-24"
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,43 +29,53 @@ from greenbay_ai_evaluator.config import (
     DEFECT_DEDUCTIONS,
     DEFAULT_DEFECT_DEDUCTION,
 )
+from greenbay_ai_evaluator.services.reference_data_service import (
+    ACQUISITION_RATIOS,
+    DEFAULT_ACQUISITION_RATIO,
+    get_category_acquisition_ratio,
+)
 
 
 # ---------------------------------------------------------------------------
-# Category-specific depreciation speed multipliers.
-# Values < 1.0 mean the category depreciates SLOWER than average.
-# TVs hold value well in Kenya's secondhand market; cookers/microwaves lose
-# value faster.
+# Depreciation curve — derived from pricing matrix age bands.
+# Tuples of (age_years_midpoint, remaining_value_fraction).
 # ---------------------------------------------------------------------------
-CATEGORY_DEPRECIATION_MULTIPLIERS: dict[str, float] = {
-    "tv_monitor": 0.55,
-    "refrigerator": 0.80,
-    "washing_machine": 1.0,
-    "cooker_oven": 1.10,
-    "microwave": 1.2,
-    "small_kitchen": 1.0,
-    "smartphone": 1.0,
-    "other": 1.0,
+_DEPRECIATION_CURVE: list[tuple[float, float]] = [
+    (0.0, 1.00),
+    (0.5, 0.85),   # 0–12 months midpoint
+    (1.5, 0.72),   # 1–2 years midpoint
+    (2.5, 0.60),   # 2–3 years
+    (3.5, 0.50),   # 3–4 years
+    (4.5, 0.42),   # 4–5 years
+    (7.5, 0.35),   # 5–10 years midpoint
+    (12.0, 0.22),  # 10+ years
+]
+
+# Category-specific depreciation modifiers (multiplied onto the curve value)
+_CATEGORY_DEPRECIATION_MODIFIERS: dict[str, float] = {
+    "tv": 1.10,
+    "tv_monitor": 1.10,
+    "refrigerator": 1.00,
+    "fridge": 1.00,
+    "freezer": 1.00,
+    "chiller": 1.00,
+    "washing_machine": 0.97,
+    "washer": 0.97,
+    "cooker": 0.95,
+    "cooker_oven": 0.95,
+    "microwave": 0.90,
 }
 
-# Trade-in acquisition factor: applied to estimated resale value to get
-# what GreenBay actually pays. Calibrated against 90 real evaluations.
-TRADE_IN_ACQUISITION_FACTOR: float = 0.50
-
-# Condition multipliers: these reflect COMBINED condition impact on the
-# acquisition price GreenBay pays. Grade A items are near-new and command
-# close to full depreciated value.
-CONDITION_MULTIPLIERS: dict[str, float] = {
-    "A": 0.95,  # Excellent — near-new, minimal discount
-    "B": 0.75,  # Good — used but well-maintained
-    "C": 0.65,  # Fair — visible wear, functional
-    "D": 0.52,  # Poor — significant wear, needs work
-    "E": 0.30,  # Bad — barely functional, parts value
+# Condition multipliers (v6 — aligned with matrix grade logic)
+CONDITION_FACTORS: dict[str, float] = {
+    "A": 1.00,
+    "B": 0.85,
+    "C": 0.70,
 }
 
 # Floor/ceiling guardrails: prevent wild outliers relative to team history.
-PRICE_FLOOR_RATIO: float = 0.60   # AI price must be >= 60% of team avg
-PRICE_CEILING_RATIO: float = 1.50  # AI price must be <= 150% of team avg
+PRICE_FLOOR_RATIO: float = 0.60
+PRICE_CEILING_RATIO: float = 1.50
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +104,7 @@ class Comparable:
     """A single market comparable."""
 
     resale_price: float
-    weight: float = 1.0  # higher = more relevant
+    weight: float = 1.0
 
 
 @dataclass
@@ -106,7 +122,7 @@ class ValuationResult:
 
     # Intermediates
     base_value: float
-    base_value_source: str  # "comparables" | "depreciation" | "reconciled"
+    base_value_source: str
     brand_adjusted_value: float
     condition_adjusted_value: float
     defect_deduction_total: float
@@ -131,63 +147,55 @@ class ValuationResult:
 
 
 # ---------------------------------------------------------------------------
-# Depreciation helper
+# Depreciation helper (v6 — linear interpolation)
 # ---------------------------------------------------------------------------
-def _compute_depreciation_factor(
-    age_years: float,
-    policy: PricingPolicyData,
-    category: str = "",
-) -> float:
-    """Return the remaining-value factor after *age_years* of depreciation.
+def depreciation_factor(age_years: float, category: str = "") -> float:
+    """Return remaining-value fraction after *age_years* of use.
 
-    Year 1 depreciates at ``policy.depreciation_year1``, years 2-3 at
-    ``policy.depreciation_year2_3``, etc.  Category-specific speed
-    multipliers slow or accelerate the rate (e.g. TVs hold value better).
-
-    The factor is clamped to [0.15, 1.0] — minimum 15% of base value.
+    Uses linear interpolation between band midpoints from the pricing matrix,
+    then applies a category-specific modifier. Result clamped to [0.15, 0.90].
     """
-    remaining = 1.0
-
     if age_years <= 0:
-        return 1.0
+        return min(0.90, 1.00)
+
+    curve = _DEPRECIATION_CURVE
+
+    # Interpolate
+    if age_years <= curve[0][0]:
+        base = curve[0][1]
+    elif age_years >= curve[-1][0]:
+        base = curve[-1][1]
+    else:
+        for i in range(len(curve) - 1):
+            x0, y0 = curve[i]
+            x1, y1 = curve[i + 1]
+            if x0 <= age_years <= x1:
+                t = (age_years - x0) / (x1 - x0) if (x1 - x0) > 0 else 0
+                base = y0 + t * (y1 - y0)
+                break
+        else:
+            base = curve[-1][1]
 
     cat_key = category.lower().strip() if category else ""
-    cat_mult = CATEGORY_DEPRECIATION_MULTIPLIERS.get(cat_key, 1.0)
+    modifier = _CATEGORY_DEPRECIATION_MODIFIERS.get(cat_key, 1.00)
+    result = base * modifier
 
-    # Year 1
-    y1 = min(age_years, 1.0)
-    rate_y1 = min(policy.depreciation_year1 * cat_mult, 0.90)
-    remaining *= 1.0 - rate_y1 * y1
-
-    if age_years <= 1.0:
-        return max(0.15, remaining)
-
-    # Years 2-3
-    y2_3 = min(age_years - 1.0, 2.0)
-    rate_y23 = min(policy.depreciation_year2_3 * cat_mult, 0.90)
-    remaining *= (1.0 - rate_y23) ** y2_3
-
-    if age_years <= 3.0:
-        return max(0.15, remaining)
-
-    # Years 4-5
-    y4_5 = min(age_years - 3.0, 2.0)
-    rate_y45 = min(policy.depreciation_year4_5 * cat_mult, 0.90)
-    remaining *= (1.0 - rate_y45) ** y4_5
-
-    if age_years <= 5.0:
-        return max(0.15, remaining)
-
-    # Year 6+
-    y6p = age_years - 5.0
-    rate_y6 = min(policy.depreciation_year6_plus * cat_mult, 0.90)
-    remaining *= (1.0 - rate_y6) ** y6p
-
-    return max(0.15, remaining)
+    return max(0.15, min(0.90, result))
 
 
 # ---------------------------------------------------------------------------
-# Confidence score helper
+# Condition factor helper
+# ---------------------------------------------------------------------------
+def condition_factor(grade: str) -> float | None:
+    """Return the condition multiplier for a grade, or None for Grade D (route to human)."""
+    g = grade.upper().strip() if grade else "C"
+    if g == "D":
+        return None
+    return CONDITION_FACTORS.get(g, 0.70)
+
+
+# ---------------------------------------------------------------------------
+# Confidence score helper (v6 — matrix + sales-stock aware)
 # ---------------------------------------------------------------------------
 def _compute_confidence(
     comparables_count: int,
@@ -199,20 +207,21 @@ def _compute_confidence(
     has_model: bool = False,
     has_vision_analysis: bool = False,
     has_historical_data: bool = False,
+    has_matrix_match: bool = False,
+    has_sales_stock_match: bool = False,
 ) -> float:
     """Deterministic confidence score in [0, 100].
 
-    Confidence reflects ACTUAL DATA QUALITY, not model certainty.
-    Hard caps based on available evidence:
-      - No historical data + no market lookup       = MAX 35%
-      - Only internet retail price (no comparables) = MAX 50%
-      - 1-2 historical comparables                  = MAX 65%
-      - 3-5 comparables + market data               = MAX 80%
-      - 5+ comparables + multiple sources + feedback = up to 95%
+    Hard caps based on available evidence (v6):
+      - No historical/matrix data + no market lookup       = MAX 35%
+      - Only internet retail price (no comparables)        = MAX 50%
+      - Matrix match OR 1-2 comparables                    = MAX 70%
+      - Matrix match + 3+ comparables                      = MAX 85%
+      - Matrix + comparables + sales-stock match           = up to 97%
     """
     score = 0.0
 
-    # ---- Data completeness (max 20 pts) ----
+    # Data completeness (max 20 pts)
     if has_brand:
         score += 5.0
     if has_age:
@@ -224,20 +233,24 @@ def _compute_confidence(
     if has_vision_analysis:
         score += 3.0
 
-    # ---- Image quality (max 10 pts) ----
+    # Image quality (max 10 pts)
     score += (image_quality_score / 100.0) * 10.0
 
-    # ---- Historical / comparable evidence (max 35 pts) ----
-    if comparables_count >= 5:
+    # Historical / comparable evidence (max 35 pts)
+    if has_sales_stock_match:
+        score += 35.0
+    elif comparables_count >= 5:
         score += 35.0
     elif comparables_count >= 3:
         score += 25.0
+    elif has_matrix_match:
+        score += 20.0
     elif comparables_count >= 1:
         score += 15.0
     elif has_historical_data:
         score += 10.0
 
-    # ---- Price verification from market sources (max 30 pts) ----
+    # Price verification from market sources (max 30 pts)
     if price_verification_sources >= 4:
         score += 30.0
     elif price_verification_sources >= 3:
@@ -246,37 +259,41 @@ def _compute_confidence(
         score += 20.0
     elif price_verification_sources >= 1:
         score += 12.0
-    else:
-        score += 0.0
 
-    # ---- Apply hard caps based on evidence quality ----
-    if comparables_count == 0 and price_verification_sources == 0 and not has_historical_data:
-        score = min(score, 35.0)
-    elif comparables_count == 0 and not has_historical_data:
+    # Hard caps based on evidence quality
+    if has_sales_stock_match and has_matrix_match and comparables_count >= 1:
+        score = min(score, 97.0)
+    elif has_matrix_match and comparables_count >= 3:
+        score = min(score, 85.0)
+    elif has_matrix_match or (1 <= comparables_count <= 2):
+        score = min(score, 70.0)
+    elif comparables_count == 0 and not has_matrix_match and price_verification_sources >= 1 and not has_historical_data:
         score = min(score, 50.0)
-    elif comparables_count <= 2 and not has_historical_data:
-        score = min(score, 65.0)
-    elif comparables_count <= 5:
-        score = min(score, 80.0)
+    elif comparables_count == 0 and not has_matrix_match and price_verification_sources == 0 and not has_historical_data:
+        score = min(score, 35.0)
 
-    return min(95.0, round(score, 1))
+    return min(97.0, round(score, 1))
 
 
 # ---------------------------------------------------------------------------
-# CR-2: Round to nearest KES 500
+# Round price to nearest step (multi-currency)
 # ---------------------------------------------------------------------------
-def _round_kes_500(value: float) -> float:
-    """Round a KES price to the nearest 500."""
+def _round_price(value: float, round_step: int = 500) -> float:
+    """Round a price to the nearest *round_step*."""
     if value <= 0:
         return 0.0
-    return round(value / 500) * 500
+    return round(value / round_step) * round_step
+
+
+def _round_kes_500(value: float) -> float:
+    """Backward-compatible alias."""
+    return _round_price(value, 500)
 
 
 # ---------------------------------------------------------------------------
 # Multi-source price reconciliation (60% human intelligence / 40% AI market)
 # ---------------------------------------------------------------------------
 def _tier_weighted_average(entries: list[tuple[float, float]]) -> float | None:
-    """Weighted mean of (price, intra-tier weight). None if no entries."""
     if not entries:
         return None
     tw = sum(w for _, w in entries)
@@ -295,28 +312,9 @@ def reconcile_retail_price(
     historical_avg: float | None = None,
     comparables_avg: float | None = None,
 ) -> dict[str, Any]:
-    """Reconcile retail price from multiple independent signals.
-
-    Philosophy (60 / 40):
-      * **Human intelligence (~60%)** — Ground truth from operations and history:
-        pricing learner (Google Sheets), expert feedback (Postgres), and DB
-        comparables (weighted inventory / historical resale anchors).
-      * **AI market research (~40%)** — Automated probes of the wider market:
-        Tavily internet lookup, Jiji/Jumia scrape, Shopify snapshot, and the
-        frontend/AI retail hint.
-
-    Within each tier, relative weights below determine how multiple simultaneous
-    inputs blend **before** the 60/40 cross-tier blend.
-
-    **Airtable is intentionally not a reconcile source.** It mirrors Sheet and
-    DB human prices; ingesting it here would double-count. The Airtable-derived
-    accuracy ratio is applied **after** this function returns (see evaluator router).
-
-    Returns a dict with the reconciled price and breakdown of sources.
-    """
+    """Reconcile retail price from multiple independent signals."""
     sources: list[dict[str, Any]] = []
 
-    # --- Tier 1: Historical / human intelligence (internal weights 8 / 7 / 5) ---
     human_specs: list[tuple[str, float | None, float]] = [
         ("historical_sheet", historical_avg, 8.0),
         ("expert_feedback", expert_avg, 7.0),
@@ -327,13 +325,10 @@ def reconcile_retail_price(
         if price is not None and price > 0:
             human_entries.append((price, w))
             sources.append({
-                "source": key,
-                "price": price,
-                "weight": w,
+                "source": key, "price": price, "weight": w,
                 "tier": "human_intelligence",
             })
 
-    # --- Tier 2: AI market research (internal weights 3 / 2.5 / 2 / 1) ---
     ai_specs: list[tuple[str, float | None, float]] = [
         ("internet_lookup", internet_price, 3.0),
         ("marketplace_jiji_jumia", marketplace_avg, 2.5),
@@ -345,16 +340,13 @@ def reconcile_retail_price(
         if price is not None and price > 0:
             ai_entries.append((price, w))
             sources.append({
-                "source": key,
-                "price": price,
-                "weight": w,
+                "source": key, "price": price, "weight": w,
                 "tier": "ai_market_research",
             })
 
-    human_avg = _tier_weighted_average(human_entries)
+    human_avg_val = _tier_weighted_average(human_entries)
     ai_avg = _tier_weighted_average(ai_entries)
 
-    # Outlier guard: live marketplace / Tavily vs human tier — discard AI tier if absurd
     web_probe: float | None = None
     if marketplace_avg and marketplace_avg > 0:
         web_probe = marketplace_avg
@@ -362,8 +354,8 @@ def reconcile_retail_price(
         web_probe = internet_price
 
     discard_ai_tier = False
-    if human_avg is not None and web_probe is not None and human_avg > 0:
-        probe_ratio = web_probe / human_avg
+    if human_avg_val is not None and web_probe is not None and human_avg_val > 0:
+        probe_ratio = web_probe / human_avg_val
         if probe_ratio > 2.0 or probe_ratio < 0.3:
             discard_ai_tier = True
             for s in sources:
@@ -373,12 +365,12 @@ def reconcile_retail_price(
                         f"Outlier vs human-intelligence tier: web probe {probe_ratio:.2f}x"
                     )
 
-    if discard_ai_tier and human_avg is not None:
-        reconciled = human_avg
-    elif human_avg is not None and ai_avg is not None:
-        reconciled = 0.6 * human_avg + 0.4 * ai_avg
-    elif human_avg is not None:
-        reconciled = human_avg
+    if discard_ai_tier and human_avg_val is not None:
+        reconciled = human_avg_val
+    elif human_avg_val is not None and ai_avg is not None:
+        reconciled = 0.6 * human_avg_val + 0.4 * ai_avg
+    elif human_avg_val is not None:
+        reconciled = human_avg_val
     elif ai_avg is not None:
         reconciled = ai_avg
     else:
@@ -390,7 +382,7 @@ def reconcile_retail_price(
         "reconciled_price": _round_kes_500(reconciled),
         "sources": sources,
         "num_sources": num_sources,
-        "human_intelligence_avg": round(human_avg, 2) if human_avg is not None else None,
+        "human_intelligence_avg": round(human_avg_val, 2) if human_avg_val is not None else None,
         "ai_market_research_avg": round(ai_avg, 2) if ai_avg is not None else None,
         "confidence": min(100.0, num_sources * 20.0 + 10.0),
         "frontend_price": frontend_price,
@@ -398,7 +390,7 @@ def reconcile_retail_price(
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Main entry point (v6)
 # ---------------------------------------------------------------------------
 def compute_valuation(
     *,
@@ -417,147 +409,95 @@ def compute_valuation(
     retail_price: float,
     price_verification: dict[str, Any] | None = None,
     historical_team_avg: float | None = None,
+    # v6 new parameters
+    reference_resale_value: float | None = None,
+    reference_source: str = "",
+    has_matrix_match: bool = False,
+    has_sales_stock_match: bool = False,
+    round_step: int = 500,
 ) -> ValuationResult:
-    """Deterministic valuation computation.
+    """Deterministic valuation computation (v6 data-driven formula).
 
-    Parameters
-    ----------
-    category : str
-        Product category (e.g. "refrigerator").
-    brand : str
-        Brand name.
-    model : str
-        Model identifier.
-    age_years : float
-        Approximate age of the product in years.
-    condition_grade : str
-        Letter grade A / B / C / D.
-    condition_score : float
-        Numeric condition score 0-100.
-    defects : list[dict]
-        Each dict must have ``type`` (str).  Optional keys: ``severity``,
-        ``description``.
-    seller_asking_price : float | None
-        What the seller wants.  ``None`` if not provided.
-    image_quality_score : float
-        0-100 score from the image quality service.
-    risk_score : float
-        0-100 score from the risk service.
-    comparables : list[Comparable]
-        Market comparables gathered before calling this function.
-    pricing_policy : PricingPolicyData
-        Business rules for this category.
-    retail_price : float
-        Original retail price in KES.
-    historical_team_avg : float | None
-        Average team price for this brand+category from pricing learner.
-        Used for floor/ceiling guardrails.
+    The caller resolves the best data source (sales stock > matrix > external)
+    and passes it via *reference_resale_value* / *reference_source*.
 
-    Returns
-    -------
-    ValuationResult
-        Fully auditable result with every intermediate value.
+    Formula:
+      resale_value = new_price * depreciation_factor(age) * condition_factor(grade)
+      trade_in_offer = resale_value * acquisition_ratio[category]
     """
-    trace_lines: list[str] = []  # Build pricing justification as we go
-    trace_lines.append("PRICE CALCULATION BREAKDOWN")
-    trace_lines.append("===========================")
+    trace_lines: list[str] = []
+    trace_lines.append("PRICE CALCULATION BREAKDOWN (v6 data-driven)")
+    trace_lines.append("=" * 50)
     trace_lines.append(
         f"Product: {brand} {model} {category} "
         f"({age_years:.1f} years, Condition {condition_grade})"
     )
     trace_lines.append("")
 
-    # -- STEP 1: Base value --------------------------------------------------
-    effective_retail = retail_price
-    if price_verification and price_verification.get("reconciled_price"):
-        reconciled = price_verification["reconciled_price"]
-        if reconciled > 0 and (retail_price <= 0 or 0.2 <= reconciled / max(retail_price, 1) <= 5.0):
-            effective_retail = reconciled
+    # -- STEP 1: Determine base resale value ---------------------------------
+    grade_upper = condition_grade.upper().strip() if condition_grade else "C"
+    cond_mult = condition_factor(grade_upper)
+    if cond_mult is None:
+        cond_mult = 0.70
 
-    # Compute weighted average of comparables
-    total_weight = sum(c.weight for c in comparables) if comparables else 0.0
-    comparables_avg = (
-        sum(c.resale_price * c.weight for c in comparables) / total_weight
-        if total_weight > 0
-        else 0.0
-    )
-
-    num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
-
-    # Log data sources
-    trace_lines.append("Data Sources Used:")
-    if price_verification and price_verification.get("sources"):
-        for src in price_verification["sources"]:
-            discarded = " [DISCARDED]" if src.get("discarded") else ""
-            trace_lines.append(
-                f"- {src['source']}: KES {src['price']:,.0f} "
-                f"[weight {src['weight']:.1f}]{discarded}"
-            )
-    if comparables:
+    if reference_resale_value and reference_resale_value > 0 and reference_source in (
+        "sales_stock_exact", "sales_stock_category"
+    ):
+        # Sales stock gives us a real resale price — use directly
+        base_value = reference_resale_value
+        base_value_source = reference_source
         trace_lines.append(
-            f"- DB comparables ({len(comparables)} items): "
-            f"KES {comparables_avg:,.0f} avg"
+            f"Base value ({reference_source}): "
+            f"median resale from GreenBay stock = KES {base_value:,.0f}"
         )
-    trace_lines.append("")
-
-    if comparables and len(comparables) >= 3:
-        base_value = comparables_avg
-        base_value_source = "comparables"
-        trace_lines.append(f"Base value (strong comparables): KES {base_value:,.0f}")
-    elif comparables and len(comparables) >= 1 and num_pv_sources >= 1:
-        base_value = comparables_avg * 0.6 + effective_retail * 0.4
-        base_value_source = "comparables+reconciled"
+    elif reference_resale_value and reference_resale_value > 0 and reference_source == "matrix":
+        # Matrix gives recommended price range — apply depreciation + condition
+        depr = depreciation_factor(age_years, category)
+        base_value = reference_resale_value * depr * cond_mult
+        base_value_source = "matrix"
         trace_lines.append(
-            f"Base value (comparables 60% + reconciled 40%): KES {base_value:,.0f}"
+            f"Base value (matrix): KES {reference_resale_value:,.0f} "
+            f"* depr {depr:.3f} * cond {cond_mult:.2f} = KES {base_value:,.0f}"
         )
-    elif num_pv_sources >= 1:
-        base_value = effective_retail
-        base_value_source = "reconciled"
-        trace_lines.append(f"Base value (reconciled multi-source): KES {base_value:,.0f}")
     else:
-        depreciation_factor = _compute_depreciation_factor(age_years, pricing_policy, category)
-        base_value = effective_retail * depreciation_factor
-        base_value_source = "depreciation"
+        # Fallback: use reconciled/frontend retail price + depreciation
+        effective_retail = retail_price
+        if price_verification and price_verification.get("reconciled_price"):
+            reconciled = price_verification["reconciled_price"]
+            if reconciled > 0 and (retail_price <= 0 or 0.2 <= reconciled / max(retail_price, 1) <= 5.0):
+                effective_retail = reconciled
+
+        depr = depreciation_factor(age_years, category)
+        base_value = effective_retail * depr * cond_mult
+        base_value_source = "external_research"
         trace_lines.append(
-            f"Base value (retail KES {effective_retail:,.0f} * "
-            f"depreciation {depreciation_factor:.3f}): KES {base_value:,.0f}"
+            f"Base value (external): KES {effective_retail:,.0f} "
+            f"* depr {depr:.3f} * cond {cond_mult:.2f} = KES {base_value:,.0f}"
         )
 
-    # -- STEP 2: Apply depreciation to reconciled base values ONLY when ------
-    # the reconciled price has no human-intelligence component (i.e., it's
-    # essentially retail-level pricing from Tavily/marketplace only).
-    if base_value_source == "reconciled" and price_verification:
-        human_avg = price_verification.get("human_intelligence_avg")
-        if human_avg is None or human_avg <= 0:
-            depreciation_factor = _compute_depreciation_factor(age_years, pricing_policy, category)
-            base_value = base_value * depreciation_factor
-            trace_lines.append(
-                f"Depreciation applied (no human data, factor {depreciation_factor:.3f}): "
-                f"KES {base_value:,.0f}"
-            )
-
-    # -- STEP 3: Brand adjustment --------------------------------------------
+    # -- STEP 2: Brand adjustment --------------------------------------------
     brand_key = brand.strip() if brand else ""
     brand_premium = pricing_policy.brand_premium_json.get(brand_key, 1.0)
     brand_adjusted_value = base_value * brand_premium
     if brand_premium != 1.0:
         trace_lines.append(f"Brand premium ({brand_key}: {brand_premium}): KES {brand_adjusted_value:,.0f}")
 
-    # -- STEP 4: Condition adjustment ----------------------------------------
-    grade_upper = condition_grade.upper().strip() if condition_grade else "C"
-    # Use our hardcoded condition multipliers (not from DB which may be stale)
-    condition_mult = CONDITION_MULTIPLIERS.get(grade_upper, 0.45)
-    # Allow DB override only if it's MORE aggressive (lower)
-    db_cond_mult = pricing_policy.condition_multiplier_json.get(grade_upper)
-    if db_cond_mult is not None and db_cond_mult < condition_mult:
-        condition_mult = db_cond_mult
-    condition_adjusted_value = brand_adjusted_value * condition_mult
-    trace_lines.append(
-        f"Condition multiplier ({grade_upper}: {condition_mult}): "
-        f"KES {condition_adjusted_value:,.0f}"
-    )
+    # -- STEP 3: Condition already applied in base_value for matrix/external --
+    # For sales stock sources, condition was already factored in at sale time,
+    # but we still apply it as a quality multiplier
+    if base_value_source in ("sales_stock_exact", "sales_stock_category"):
+        condition_adjusted_value = brand_adjusted_value * cond_mult
+        trace_lines.append(
+            f"Condition multiplier ({grade_upper}: {cond_mult}): "
+            f"KES {condition_adjusted_value:,.0f}"
+        )
+    else:
+        condition_adjusted_value = brand_adjusted_value
+        trace_lines.append(
+            f"Condition ({grade_upper}: {cond_mult}): already applied in base value"
+        )
 
-    # -- STEP 5: Defect deductions -------------------------------------------
+    # -- STEP 4: Defect deductions -------------------------------------------
     cat_lower = category.lower().strip() if category else ""
     cat_deductions = DEFECT_DEDUCTIONS.get(cat_lower, {})
 
@@ -578,32 +518,31 @@ def compute_valuation(
         trace_lines.append(f"Defect deductions: -KES {defect_total:,.0f}")
         trace_lines.append(f"After defects: KES {after_defects:,.0f}")
 
-    # -- STEP 6: Image quality penalty ---------------------------------------
+    # -- STEP 5: Image quality penalty ---------------------------------------
     image_quality_penalty_applied = False
     if image_quality_score < 50:
         after_defects *= 0.95
         image_quality_penalty_applied = True
         trace_lines.append(f"Image quality penalty (-5%): KES {after_defects:,.0f}")
-    needs_review_image = image_quality_score < 30
 
-    # -- STEP 7: Estimated resale value --------------------------------------
-    estimated_resale_value = _round_kes_500(max(0.0, after_defects))
+    # -- STEP 6: Estimated resale value --------------------------------------
+    estimated_resale_value = _round_price(max(0.0, after_defects), round_step)
     trace_lines.append(f"Estimated resale value: KES {estimated_resale_value:,.0f}")
 
-    # -- STEP 8: Trade-in acquisition factor ---------------------------------
-    # GreenBay buys at ~35% of resale to cover refurbishment + margin.
-    acquisition_price = _round_kes_500(estimated_resale_value * TRADE_IN_ACQUISITION_FACTOR)
+    # -- STEP 7: Trade-in acquisition factor (v6 — category-specific) --------
+    acq_ratio = get_category_acquisition_ratio(category)
+    acquisition_price = _round_price(estimated_resale_value * acq_ratio, round_step)
     trace_lines.append(
-        f"Trade-in acquisition factor ({TRADE_IN_ACQUISITION_FACTOR}): "
+        f"Acquisition ratio ({category}: {acq_ratio}): "
         f"KES {acquisition_price:,.0f}"
     )
 
-    # -- STEP 9: Ceiling, opening, walkaway ----------------------------------
-    acquisition_ceiling = _round_kes_500(acquisition_price * 1.3)  # slight room above offer
+    # -- STEP 8: Ceiling, opening, walkaway ----------------------------------
+    acquisition_ceiling = _round_price(acquisition_price * 1.3, round_step)
     opening_offer = acquisition_price
-    walkaway_limit = _round_kes_500(acquisition_price * 0.7)
+    walkaway_limit = _round_price(acquisition_price * 0.7, round_step)
 
-    # -- STEP 10: Confidence score -------------------------------------------
+    # -- STEP 9: Confidence score --------------------------------------------
     num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
     has_vision = bool(
         price_verification
@@ -620,9 +559,11 @@ def compute_valuation(
         has_model=bool(model),
         has_vision_analysis=has_vision,
         has_historical_data=has_historical,
+        has_matrix_match=has_matrix_match,
+        has_sales_stock_match=has_sales_stock_match,
     )
 
-    # -- STEP 11: Risk adjustment --------------------------------------------
+    # -- STEP 10: Risk adjustment --------------------------------------------
     risk_adjustment_applied = False
     needs_review_risk = risk_score > 70
     if risk_score > 50:
@@ -630,14 +571,14 @@ def compute_valuation(
         risk_adjustment_applied = True
         trace_lines.append(f"Risk adjustment (-10% ceiling): KES {acquisition_ceiling:,.0f}")
 
-    # -- STEP 12: Floor/Ceiling guardrails -----------------------------------
+    # -- STEP 11: Floor/Ceiling guardrails -----------------------------------
     floor_applied = False
     ceiling_applied = False
     guardrail_note = ""
 
     if historical_team_avg and historical_team_avg > 0:
-        floor_price = _round_kes_500(historical_team_avg * PRICE_FLOOR_RATIO)
-        ceiling_price = _round_kes_500(historical_team_avg * PRICE_CEILING_RATIO)
+        floor_price = _round_price(historical_team_avg * PRICE_FLOOR_RATIO, round_step)
+        ceiling_price = _round_price(historical_team_avg * PRICE_CEILING_RATIO, round_step)
 
         if opening_offer < floor_price:
             guardrail_note = (
@@ -649,8 +590,8 @@ def compute_valuation(
             logger.warning(guardrail_note)
             trace_lines.append(f"GUARDRAIL: {guardrail_note}")
             opening_offer = floor_price
-            acquisition_ceiling = _round_kes_500(opening_offer * 1.3)
-            walkaway_limit = _round_kes_500(opening_offer * 0.7)
+            acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
+            walkaway_limit = _round_price(opening_offer * 0.7, round_step)
             floor_applied = True
         elif opening_offer > ceiling_price:
             guardrail_note = (
@@ -662,28 +603,31 @@ def compute_valuation(
             logger.warning(guardrail_note)
             trace_lines.append(f"GUARDRAIL: {guardrail_note}")
             opening_offer = ceiling_price
-            acquisition_ceiling = _round_kes_500(opening_offer * 1.3)
-            walkaway_limit = _round_kes_500(opening_offer * 0.7)
+            acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
+            walkaway_limit = _round_price(opening_offer * 0.7, round_step)
             ceiling_applied = True
 
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
     trace_lines.append(f"Confidence: {confidence_score:.0f}%")
-    if confidence_score < 50:
+
+    # -- STEP 12: Confidence-based routing -----------------------------------
+    needs_review_image = image_quality_score < 30
+
+    if confidence_score < 80:
         trace_lines.append(
-            "Low confidence: limited pricing data for this brand/model. "
-            "Price may need manual review."
+            f"AUTO-ROUTED TO HUMAN: confidence {confidence_score:.0f}% below 80% threshold."
         )
 
     pricing_justification = "\n".join(trace_lines)
 
     # -- STEP 13: Decision logic ---------------------------------------------
-    if confidence_score < 40 or needs_review_risk:
+    if confidence_score < 80 or needs_review_risk:
         decision = "review"
         decision_reason = _build_review_reason(confidence_score, risk_score, needs_review_image)
     elif seller_asking_price is None:
         decision = "negotiate"
         decision_reason = (
-            f"No seller asking price provided. Opening negotiation at "
+            f"No seller asking price provided. Opening offer at "
             f"KES {opening_offer:,.0f}."
         )
     elif seller_asking_price <= opening_offer:
@@ -748,8 +692,8 @@ def _build_review_reason(
     image_review: bool,
 ) -> str:
     parts: list[str] = []
-    if confidence < 40:
-        parts.append(f"Low confidence ({confidence:.0f}/100)")
+    if confidence < 80:
+        parts.append(f"AUTO-ROUTED TO HUMAN: confidence {confidence:.0f}% below 80% threshold")
     if risk > 70:
         parts.append(f"High risk score ({risk:.0f}/100)")
     if image_review:

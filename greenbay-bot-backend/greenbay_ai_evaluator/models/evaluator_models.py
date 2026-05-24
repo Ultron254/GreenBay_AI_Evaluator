@@ -2,10 +2,12 @@
 SQLAlchemy models for the GreenBay AI Evaluator module.
 
 Tables:
-  - pricing_policy        — Category-level business rules (admin-configurable)
-  - valuation_sessions    — One per evaluation request
-  - negotiation_rounds    — Append-only log of each negotiation step
-  - decision_ledger       — Immutable audit trail
+  - pricing_policy              — Category-level business rules (admin-configurable)
+  - valuation_sessions          — One per evaluation request
+  - negotiation_rounds          — Append-only log of each negotiation step
+  - decision_ledger             — Immutable audit trail
+  - pricing_matrix_reference    — Cached rows from board-approved pricing matrix
+  - sales_stock_reference       — Cached rows from outlet stock control sheet
 """
 
 import uuid
@@ -123,6 +125,10 @@ class ValuationSession(Base):
     pricing_policy_snapshot = Column(JSON, nullable=True)
     comparable_data = Column(JSON, nullable=True)
 
+    # Multi-country (v6)
+    country = Column(String(10), nullable=True, default="KE")
+    currency_code = Column(String(10), nullable=True, default="KES")
+
     # Final negotiation outcome (set when negotiation concludes)
     final_decision = Column(String(20), nullable=True)  # accept | decline
     final_offer = Column(Float, nullable=True)
@@ -213,3 +219,47 @@ class DecisionLedger(Base):
         Index("ix_decision_ledger_event", "event_type"),
         Index("ix_decision_ledger_created", "created_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# PricingMatrixReference — cached pricing matrix from Google Sheet
+# ---------------------------------------------------------------------------
+class PricingMatrixReference(Base):
+    """Row from the board-approved pricing matrix Google Sheet."""
+
+    __tablename__ = "pricing_matrix_reference"
+
+    id = Column(Integer, primary_key=True, index=True)
+    brand = Column(String(200), nullable=True, index=True)
+    model = Column(String(300), nullable=True, index=True)
+    category = Column(String(100), nullable=True, index=True)
+    age_band = Column(String(50), nullable=True)
+    base_min = Column(Float, nullable=True)
+    base_max = Column(Float, nullable=True)
+    condition_grade = Column(String(10), nullable=True)
+    recommended_min = Column(Float, nullable=True)
+    recommended_max = Column(Float, nullable=True)
+    new_price = Column(Float, nullable=True)
+    sheet_tab = Column(String(100), nullable=True)
+    raw_json = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ---------------------------------------------------------------------------
+# SalesStockReference — cached outlet stock control data
+# ---------------------------------------------------------------------------
+class SalesStockReference(Base):
+    """Row from the outlet stock control Google Sheet (everything ever sold)."""
+
+    __tablename__ = "sales_stock_reference"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_category = Column(String(100), nullable=True, index=True)
+    brand_name = Column(String(200), nullable=True, index=True)
+    product_name = Column(String(300), nullable=True)
+    model_number = Column(String(300), nullable=True, index=True)
+    product_quality = Column(String(50), nullable=True)
+    purchase_cost = Column(Float, nullable=True)
+    selling_price = Column(Float, nullable=True)
+    raw_json = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

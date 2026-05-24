@@ -94,6 +94,7 @@ class EvaluateRequest(BaseModel):
     )
     retail_price: float = Field(..., gt=0, le=50_000_000, description="Original retail price KES")
     retail_price_source: str = Field("", max_length=100, description="Where retail price came from")
+    country: str = Field("KE", max_length=5, description="Country code: KE, UG, NG")
 
     @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", mode="before")
     @classmethod
@@ -130,12 +131,58 @@ class EvaluateResponse(BaseModel):
     comparable_count: int
     pricing_policy_version: str | None = None
     price_verification: dict | None = None
+    # v6: Multi-country
+    currency_code: str = "KES"
+    country: str = "KE"
+    # v6: Customer-facing message (used when confidence < 80%)
+    customer_message: str | None = None
     # CR-7: Per-image rejection details
     rejected_images: list[dict] | None = None
     # CR-3: Agent redirect info
     redirect_info: dict | None = None
     # CR-1: Video analysis results
     video_analysis: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# v6: POST /tradein/{session_id}/accept-offer
+# ---------------------------------------------------------------------------
+class AcceptOfferResponse(BaseModel):
+    session_id: str
+    decision: str
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# v6: POST /tradein/{session_id}/rejection-choice
+# ---------------------------------------------------------------------------
+class RejectionChoiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    option: str = Field(
+        ...,
+        max_length=1,
+        description="A (consignment), B (10/90 split), or C (talk to team)",
+    )
+    customer_asking_price: float | None = Field(
+        None, ge=0, le=50_000_000,
+        description="Customer's desired price (for consignment option A)",
+    )
+
+    @field_validator("option", mode="before")
+    @classmethod
+    def validate_option(cls, v: str) -> str:
+        if v and v.upper() in ("A", "B", "C"):
+            return v.upper()
+        raise ValueError("option must be A, B, or C")
+
+
+class RejectionChoiceResponse(BaseModel):
+    session_id: str
+    option: str
+    message: str
+    upfront_amount: float | None = None
+    balance_amount: float | None = None
 
 
 class ExpertFeedbackRequest(BaseModel):

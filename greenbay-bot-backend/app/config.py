@@ -198,10 +198,9 @@ def get_settings() -> Settings:
         _log = logging.getLogger(__name__)
         _critical_keys = [
             ("anthropic_api_key", "Anthropic Vision"),
-            ("tavily_api_key", "Tavily Search"),
             ("google_cloud_api_key", "Google Cloud Vision"),
             ("airtable_api_token", "Airtable Data Repository"),
-            ("google_vertex_credentials_file", "Google Vertex AI"),
+            ("google_vertex_credentials_file", "Google Vertex AI (also used for Gemini Search)"),
         ]
         for attr, label in _critical_keys:
             val = getattr(_settings, attr, None)

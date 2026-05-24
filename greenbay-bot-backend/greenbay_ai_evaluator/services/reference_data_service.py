@@ -1,0 +1,396 @@
+"""
+Reference data service (v6 — Workstream 3).
+
+Reads two GreenBay Google Sheets on startup + every 6 hours and caches
+them in Postgres for fast lookup by the pricing engine.
+
+Source A — Pricing Matrix (board-approved pricing guide):
+  Sheet ID 1_6RqiRaGshsY-iVssXpyLR2avlHsV_riiwXHTKqMz3c
+
+Source B — Outlet Stock Control (everything ever sold):
+  Sheet ID 1k7Zw8psnjIw9BukH7vVwESDR-k1PU60wlERWjljk_fE  sheet "Final Data"
+
+Lookup functions:
+  lookup_matrix(brand, model, category, age_band)
+  lookup_sales_stock(brand, model, category)
+  get_category_acquisition_ratio(category)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import statistics
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+PRICING_MATRIX_SHEET_ID = "1_6RqiRaGshsY-iVssXpyLR2avlHsV_riiwXHTKqMz3c"
+SALES_STOCK_SHEET_ID = "1k7Zw8psnjIw9BukH7vVwESDR-k1PU60wlERWjljk_fE"
+SALES_STOCK_TAB = "Final Data"
+
+MATRIX_TABS = [
+    "TV", "Cooker", "Fridge", "Freezers",
+    "Washing Machine", "Microwave",
+    "Home Kitchen Appliances", "Other Appliances",
+]
+
+ACQUISITION_RATIOS: dict[str, float] = {
+    "refrigerator": 0.73,
+    "fridge": 0.73,
+    "cooker": 0.72,
+    "cooker_oven": 0.72,
+    "tv": 0.81,
+    "tv_monitor": 0.81,
+    "washing_machine": 0.74,
+    "washer": 0.74,
+    "freezer": 0.77,
+    "microwave": 0.72,
+    "soundbar": 0.72,
+    "woofer": 0.85,
+    "water_dispenser": 0.78,
+    "chiller": 0.77,
+}
+DEFAULT_ACQUISITION_RATIO = 0.70
+
+_last_refresh: datetime | None = None
+_matrix_cache: list[dict[str, Any]] = []
+_sales_cache: list[dict[str, Any]] = []
+
+
+# ---------------------------------------------------------------------------
+# Google Sheets helpers (reuse credential pattern from google_sheets_service)
+# ---------------------------------------------------------------------------
+def _get_gspread_client():
+    """Return an authorized gspread client, or None."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        logger.warning("gspread or google-auth not installed")
+        return None
+
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+
+        creds_file = getattr(settings, "google_sheets_credentials_file", "") or ""
+        vertex_file = getattr(settings, "google_vertex_credentials_file", "") or ""
+
+        chosen: str | None = None
+        if creds_file and Path(creds_file).exists():
+            chosen = creds_file
+        elif vertex_file and Path(vertex_file).exists():
+            chosen = vertex_file
+
+        if not chosen:
+            logger.warning("Reference data: no Google credentials found")
+            return None
+
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_file(chosen, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        logger.error(f"Reference data: gspread auth failed: {e}")
+        return None
+
+
+def _safe_float(val: Any) -> float | None:
+    """Parse a value to float, returning None on failure."""
+    if val is None:
+        return None
+    s = str(val).strip().replace(",", "").replace("KES", "").replace("Ksh", "")
+    if not s or s.lower() in ("n/a", "-", ""):
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Sheet readers
+# ---------------------------------------------------------------------------
+def _read_pricing_matrix(gc) -> list[dict]:
+    """Read all tabs from the pricing matrix sheet."""
+    rows_out: list[dict] = []
+    try:
+        spreadsheet = gc.open_by_key(PRICING_MATRIX_SHEET_ID)
+    except Exception as e:
+        logger.error(f"Reference data: cannot open pricing matrix sheet: {e}")
+        return rows_out
+
+    for tab_name in MATRIX_TABS:
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+            records = ws.get_all_records()
+            for row in records:
+                rows_out.append({
+                    "brand": str(row.get("Brand", "")).strip(),
+                    "model": str(row.get("Model", row.get("Model Number", ""))).strip(),
+                    "category": tab_name,
+                    "age_band": str(row.get("Age", row.get("Age Band", ""))).strip(),
+                    "base_min": _safe_float(row.get("Base Min", row.get("Base Min KES"))),
+                    "base_max": _safe_float(row.get("Base Max", row.get("Base Max KES"))),
+                    "condition_grade": str(row.get("Condition Grade", row.get("Grade", ""))).strip(),
+                    "recommended_min": _safe_float(row.get("Recommended Min", row.get("Rec Min KES"))),
+                    "recommended_max": _safe_float(row.get("Recommended Max", row.get("Rec Max KES"))),
+                    "new_price": _safe_float(row.get("New Price", row.get("New Price KES"))),
+                    "sheet_tab": tab_name,
+                    "raw_json": row,
+                })
+            logger.info(f"Reference data: pricing matrix tab '{tab_name}' — {len(records)} rows")
+        except Exception as e:
+            logger.warning(f"Reference data: pricing matrix tab '{tab_name}' failed: {e}")
+
+    return rows_out
+
+
+def _read_sales_stock(gc) -> list[dict]:
+    """Read the outlet stock control sheet."""
+    rows_out: list[dict] = []
+    try:
+        spreadsheet = gc.open_by_key(SALES_STOCK_SHEET_ID)
+        ws = spreadsheet.worksheet(SALES_STOCK_TAB)
+        records = ws.get_all_records()
+        for row in records:
+            rows_out.append({
+                "product_category": str(row.get("Product Category", "")).strip(),
+                "brand_name": str(row.get("Brand Name", row.get("Brand", ""))).strip(),
+                "product_name": str(row.get("Product Name", "")).strip(),
+                "model_number": str(row.get("Model Number", row.get("Model", ""))).strip(),
+                "product_quality": str(row.get("Product Quality", row.get("Quality", ""))).strip(),
+                "purchase_cost": _safe_float(row.get("Purchase cost", row.get("Purchase Cost"))),
+                "selling_price": _safe_float(row.get("Selling Price", row.get("Selling price"))),
+                "raw_json": row,
+            })
+        logger.info(f"Reference data: sales stock — {len(records)} rows")
+    except Exception as e:
+        logger.error(f"Reference data: sales stock read failed: {e}")
+    return rows_out
+
+
+# ---------------------------------------------------------------------------
+# DB persistence
+# ---------------------------------------------------------------------------
+def _persist_to_db(matrix_rows: list[dict], sales_rows: list[dict]) -> None:
+    """Replace reference tables in Postgres with fresh data."""
+    try:
+        from app.database.db import SessionLocal
+        from greenbay_ai_evaluator.models.evaluator_models import (
+            PricingMatrixReference,
+            SalesStockReference,
+        )
+
+        db = SessionLocal()
+        try:
+            db.query(PricingMatrixReference).delete()
+            for r in matrix_rows:
+                db.add(PricingMatrixReference(
+                    brand=r["brand"],
+                    model=r["model"],
+                    category=r["category"],
+                    age_band=r["age_band"],
+                    base_min=r["base_min"],
+                    base_max=r["base_max"],
+                    condition_grade=r["condition_grade"],
+                    recommended_min=r["recommended_min"],
+                    recommended_max=r["recommended_max"],
+                    new_price=r["new_price"],
+                    sheet_tab=r["sheet_tab"],
+                    raw_json=r["raw_json"],
+                ))
+
+            db.query(SalesStockReference).delete()
+            for r in sales_rows:
+                db.add(SalesStockReference(
+                    product_category=r["product_category"],
+                    brand_name=r["brand_name"],
+                    product_name=r["product_name"],
+                    model_number=r["model_number"],
+                    product_quality=r["product_quality"],
+                    purchase_cost=r["purchase_cost"],
+                    selling_price=r["selling_price"],
+                    raw_json=r["raw_json"],
+                ))
+
+            db.commit()
+            logger.info(
+                f"Reference data: persisted {len(matrix_rows)} matrix rows "
+                f"and {len(sales_rows)} sales rows to DB"
+            )
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Reference data: DB persist failed: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Reference data: DB session creation failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Refresh
+# ---------------------------------------------------------------------------
+async def refresh_reference_data() -> tuple[int, int]:
+    """Pull both sheets and update in-memory cache + DB. Returns (matrix_count, sales_count)."""
+    global _matrix_cache, _sales_cache, _last_refresh
+
+    gc = _get_gspread_client()
+    if gc is None:
+        return 0, 0
+
+    matrix_rows = await asyncio.to_thread(_read_pricing_matrix, gc)
+    sales_rows = await asyncio.to_thread(_read_sales_stock, gc)
+
+    _matrix_cache = matrix_rows
+    _sales_cache = sales_rows
+    _last_refresh = datetime.now(timezone.utc)
+
+    await asyncio.to_thread(_persist_to_db, matrix_rows, sales_rows)
+
+    return len(matrix_rows), len(sales_rows)
+
+
+async def start_refresh_loop() -> None:
+    """Background task: refresh on startup then every 6 hours."""
+    m, s = await refresh_reference_data()
+    logger.info(f"Reference data: initial load complete ({m} matrix, {s} sales)")
+
+    while True:
+        try:
+            await asyncio.sleep(21600)  # 6 hours
+            m, s = await refresh_reference_data()
+            logger.info(f"Reference data: 6h refresh ({m} matrix, {s} sales)")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Reference data refresh loop error: {e}")
+            await asyncio.sleep(300)
+
+
+# ---------------------------------------------------------------------------
+# Lookup functions
+# ---------------------------------------------------------------------------
+def _normalize(s: str) -> str:
+    return s.lower().strip() if s else ""
+
+
+def lookup_matrix(
+    brand: str,
+    model: str = "",
+    category: str = "",
+    age_band: str = "",
+) -> dict | None:
+    """Find the best match in the pricing matrix cache.
+
+    Returns the row dict or None.
+    """
+    brand_n = _normalize(brand)
+    model_n = _normalize(model)
+    cat_n = _normalize(category)
+
+    best: dict | None = None
+    best_score = 0
+
+    for row in _matrix_cache:
+        score = 0
+        if brand_n and brand_n in _normalize(row.get("brand", "")):
+            score += 2
+        if model_n and model_n in _normalize(row.get("model", "")):
+            score += 4
+        if cat_n and cat_n in _normalize(row.get("category", "")):
+            score += 1
+        if age_band and _normalize(age_band) in _normalize(row.get("age_band", "")):
+            score += 1
+
+        if score > best_score:
+            best_score = score
+            best = row
+
+    if best_score >= 3:
+        return best
+    return None
+
+
+def lookup_sales_stock(
+    brand: str,
+    model: str = "",
+    category: str = "",
+) -> dict | None:
+    """Find matching sales from the outlet stock cache.
+
+    Returns a dict with 'matches' list and 'median_selling_price'.
+    """
+    brand_n = _normalize(brand)
+    model_n = _normalize(model)
+    cat_n = _normalize(category)
+
+    exact_matches: list[dict] = []
+    category_matches: list[dict] = []
+
+    for row in _sales_cache:
+        row_brand = _normalize(row.get("brand_name", ""))
+        row_model = _normalize(row.get("model_number", "") or row.get("product_name", ""))
+        row_cat = _normalize(row.get("product_category", ""))
+
+        brand_match = brand_n and brand_n in row_brand
+        model_match = model_n and model_n in row_model
+
+        if brand_match and model_match:
+            exact_matches.append(row)
+        elif brand_match and cat_n and cat_n in row_cat:
+            category_matches.append(row)
+
+    if exact_matches:
+        prices = [r["selling_price"] for r in exact_matches if r.get("selling_price")]
+        median_price = statistics.median(prices) if prices else None
+        return {
+            "match_type": "exact_model",
+            "matches": exact_matches,
+            "count": len(exact_matches),
+            "median_selling_price": median_price,
+            "median_purchase_cost": (
+                statistics.median([r["purchase_cost"] for r in exact_matches if r.get("purchase_cost")])
+                if any(r.get("purchase_cost") for r in exact_matches) else None
+            ),
+        }
+
+    if category_matches:
+        prices = [r["selling_price"] for r in category_matches if r.get("selling_price")]
+        median_price = statistics.median(prices) if prices else None
+        return {
+            "match_type": "brand_category",
+            "matches": category_matches,
+            "count": len(category_matches),
+            "median_selling_price": median_price,
+            "median_purchase_cost": (
+                statistics.median([r["purchase_cost"] for r in category_matches if r.get("purchase_cost")])
+                if any(r.get("purchase_cost") for r in category_matches) else None
+            ),
+        }
+
+    return None
+
+
+def get_category_acquisition_ratio(category: str) -> float:
+    """Return the acquisition ratio for a category from the real-data table."""
+    cat_n = _normalize(category)
+    for key, ratio in ACQUISITION_RATIOS.items():
+        if key in cat_n or cat_n in key:
+            return ratio
+    return DEFAULT_ACQUISITION_RATIO
+
+
+def get_refresh_status() -> dict[str, Any]:
+    """Status snapshot for the ops dashboard."""
+    return {
+        "service": "reference_data",
+        "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
+        "matrix_rows_cached": len(_matrix_cache),
+        "sales_rows_cached": len(_sales_cache),
+    }

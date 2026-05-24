@@ -130,6 +130,41 @@ DEFAULT_DEFECT_DEDUCTION: float = 500.0
 
 
 # ---------------------------------------------------------------------------
+# Multi-country currency configuration (v6)
+# ---------------------------------------------------------------------------
+CURRENCY_CONFIG: dict[str, dict[str, str | int]] = {
+    "KE": {"code": "KES", "symbol": "KES", "round_step": 500},
+    "UG": {"code": "UGX", "symbol": "UGX", "round_step": 500},
+    "NG": {"code": "NGN", "symbol": "NGN", "round_step": 500},
+}
+
+PHONE_COUNTRY_PREFIXES: dict[str, str] = {
+    "+254": "KE",
+    "254": "KE",
+    "+256": "UG",
+    "256": "UG",
+    "+234": "NG",
+    "234": "NG",
+}
+
+
+def detect_country_from_phone(phone: str) -> str:
+    """Derive country code from phone number prefix. Defaults to KE."""
+    if not phone:
+        return "KE"
+    cleaned = phone.strip().lstrip("0")
+    for prefix, country in PHONE_COUNTRY_PREFIXES.items():
+        if cleaned.startswith(prefix):
+            return country
+    return "KE"
+
+
+def get_currency_config(country: str = "KE") -> dict:
+    """Return currency config for a country code."""
+    return CURRENCY_CONFIG.get(country, CURRENCY_CONFIG["KE"])
+
+
+# ---------------------------------------------------------------------------
 # Default condition grade mapping (text → letter)
 # ---------------------------------------------------------------------------
 CONDITION_GRADE_MAP: dict[str, str] = {

@@ -39,6 +39,7 @@ services:
       - ./receipts:/app/receipts
       - ./credentials:/app/credentials:ro
       - ./airtable_fallback:/app/airtable_fallback
+      - ./notification_fallback:/app/notification_fallback
     restart: unless-stopped
     networks:
       - greenbay-network

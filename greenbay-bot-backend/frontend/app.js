@@ -11,6 +11,15 @@
 const API_BASE = window.location.origin;
 const TOTAL_STEPS = 11;
 
+// v6: Detect country via timezone heuristic (no permissions needed)
+(function detectCountry() {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (tz.startsWith('Africa/Nairobi')) window.__gbCountry = 'KE';
+    else if (tz.startsWith('Africa/Kampala')) window.__gbCountry = 'UG';
+    else if (tz.startsWith('Africa/Lagos')) window.__gbCountry = 'NG';
+    else window.__gbCountry = 'KE';
+})();
+
 const state = {
     currentStep: 1,
     sessionId: null,
@@ -903,6 +912,7 @@ async function callEvaluationAPI() {
         image_data: combinedImageData,
         retail_price: defaultRetail[a.category] || 35000,
         retail_price_source: 'category_default',
+        country: window.__gbCountry || 'KE',
     };
 
     try {
@@ -1029,25 +1039,26 @@ Start New Evaluation
         return;
     }
 
-    // AUTO-REDIRECT to WhatsApp agent if confidence < 85% OR flagged for review
-    if (confidence < 85 || data.decision === 'review') {
+    // v6: AUTO-REDIRECT to specialist if confidence < 80% OR flagged for review
+    const currency = data.currency_code || 'KES';
+    if (confidence < 80 || data.decision === 'review') {
+        const reviewMessage = data.customer_message ||
+            `Our AI's confidence on this valuation is below 80%. For the most accurate offer, we're connecting you with one of our trade-in specialists who can assess your ${a.brand} ${CATEGORY_NAMES[a.category]} personally.`;
         const resultsStep = document.getElementById('stepResults');
         resultsStep.innerHTML = `
  <div class="offer-card">
- <div class="offer-card-header">🤝 Connecting You With an Expert</div>
+ <div class="offer-card-header">🤝 Connecting You With a Specialist</div>
  <div class="offer-grade ${gradeClass}">
  Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
  </div>
  <div class="offer-amount" style="font-size:1.2rem;color:var(--gold);">Confidence: ${confidence.toFixed(0)}%</div>
  <p style="margin:16px 0;color:var(--muted);font-size:.92rem;">
- Our AI's confidence on this valuation is below 85%. For the most accurate offer,
- we're connecting you with one of our trade-in experts who can assess your
- <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> personally.
+ ${reviewMessage}
  </p>
  <div class="offer-breakdown">
  <div class="offer-breakdown-row">
  <span class="label">Preliminary estimate</span>
- <span class="value">KES ${formatKES(offer)}</span>
+ <span class="value">${currency} ${formatKES(offer)}</span>
  </div>
  <div class="offer-breakdown-row">
  <span class="label">Confidence score</span>
@@ -1055,10 +1066,10 @@ Start New Evaluation
  </div>
  </div>
  <div style="margin-top:20px;">
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20for%20trade-in.%20AI%20estimate%3A%20KES%20${offer}%20(${confidence.toFixed(0)}%25%20confidence).%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
+ <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20for%20trade-in.%20AI%20estimate%3A%20${currency}%20${offer}%20(${confidence.toFixed(0)}%25%20confidence).%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
  target="_blank" class="btn btn-whatsapp btn-lg" style="width:100%;">
  <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
- Speak to a Trade-In Expert
+ Speak to a Trade-In Specialist
  </a>
  </div>
 
@@ -1118,8 +1129,8 @@ Start New Evaluation
  </div>
  
  <div class="offer-actions">
- <button class="btn btn-accept" onclick="acceptOffer(${offer})">✅ Accept KES ${formatKES(offer)}</button>
- <button class="btn btn-counter" onclick="showCounterUI()">💬 Counter</button>
+ <button class="btn btn-accept" onclick="acceptOffer(${offer})">✅ Accept ${currency} ${formatKES(offer)}</button>
+ <button class="btn btn-counter" onclick="showRejectionOptions()">💬 Not Happy With Price?</button>
  </div>
  </div>
  
@@ -1292,6 +1303,110 @@ function showCounterUI() {
     setTimeout(() => document.getElementById('counterInput')?.focus(), 300);
 }
 
+// v6 WS8: Show three rejection option cards
+function showRejectionOptions() {
+    const a = state.answers;
+    const data = state.evaluation || {};
+    const offer = data.opening_offer || 0;
+    const currency = data.currency_code || 'KES';
+    const upfront = Math.round(offer * 0.10 / 100) * 100;
+    const balance = Math.round(offer * 0.90 / 100) * 100;
+
+    const resultsStep = document.getElementById('stepResults');
+    const existing = resultsStep.querySelector('.rejection-options-area');
+    if (existing) return;
+
+    const optionsDiv = document.createElement('div');
+    optionsDiv.className = 'rejection-options-area';
+    optionsDiv.innerHTML = `
+ <h4 style="margin-bottom:16px;">Not happy with the price? Here are your options:</h4>
+ <div style="display:grid;gap:14px;">
+
+ <div class="option-card" style="cursor:pointer;padding:18px;text-align:left;border:2px solid var(--border);border-radius:var(--radius-sm);transition:border-color .2s;" 
+      onclick="selectRejectionOption('A')" onmouseover="this.style.borderColor='var(--green-primary)'" onmouseout="this.style.borderColor='var(--border)'">
+   <div style="display:flex;align-items:flex-start;gap:12px;">
+     <span style="font-size:1.8rem;">🏷️</span>
+     <div>
+       <strong style="display:block;font-size:1rem;">Option A — Consignment</strong>
+       <span style="color:var(--muted);font-size:.85rem;">List your ${a.brand} ${CATEGORY_NAMES[a.category] || a.category} at your preferred price on our marketplace. We handle everything — listing, marketing, and customer inquiries.</span>
+     </div>
+   </div>
+ </div>
+
+ <div class="option-card" style="cursor:pointer;padding:18px;text-align:left;border:2px solid var(--border);border-radius:var(--radius-sm);transition:border-color .2s;"
+      onclick="selectRejectionOption('B')" onmouseover="this.style.borderColor='var(--green-primary)'" onmouseout="this.style.borderColor='var(--border)'">
+   <div style="display:flex;align-items:flex-start;gap:12px;">
+     <span style="font-size:1.8rem;">💰</span>
+     <div>
+       <strong style="display:block;font-size:1rem;">Option B — 10/90 Split</strong>
+       <span style="color:var(--muted);font-size:.85rem;">Get <strong>${currency} ${formatKES(upfront)}</strong> upfront today, then <strong>${currency} ${formatKES(balance)}</strong> when it sells (within 90 days).</span>
+     </div>
+   </div>
+ </div>
+
+ <div class="option-card" style="cursor:pointer;padding:18px;text-align:left;border:2px solid var(--border);border-radius:var(--radius-sm);transition:border-color .2s;"
+      onclick="selectRejectionOption('C')" onmouseover="this.style.borderColor='var(--green-primary)'" onmouseout="this.style.borderColor='var(--border)'">
+   <div style="display:flex;align-items:flex-start;gap:12px;">
+     <span style="font-size:1.8rem;">🧑‍💼</span>
+     <div>
+       <strong style="display:block;font-size:1rem;">Option C — Talk to Our Team</strong>
+       <span style="color:var(--muted);font-size:.85rem;">Speak directly with a GreenBay specialist on WhatsApp to discuss your options.</span>
+     </div>
+   </div>
+ </div>
+
+ </div>
+ `;
+    resultsStep.appendChild(optionsDiv);
+    addChatMessage('bot', "We understand the price might not be what you expected. Here are three alternative options for you — pick the one that works best!");
+}
+
+async function selectRejectionOption(option) {
+    const data = state.evaluation || {};
+    const currency = data.currency_code || 'KES';
+    const a = state.answers;
+
+    addChatMessage('user', `I'd like Option ${option}`);
+    showTypingIndicator();
+
+    try {
+        if (state.sessionId) {
+            const resp = await fetch(`${API_BASE}/tradein/${state.sessionId}/rejection-choice`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ option: option }),
+            });
+            if (resp.ok) {
+                const result = await resp.json();
+                await sleep(1000);
+                hideTypingIndicator();
+                addChatMessage('bot', result.message);
+
+                if (option === 'C') {
+                    const waMsg = encodeURIComponent(
+                        `Hi GreenBay, I'd like to discuss the trade-in offer for my ${a.brand} ${CATEGORY_NAMES[a.category] || a.category}. AI offered ${currency} ${data.opening_offer}. Name: ${a.sellerName}. Phone: ${a.sellerPhone}`
+                    );
+                    addChatMessage('bot', `<a href="https://wa.me/254705919099?text=${waMsg}" target="_blank" class="btn btn-whatsapp" style="display:inline-flex;margin-top:8px;">💬 Open WhatsApp</a>`);
+                }
+
+                // Remove the option cards
+                const optArea = document.querySelector('.rejection-options-area');
+                if (optArea) optArea.remove();
+
+                saveState();
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('Rejection choice API failed:', err);
+    }
+
+    await sleep(1000);
+    hideTypingIndicator();
+    addChatMessage('bot', 'We\'ve noted your preference. Our team will be in touch shortly!');
+    saveState();
+}
+
 function submitCounterFromInput() {
     const input = document.getElementById('counterInput');
     if (!input) return;
@@ -1430,13 +1545,31 @@ function updateOfferCard(newOffer, roundsRemaining) {
 
 async function acceptOffer(amount) {
     state.negotiation.status = 'accepted';
-    addChatMessage('user', `I accept KES ${formatKES(amount)}`);
+    const currency = (state.evaluation && state.evaluation.currency_code) || 'KES';
+    addChatMessage('user', `I accept ${currency} ${formatKES(amount)}`);
 
     showTypingIndicator();
+
+    // v6: Call backend accept-offer endpoint
+    try {
+        if (state.sessionId) {
+            const resp = await fetch(`${API_BASE}/tradein/${state.sessionId}/accept-offer`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                console.log('Accept offer response:', data);
+            }
+        }
+    } catch (err) {
+        console.warn('Accept offer API call failed:', err);
+    }
+
     await sleep(1000);
     hideTypingIndicator();
 
-    addChatMessage('bot', `Wonderful! Deal confirmed at <strong>KES ${formatKES(amount)}</strong>!<br><br>
+    addChatMessage('bot', `Wonderful! Deal confirmed at <strong>${currency} ${formatKES(amount)}</strong>!<br><br>
  Now, how would you like to proceed?<br><br>
  🚚 <strong>Option 1:</strong> We come to you — FREE pickup in Nairobi<br>
  🏬 <strong>Option 2:</strong> Drop it off at one of our outlets<br><br>
