@@ -190,24 +190,30 @@ def _read_pricing_matrix(gc) -> list[dict]:
             data_rows = raw_rows[header_idx + 1:]
             tab_count = 0
             for row in data_rows:
-                # Build case-insensitive dict (lowercase key -> value)
                 raw_rec = {col_names[j]: (str(row[ci]).strip() if ci < len(row) else "")
                            for j, ci in enumerate(col_indices)}
                 if not any(raw_rec.values()):
                     continue
-                ci_rec = {k.lower().strip(): v for k, v in raw_rec.items()}
+                # Normalize keys: lowercase, strip, remove trailing " kes"
+                nr: dict[str, str] = {}
+                for k, v in raw_rec.items():
+                    nk = k.lower().strip()
+                    nr[nk] = v
+                    if nk.endswith(" kes"):
+                        nr[nk[:-4]] = v  # e.g. "base min kes" -> also store as "base min"
                 rows_out.append({
-                    "brand": ci_rec.get("brand", ""),
-                    "model": ci_rec.get("model number", ci_rec.get("model", "")),
-                    "product_name": ci_rec.get("product name", ""),
+                    "brand": nr.get("brand", ""),
+                    "model": nr.get("model number", nr.get("model", "")),
+                    "product_name": nr.get("product name", ""),
                     "category": category_slug,
-                    "age_band": ci_rec.get("age of appliance", ci_rec.get("age", ci_rec.get("age band", ""))),
-                    "base_min": _safe_float(ci_rec.get("base min", ci_rec.get("base min kes"))),
-                    "base_max": _safe_float(ci_rec.get("base max", ci_rec.get("base max kes"))),
-                    "condition_grade": ci_rec.get("condition grade", ci_rec.get("grade", "")),
-                    "recommended_min": _safe_float(ci_rec.get("recommended min", ci_rec.get("rec min kes"))),
-                    "recommended_max": _safe_float(ci_rec.get("recommended max", ci_rec.get("rec max kes"))),
-                    "new_price": _safe_float(ci_rec.get("new price", ci_rec.get("new price kes"))),
+                    "age_band": nr.get("age of appliance", nr.get("age", nr.get("age band", ""))),
+                    "specification": nr.get("specification/size", nr.get("specification/type", "")),
+                    "base_min": _safe_float(nr.get("base min")),
+                    "base_max": _safe_float(nr.get("base max")),
+                    "condition_grade": nr.get("condition grade", nr.get("grade", "")),
+                    "recommended_min": _safe_float(nr.get("recommended min")),
+                    "recommended_max": _safe_float(nr.get("recommended max")),
+                    "new_price": _safe_float(nr.get("new price")),
                     "sheet_tab": tab_name,
                     "raw_json": _sanitize_for_json(raw_rec),
                 })
