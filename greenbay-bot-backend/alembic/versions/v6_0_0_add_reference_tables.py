@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.Column("recommended_max", sa.Float(), nullable=True),
         sa.Column("new_price", sa.Float(), nullable=True),
         sa.Column("sheet_tab", sa.String(100), nullable=True),
-        sa.Column("raw_json", sa.JSON(), nullable=True),
+        sa.Column("raw_json", sa.Text(), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
     op.create_index("ix_pricing_matrix_brand", "pricing_matrix_reference", ["brand"])
@@ -48,7 +48,7 @@ def upgrade() -> None:
         sa.Column("product_quality", sa.String(50), nullable=True),
         sa.Column("purchase_cost", sa.Float(), nullable=True),
         sa.Column("selling_price", sa.Float(), nullable=True),
-        sa.Column("raw_json", sa.JSON(), nullable=True),
+        sa.Column("raw_json", sa.Text(), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
     op.create_index("ix_sales_stock_category", "sales_stock_reference", ["product_category"])

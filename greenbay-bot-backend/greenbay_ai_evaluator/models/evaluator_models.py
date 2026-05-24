@@ -241,7 +241,7 @@ class PricingMatrixReference(Base):
     recommended_max = Column(Float, nullable=True)
     new_price = Column(Float, nullable=True)
     sheet_tab = Column(String(100), nullable=True)
-    raw_json = Column(JSON, nullable=True)
+    raw_json = Column(Text, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -261,5 +261,5 @@ class SalesStockReference(Base):
     product_quality = Column(String(50), nullable=True)
     purchase_cost = Column(Float, nullable=True)
     selling_price = Column(Float, nullable=True)
-    raw_json = Column(JSON, nullable=True)
+    raw_json = Column(Text, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

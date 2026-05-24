@@ -115,16 +115,18 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
-def _sanitize_for_json(row: dict) -> dict:
-    """Round-trip through json.dumps/loads to guarantee JSON-serializable dict.
+def _sanitize_for_json(row: dict) -> str:
+    """Serialize a gspread row dict to a JSON *string*.
 
-    gspread rows can contain values that Python's dict repr handles but
-    psycopg2's JSON adapter rejects (e.g. non-string keys, special floats).
+    Returns a ``str`` (not a dict) so psycopg2 can pass it directly to
+    PostgreSQL's ``json`` column without needing its own Json adapter.
+    This sidesteps the ``InvalidTextRepresentation`` error that occurs
+    when psycopg2's Json adapter chokes on edge-case Python values.
     """
     try:
-        return json.loads(json.dumps(row, default=str))
+        return json.dumps(row, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
-        return {str(k): str(v) for k, v in row.items()}
+        return json.dumps({str(k): str(v) for k, v in row.items()})
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,13 @@ def _read_pricing_matrix(gc) -> list[dict]:
     except Exception as e:
         logger.error(f"Reference data: cannot open pricing matrix sheet: {e}")
         return rows_out
+
+    # Diagnostic: log actual worksheet titles so we can match them
+    try:
+        actual_titles = [ws.title for ws in spreadsheet.worksheets()]
+        logger.info(f"Reference data: pricing matrix actual tabs: {actual_titles}")
+    except Exception as e:
+        logger.warning(f"Reference data: could not list worksheet titles: {e}")
 
     for tab_name in MATRIX_TABS:
         try:
@@ -198,59 +207,143 @@ def _read_sales_stock(gc) -> list[dict]:
 # ---------------------------------------------------------------------------
 # DB persistence
 # ---------------------------------------------------------------------------
+def _coerce_row_for_matrix(r: dict) -> dict:
+    """Build a clean kwargs dict for PricingMatrixReference, coercing all types."""
+    return {
+        "brand": str(r.get("brand") or ""),
+        "model": str(r.get("model") or ""),
+        "category": str(r.get("category") or ""),
+        "age_band": str(r.get("age_band") or ""),
+        "base_min": _safe_float(r.get("base_min")),
+        "base_max": _safe_float(r.get("base_max")),
+        "condition_grade": str(r.get("condition_grade") or ""),
+        "recommended_min": _safe_float(r.get("recommended_min")),
+        "recommended_max": _safe_float(r.get("recommended_max")),
+        "new_price": _safe_float(r.get("new_price")),
+        "sheet_tab": str(r.get("sheet_tab") or ""),
+        "raw_json": r.get("raw_json") if isinstance(r.get("raw_json"), str)
+                    else json.dumps(r.get("raw_json", {}), default=str),
+    }
+
+
+def _coerce_row_for_sales(r: dict) -> dict:
+    """Build a clean kwargs dict for SalesStockReference, coercing all types."""
+    return {
+        "product_category": str(r.get("product_category") or ""),
+        "brand_name": str(r.get("brand_name") or ""),
+        "product_name": str(r.get("product_name") or ""),
+        "model_number": str(r.get("model_number") or ""),
+        "product_quality": str(r.get("product_quality") or ""),
+        "purchase_cost": _safe_float(r.get("purchase_cost")),
+        "selling_price": _safe_float(r.get("selling_price")),
+        "raw_json": r.get("raw_json") if isinstance(r.get("raw_json"), str)
+                    else json.dumps(r.get("raw_json", {}), default=str),
+    }
+
+
 def _persist_to_db(matrix_rows: list[dict], sales_rows: list[dict]) -> None:
-    """Replace reference tables in Postgres with fresh data."""
+    """Replace reference tables in Postgres with fresh data.
+
+    Pre-coerces every value so the INSERT never hits a type mismatch.
+    Bad rows are logged individually and skipped.
+    """
     try:
         from app.database.db import SessionLocal
         from greenbay_ai_evaluator.models.evaluator_models import (
             PricingMatrixReference,
             SalesStockReference,
         )
+    except Exception as e:
+        logger.error(f"Reference data: DB import failed: {e}")
+        return
 
-        db = SessionLocal()
+    # Phase 1: build validated ORM objects, logging any coercion failures
+    matrix_objs: list = []
+    for idx, r in enumerate(matrix_rows):
         try:
-            db.query(PricingMatrixReference).delete()
-            for r in matrix_rows:
-                db.add(PricingMatrixReference(
-                    brand=r["brand"],
-                    model=r["model"],
-                    category=r["category"],
-                    age_band=r["age_band"],
-                    base_min=r["base_min"],
-                    base_max=r["base_max"],
-                    condition_grade=r["condition_grade"],
-                    recommended_min=r["recommended_min"],
-                    recommended_max=r["recommended_max"],
-                    new_price=r["new_price"],
-                    sheet_tab=r["sheet_tab"],
-                    raw_json=r["raw_json"],
-                ))
-
-            db.query(SalesStockReference).delete()
-            for r in sales_rows:
-                db.add(SalesStockReference(
-                    product_category=r["product_category"],
-                    brand_name=r["brand_name"],
-                    product_name=r["product_name"],
-                    model_number=r["model_number"],
-                    product_quality=r["product_quality"],
-                    purchase_cost=r["purchase_cost"],
-                    selling_price=r["selling_price"],
-                    raw_json=r["raw_json"],
-                ))
-
-            db.commit()
-            logger.info(
-                f"Reference data: persisted {len(matrix_rows)} matrix rows "
-                f"and {len(sales_rows)} sales rows to DB"
+            kwargs = _coerce_row_for_matrix(r)
+            matrix_objs.append(PricingMatrixReference(**kwargs))
+        except Exception as e:
+            logger.error(
+                f"Reference data: matrix row {idx} coercion failed: "
+                f"{type(e).__name__}: {e}\n"
+                f"Row data: {json.dumps(r, default=str)}"
             )
+
+    sales_objs: list = []
+    for idx, r in enumerate(sales_rows):
+        try:
+            kwargs = _coerce_row_for_sales(r)
+            sales_objs.append(SalesStockReference(**kwargs))
+        except Exception as e:
+            logger.error(
+                f"Reference data: sales row {idx} coercion failed: "
+                f"{type(e).__name__}: {e}\n"
+                f"Row data: {json.dumps(r, default=str)}"
+            )
+
+    # Phase 2: single transaction — delete old + insert all valid rows
+    db = SessionLocal()
+    try:
+        db.query(PricingMatrixReference).delete()
+        db.query(SalesStockReference).delete()
+        db.flush()
+
+        for obj in matrix_objs:
+            db.add(obj)
+        for obj in sales_objs:
+            db.add(obj)
+
+        db.commit()
+        logger.info(
+            f"Reference data: persisted {len(matrix_objs)}/{len(matrix_rows)} matrix rows "
+            f"and {len(sales_objs)}/{len(sales_rows)} sales rows to DB"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Reference data: DB persist transaction failed: "
+            f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+        )
+        # Fall back to per-row insert to identify the exact offending row
+        logger.info("Reference data: retrying per-row to find bad row...")
+        db2 = SessionLocal()
+        try:
+            db2.query(PricingMatrixReference).delete()
+            db2.query(SalesStockReference).delete()
+            db2.commit()
+        except Exception:
+            db2.rollback()
+        _persist_per_row(db2, "matrix", matrix_objs, PricingMatrixReference)
+        _persist_per_row(db2, "sales", sales_objs, SalesStockReference)
+        db2.close()
+    finally:
+        db.close()
+
+
+def _persist_per_row(db, label: str, objs: list, model_cls) -> int:
+    """Insert rows one at a time, logging each failure individually."""
+    from sqlalchemy.orm import make_transient
+    ok = 0
+    for idx, obj in enumerate(objs):
+        try:
+            make_transient(obj)
+            obj.id = None
+            db.add(obj)
+            db.commit()
+            ok += 1
         except Exception as e:
             db.rollback()
-            logger.error(f"Reference data: DB persist failed: {e}")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Reference data: DB session creation failed: {e}")
+            row_data = {c.name: getattr(obj, c.name, None)
+                        for c in obj.__table__.columns if c.name != "id"}
+            logger.error(
+                f"Reference data: {label} row {idx} INSERT failed: "
+                f"{type(e).__name__}: {e}\n"
+                f"Column values: {json.dumps(row_data, default=str)}\n"
+                f"{traceback.format_exc()}"
+            )
+    logger.info(f"Reference data: per-row {label} insert: {ok}/{len(objs)} succeeded")
+    return ok
 
 
 # ---------------------------------------------------------------------------
