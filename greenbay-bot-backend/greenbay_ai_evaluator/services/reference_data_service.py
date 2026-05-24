@@ -156,28 +156,61 @@ def _read_pricing_matrix(gc) -> list[dict]:
     for tab_name, category_slug in MATRIX_TAB_TO_CATEGORY.items():
         try:
             ws = spreadsheet.worksheet(tab_name)
-            records = ws.get_all_records()
-            if records:
-                logger.info(
-                    f"Reference data: tab '{tab_name}' column headers: "
-                    f"{list(records[0].keys())}"
+            raw_rows = ws.get_all_values()
+
+            # Auto-detect header row: first row containing "Brand" and ("Model" or "Age")
+            header_idx = None
+            headers: list[str] = []
+            for i, row in enumerate(raw_rows[:15]):
+                cells = [str(c).strip() for c in row]
+                lower_cells = [c.lower() for c in cells]
+                if "brand" in lower_cells and ("model" in lower_cells or "age" in lower_cells):
+                    header_idx = i
+                    headers = cells
+                    break
+
+            if header_idx is None:
+                logger.warning(
+                    f"Reference data: tab '{tab_name}' — no header row found in first 15 rows. "
+                    f"Row samples: {[r[:5] for r in raw_rows[:5]]}"
                 )
-            for row in records:
+                continue
+
+            # Filter out empty-name columns
+            valid_cols = [(ci, h) for ci, h in enumerate(headers) if h]
+            col_names = [h for _, h in valid_cols]
+            col_indices = [ci for ci, _ in valid_cols]
+
+            logger.info(
+                f"Reference data: tab '{tab_name}' header at row {header_idx}: {col_names}"
+            )
+
+            data_rows = raw_rows[header_idx + 1:]
+            tab_count = 0
+            for row in data_rows:
+                rec = {col_names[j]: str(row[ci]).strip() if ci < len(row) else ""
+                       for j, ci in enumerate(col_indices)}
+                # Skip fully-blank rows
+                if not any(rec.values()):
+                    continue
                 rows_out.append({
-                    "brand": str(row.get("Brand", "")).strip(),
-                    "model": str(row.get("Model", row.get("Model Number", ""))).strip(),
+                    "brand": rec.get("Brand", ""),
+                    "model": rec.get("Model", rec.get("Model Number", "")),
                     "category": category_slug,
-                    "age_band": str(row.get("Age", row.get("Age Band", ""))).strip(),
-                    "base_min": _safe_float(row.get("Base Min", row.get("Base Min KES"))),
-                    "base_max": _safe_float(row.get("Base Max", row.get("Base Max KES"))),
-                    "condition_grade": str(row.get("Condition Grade", row.get("Grade", ""))).strip(),
-                    "recommended_min": _safe_float(row.get("Recommended Min", row.get("Rec Min KES"))),
-                    "recommended_max": _safe_float(row.get("Recommended Max", row.get("Rec Max KES"))),
-                    "new_price": _safe_float(row.get("New Price", row.get("New Price KES"))),
+                    "age_band": rec.get("Age", rec.get("Age Band", "")),
+                    "base_min": _safe_float(rec.get("Base Min", rec.get("Base Min KES"))),
+                    "base_max": _safe_float(rec.get("Base Max", rec.get("Base Max KES"))),
+                    "condition_grade": rec.get("Condition Grade", rec.get("Grade", "")),
+                    "recommended_min": _safe_float(rec.get("Recommended Min", rec.get("Rec Min KES"))),
+                    "recommended_max": _safe_float(rec.get("Recommended Max", rec.get("Rec Max KES"))),
+                    "new_price": _safe_float(rec.get("New Price", rec.get("New Price KES"))),
                     "sheet_tab": tab_name,
-                    "raw_json": _sanitize_for_json(row),
+                    "raw_json": _sanitize_for_json(rec),
                 })
-            logger.info(f"Reference data: pricing matrix tab '{tab_name}' -> '{category_slug}' — {len(records)} rows")
+                tab_count += 1
+            logger.info(
+                f"Reference data: pricing matrix tab '{tab_name}' -> '{category_slug}' — {tab_count} rows"
+            )
         except Exception as e:
             logger.warning(
                 f"Reference data: pricing matrix tab '{tab_name}' failed: "
