@@ -32,11 +32,16 @@ PRICING_MATRIX_SHEET_ID = "1_6RqiRaGshsY-iVssXpyLR2avlHsV_riiwXHTKqMz3c"
 SALES_STOCK_SHEET_ID = "1k7Zw8psnjIw9BukH7vVwESDR-k1PU60wlERWjljk_fE"
 SALES_STOCK_TAB = "Final Data"
 
-MATRIX_TABS = [
-    "TV", "Cooker", "Fridge", "Freezers",
-    "Washing Machine", "Microwave",
-    "Home Kitchen Appliances", "Other Appliances",
-]
+MATRIX_TAB_TO_CATEGORY: dict[str, str] = {
+    "TV Pricing Matrix": "TV",
+    "Cooker Pricing Matrix": "Cooker",
+    "Fridge Pricing Matrix": "Refrigerator",
+    "Freezers Pricing Matrix": "Freezer",
+    "Washing Machine Pricing Matrix": "Washing Machine",
+    "Microwave Pricing Matrix": "Microwave",
+    "Home/ Kitchen Appliances Pricing Matrix": "Home Kitchen Appliances",
+    "Other Appliances Pricing Matrix": "Other Appliances",
+}
 
 ACQUISITION_RATIOS: dict[str, float] = {
     "refrigerator": 0.73,
@@ -148,15 +153,20 @@ def _read_pricing_matrix(gc) -> list[dict]:
     except Exception as e:
         logger.warning(f"Reference data: could not list worksheet titles: {e}")
 
-    for tab_name in MATRIX_TABS:
+    for tab_name, category_slug in MATRIX_TAB_TO_CATEGORY.items():
         try:
             ws = spreadsheet.worksheet(tab_name)
             records = ws.get_all_records()
+            if records:
+                logger.info(
+                    f"Reference data: tab '{tab_name}' column headers: "
+                    f"{list(records[0].keys())}"
+                )
             for row in records:
                 rows_out.append({
                     "brand": str(row.get("Brand", "")).strip(),
                     "model": str(row.get("Model", row.get("Model Number", ""))).strip(),
-                    "category": tab_name,
+                    "category": category_slug,
                     "age_band": str(row.get("Age", row.get("Age Band", ""))).strip(),
                     "base_min": _safe_float(row.get("Base Min", row.get("Base Min KES"))),
                     "base_max": _safe_float(row.get("Base Max", row.get("Base Max KES"))),
@@ -167,7 +177,7 @@ def _read_pricing_matrix(gc) -> list[dict]:
                     "sheet_tab": tab_name,
                     "raw_json": _sanitize_for_json(row),
                 })
-            logger.info(f"Reference data: pricing matrix tab '{tab_name}' — {len(records)} rows")
+            logger.info(f"Reference data: pricing matrix tab '{tab_name}' -> '{category_slug}' — {len(records)} rows")
         except Exception as e:
             logger.warning(
                 f"Reference data: pricing matrix tab '{tab_name}' failed: "
