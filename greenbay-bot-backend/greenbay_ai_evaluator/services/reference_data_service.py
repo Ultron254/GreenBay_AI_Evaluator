@@ -19,7 +19,9 @@ Lookup functions:
 from __future__ import annotations
 
 import asyncio
+import json
 import statistics
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -113,6 +115,18 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
+def _sanitize_for_json(row: dict) -> dict:
+    """Round-trip through json.dumps/loads to guarantee JSON-serializable dict.
+
+    gspread rows can contain values that Python's dict repr handles but
+    psycopg2's JSON adapter rejects (e.g. non-string keys, special floats).
+    """
+    try:
+        return json.loads(json.dumps(row, default=str))
+    except (TypeError, ValueError):
+        return {str(k): str(v) for k, v in row.items()}
+
+
 # ---------------------------------------------------------------------------
 # Sheet readers
 # ---------------------------------------------------------------------------
@@ -142,11 +156,14 @@ def _read_pricing_matrix(gc) -> list[dict]:
                     "recommended_max": _safe_float(row.get("Recommended Max", row.get("Rec Max KES"))),
                     "new_price": _safe_float(row.get("New Price", row.get("New Price KES"))),
                     "sheet_tab": tab_name,
-                    "raw_json": row,
+                    "raw_json": _sanitize_for_json(row),
                 })
             logger.info(f"Reference data: pricing matrix tab '{tab_name}' — {len(records)} rows")
         except Exception as e:
-            logger.warning(f"Reference data: pricing matrix tab '{tab_name}' failed: {e}")
+            logger.warning(
+                f"Reference data: pricing matrix tab '{tab_name}' failed: "
+                f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+            )
 
     return rows_out
 
@@ -167,11 +184,14 @@ def _read_sales_stock(gc) -> list[dict]:
                 "product_quality": str(row.get("Product Quality", row.get("Quality", ""))).strip(),
                 "purchase_cost": _safe_float(row.get("Purchase cost", row.get("Purchase Cost"))),
                 "selling_price": _safe_float(row.get("Selling Price", row.get("Selling price"))),
-                "raw_json": row,
+                "raw_json": _sanitize_for_json(row),
             })
         logger.info(f"Reference data: sales stock — {len(records)} rows")
     except Exception as e:
-        logger.error(f"Reference data: sales stock read failed: {e}")
+        logger.error(
+            f"Reference data: sales stock read failed: "
+            f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+        )
     return rows_out
 
 
