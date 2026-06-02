@@ -506,19 +506,21 @@ def sync_internal_prices(_: bool = Depends(verify_admin_key)):
 def backfill_sheet_newprice(
     dry_run: bool = True,
     limit: int = 1000,
+    force: bool = False,
     _: bool = Depends(verify_admin_key),
 ):
-    """Backfill the tracker sheet's 'New price (estimate)' column with real Gemini
-    prices (header-aware), mirroring the Airtable backfill.
+    """Backfill the tracker sheet's 'New price (estimate)' column with the right
+    new price (Airtable guide first, then Gemini), mirroring the Airtable data.
 
-    dry_run=true -> preview row counts (no Gemini calls, no writes).
-    dry_run=false -> BACKGROUND job: prices each unique item + writes the column.
+    dry_run=true  -> preview counts (no Gemini calls, no writes).
+    dry_run=false -> BACKGROUND job: resolves each unique item + writes the column.
+    force=true    -> also OVERWRITE existing numbers (the early values were wrong).
     """
     from greenbay_ai_evaluator.services.reference_data_service import (
         backfill_sheet_new_prices, _sheet_backfill_state,
     )
     if dry_run:
-        return backfill_sheet_new_prices(dry_run=True, limit=limit)
+        return backfill_sheet_new_prices(dry_run=True, limit=limit, force=force)
     if _sheet_backfill_state.get("running"):
         return {"started": False, "reason": "already running",
                 "progress": _sheet_backfill_state.get("progress", {})}
@@ -530,12 +532,13 @@ def backfill_sheet_newprice(
 
     def _job():
         try:
-            backfill_sheet_new_prices(dry_run=False, limit=limit)
+            backfill_sheet_new_prices(dry_run=False, limit=limit, force=force)
         finally:
             _sheet_backfill_state["running"] = False
 
     threading.Thread(target=_job, daemon=True).start()
-    return {"started": True, "note": "Background job launched. GET this path for progress."}
+    return {"started": True, "force": force,
+            "note": "Background job launched. GET this path for progress."}
 
 
 @evaluator_router.get("/admin/backfill-sheet-newprice")

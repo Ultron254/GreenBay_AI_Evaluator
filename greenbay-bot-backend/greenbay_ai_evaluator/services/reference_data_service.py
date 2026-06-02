@@ -633,6 +633,31 @@ def _service_account_email() -> str:
     return ""
 
 
+def _airtable_new_price_for(model: str) -> float | None:
+    """Look up the same product in Airtable (well-structured, already Gemini-
+    repriced) by Model Number and return its 'New Price (Estimate)'. Free — no
+    Gemini call — so we use it as the preferred guide before searching."""
+    if not model or not str(model).strip():
+        return None
+    try:
+        from greenbay_ai_evaluator.services.airtable_service import list_records_by_model
+        prices: list[float] = []
+        for r in list_records_by_model(str(model).strip()):
+            v = (r.get("fields", {}) or {}).get("New Price (Estimate)")
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if v and v > 0:
+                prices.append(v)
+        if prices:
+            prices.sort()
+            return prices[len(prices) // 2]  # median of matching Airtable rows
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"Airtable new-price lookup failed for {model!r}: {e}")
+    return None
+
+
 def _gemini_new_price(item: str, model: str, category: str, country: str = "KE") -> float | None:
     """Best-effort Gemini-grounded NEW retail price for a tracker row."""
     try:
@@ -649,15 +674,25 @@ def _gemini_new_price(item: str, model: str, category: str, country: str = "KE")
     return None
 
 
-def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
-    """Fill the 'New price (estimate)' column in the tracker sheet with real
-    Gemini prices (one call per unique item), matching what we did in Airtable.
+def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000,
+                              force: bool = False) -> dict:
+    """Fill the 'New price (estimate)' column in the tracker sheet with the right
+    new price, matching what we did in Airtable.
 
-    Header-aware: writes to the column actually titled 'New price (estimate)',
-    never by hard-coded position. Best-effort; reports permission issues clearly.
+    Per row, the price is resolved by:
+      1) Airtable — same Model Number, its 'New Price (Estimate)' (free, trusted).
+      2) Gemini grounded search — only when Airtable has no match (and a model/
+         item is searchable).
+
+    force=False -> only fill empty/non-numeric cells (idempotent, resumable).
+    force=True  -> also overwrite existing numbers (the early values were wrong).
+
+    Header-aware: writes to the column actually titled 'New price (estimate)'.
+    Never touches the human-managed Internal/Final price columns.
     """
-    out: dict = {"dry_run": dry_run, "rows": 0, "priced": 0, "written": 0,
-                 "not_found": 0, "skipped": 0}
+    out: dict = {"dry_run": dry_run, "force": force, "rows": 0, "priced": 0,
+                 "written": 0, "not_found": 0, "skipped": 0,
+                 "from_airtable": 0, "from_gemini": 0}
     _sheet_backfill_state["progress"] = out
     gc = _get_gspread_client()
     if gc is None:
@@ -700,12 +735,14 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
             )
         pending = []
 
+    src_cache: dict[str, str] = {}
     for ridx, row in enumerate(values[hidx + 1:], start=hidx + 2):  # 1-based sheet row
         if not any(str(c).strip() for c in row):
             continue
         out["rows"] += 1
-        # Resumable + idempotent: skip rows that already hold a clean number.
-        if _safe_float(cell(row, "new_price")):
+        existing = _safe_float(cell(row, "new_price"))
+        # Without force: skip rows that already hold a clean number (resumable).
+        if existing and not force:
             out["skipped"] += 1
             continue
         item = str(cell(row, "item")).strip()
@@ -718,20 +755,42 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
         key = f"{item}|{model}".lower()
         if key in price_cache:
             price = price_cache[key]
-        elif calls >= limit:
-            out["skipped"] += 1
-            continue
+            source = src_cache.get(key, "")
         else:
-            if dry_run:
-                out["priced"] += 1
-                continue
-            calls += 1
-            price = _gemini_new_price(item, model, _infer_category_from_text(item))
+            # 1) Airtable structured guide (free) — same model, repriced value.
+            price = _airtable_new_price_for(model)
+            source = "airtable" if price else ""
+            # 2) Gemini fallback only when Airtable has nothing.
+            if not price:
+                if calls >= limit:
+                    out["skipped"] += 1
+                    continue
+                if not dry_run:
+                    calls += 1
+                    price = _gemini_new_price(item, model, _infer_category_from_text(item))
+                    source = "gemini" if price else ""
             price_cache[key] = price or 0.0
+            src_cache[key] = source
+
+        if dry_run:
+            # Preview: count what we'd resolve (Airtable hits are known; Gemini
+            # hits are assumed when a searchable model/item exists).
+            if source == "airtable":
+                out["priced"] += 1
+                out["from_airtable"] += 1
+            else:
+                out["priced"] += 1
+            continue
+
         if not price or price <= 0:
             out["not_found"] += 1
             continue
+        # Cell already holds this exact value — nothing to write.
+        if existing and round(existing) == round(price):
+            out["skipped"] += 1
+            continue
         out["priced"] += 1
+        out["from_airtable" if source == "airtable" else "from_gemini"] += 1
         pending.append({"range": f"{np_letter}{ridx}", "values": [[round(price)]]})
         # Flush incrementally so a restart never loses completed work.
         if len(pending) >= 15:
