@@ -806,6 +806,43 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000,
     return out
 
 
+def delete_tracker_rows_by_ref(ref8: str) -> int:
+    """Delete tracker-sheet rows whose Notes contain 'Ref: <ref8>'. Returns count.
+    Used to clean up a test/probe row. Best-effort."""
+    if not ref8:
+        return 0
+    gc = _get_gspread_client()
+    if gc is None:
+        return 0
+    try:
+        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+        ws = ss.worksheet(EVAL_TRACKER_TAB)
+        values = ws.get_all_values()
+        hidx, cmap = _find_header_index(values)
+        if hidx < 0:
+            return 0
+        notes_col = cmap.get("notes")
+        if notes_col is None:
+            return 0
+        marker = f"ref: {ref8.lower()}"
+        # Collect 1-based row numbers, delete bottom-up to keep indices valid.
+        targets = [
+            ridx for ridx, row in enumerate(values[hidx + 1:], start=hidx + 2)
+            if notes_col < len(row) and marker in str(row[notes_col]).lower()
+        ]
+        deleted = 0
+        for ridx in sorted(targets, reverse=True):
+            try:
+                ws.delete_rows(ridx)
+                deleted += 1
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"delete_tracker_rows_by_ref: row {ridx} failed: {e}")
+        return deleted
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"delete_tracker_rows_by_ref failed: {e}")
+        return 0
+
+
 def append_tracker_row(
     *, item: str, model: str = "", new_price: float | None = None,
     ai_price: float | None = None, ai_confidence: float | None = None,

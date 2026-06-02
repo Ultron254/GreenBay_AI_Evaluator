@@ -345,6 +345,26 @@ def _at_empty(v) -> bool:
     return v is None or v == 0 or (isinstance(v, str) and not v.strip())
 
 
+@evaluator_router.post("/admin/delete-eval-record")
+def delete_eval_record(ref: str, _: bool = Depends(verify_admin_key)):
+    """Delete an evaluation everywhere it was mirrored — the Airtable row and any
+    tracker-sheet rows whose Notes carry 'Ref: <ref8>'. Used to remove test/probe
+    rows. Idempotent (safe if already gone)."""
+    from greenbay_ai_evaluator.services.airtable_service import (
+        find_record_by_ref, delete_record_by_id,
+    )
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        delete_tracker_rows_by_ref,
+    )
+    ref8 = (ref or "").strip()[:8]
+    out = {"ref": ref8, "airtable_deleted": False, "sheet_rows_deleted": 0}
+    rec = find_record_by_ref(ref8)
+    if rec:
+        out["airtable_deleted"] = delete_record_by_id(rec["id"])
+    out["sheet_rows_deleted"] = delete_tracker_rows_by_ref(ref8)
+    return out
+
+
 @evaluator_router.get("/admin/contact-data-stats")
 def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
     """Read-only: do stored sessions actually carry seller name/phone? Confirms

@@ -446,6 +446,21 @@ def patch_record_by_id(record_id: str, fields: dict) -> bool:
     return ok
 
 
+def delete_record_by_id(record_id: str) -> bool:
+    """Delete a record by its Airtable id. Best-effort — never raises."""
+    cfg = _get_config()
+    if cfg is None or not record_id:
+        return False
+    try:
+        import requests
+        url = f"{_base_url(cfg)}/{record_id}"
+        resp = requests.delete(url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT)
+        return resp.status_code == 200
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Airtable DELETE {record_id} failed: {e}")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Public API — WRITE
 # ---------------------------------------------------------------------------
