@@ -27,9 +27,15 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from greenbay_ai_evaluator.models.evaluator_models import (
-    PricingPolicy,
     SalesStockReference,
 )
+from greenbay_ai_evaluator.services.reference_data_service import (
+    get_category_acquisition_ratio,
+)
+
+# Guards for recommending a data-derived acquisition ratio.
+_MIN_SAMPLES_FOR_RECO = 20
+_RATIO_FLOOR, _RATIO_CEIL = 0.45, 0.85
 
 # Loose mapping from free-text sales categories to policy category slugs.
 _CATEGORY_ALIASES = {
@@ -41,7 +47,6 @@ _CATEGORY_ALIASES = {
     "cooker": "cooker_oven", "cookers": "cooker_oven", "oven": "cooker_oven",
     "microwave": "microwave", "microwaves": "microwave",
 }
-_DEFAULT_OFFER_RATIO = 0.45  # fallback when no policy matches
 
 
 def _norm_category(raw: str) -> str:
@@ -54,18 +59,26 @@ def _norm_category(raw: str) -> str:
     return c or "unknown"
 
 
-def compute_calibration(db: Session, limit: int = 5000) -> dict[str, Any]:
-    """Back-test the policy's offer ratio against real purchase/sell pairs."""
-    out: dict[str, Any] = {"compared": 0, "by_category": [], "overall": {}}
+def _clamp_ratio(value: float) -> float:
+    return max(_RATIO_FLOOR, min(_RATIO_CEIL, value))
 
-    # Policy offer ratios per category
-    ratios: dict[str, float] = {}
-    try:
-        for p in db.query(PricingPolicy).all():
-            if p.max_offer_pct:
-                ratios[(p.category or "").lower()] = float(p.max_offer_pct)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"calibration: policy load failed: {e}")
+
+def compute_calibration(db: Session, limit: int = 5000) -> dict[str, Any]:
+    """Back-test the engine's *actual* acquisition ratio against real purchase/
+    sell pairs, and derive the data-optimal ratio per category.
+
+    The live engine computes ``offer = resale_estimate * acquisition_ratio`` (see
+    offer_engine STEP 7). For a comparable used unit, ``resale_estimate`` ≈ the
+    sales-stock ``selling_price`` and the real acquisition is ``purchase_cost``.
+    So:
+      predicted_offer  = selling_price * get_category_acquisition_ratio(category)
+      actual           = purchase_cost
+      data_ratio       = purchase_cost / selling_price  (what we *actually* paid)
+
+    ``recommended_ratio`` = clamped median(data_ratio) per category — the value
+    that would have minimised error on real deals. Read-only, no network, no cost.
+    """
+    out: dict[str, Any] = {"compared": 0, "by_category": [], "overall": {}}
 
     try:
         rows = (
@@ -81,7 +94,9 @@ def compute_calibration(db: Session, limit: int = 5000) -> dict[str, Any]:
         logger.warning(f"calibration: sales load failed: {e}")
         return out
 
-    buckets: dict[str, list[float]] = {}
+    err_buckets: dict[str, list[float]] = {}
+    ratio_buckets: dict[str, list[float]] = {}
+    current_ratio: dict[str, float] = {}
     all_errors: list[float] = []
     for r in rows:
         try:
@@ -89,14 +104,18 @@ def compute_calibration(db: Session, limit: int = 5000) -> dict[str, Any]:
             selling = float(r.selling_price)
             if purchase <= 0 or selling <= 0:
                 continue
-            cat = _norm_category(r.product_category or "")
-            ratio = ratios.get(cat, _DEFAULT_OFFER_RATIO)
+            raw_cat = r.product_category or ""
+            cat = _norm_category(raw_cat)
+            ratio = get_category_acquisition_ratio(raw_cat)
+            current_ratio.setdefault(cat, ratio)
             predicted = selling * ratio
             err = abs(predicted - purchase) / purchase * 100.0
+            data_ratio = purchase / selling
             # Guard against absurd outliers polluting the mean (bad source rows).
-            if err > 500:
+            if err > 500 or data_ratio > 2.0:
                 continue
-            buckets.setdefault(cat, []).append(err)
+            err_buckets.setdefault(cat, []).append(err)
+            ratio_buckets.setdefault(cat, []).append(data_ratio)
             all_errors.append(err)
         except (TypeError, ValueError, ZeroDivisionError):
             continue
@@ -111,16 +130,29 @@ def compute_calibration(db: Session, limit: int = 5000) -> dict[str, Any]:
         }
 
     by_cat = []
-    for cat, errs in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+    for cat, errs in sorted(err_buckets.items(), key=lambda kv: -len(kv[1])):
         entry = {"category": cat}
         entry.update(_agg(errs))
+        data_ratios = ratio_buckets.get(cat, [])
+        cur = round(current_ratio.get(cat, 0.0), 3)
+        entry["current_ratio"] = cur
+        if len(data_ratios) >= _MIN_SAMPLES_FOR_RECO:
+            reco = _clamp_ratio(median(data_ratios))
+            entry["recommended_ratio"] = round(reco, 3)
+            entry["raw_median_ratio"] = round(median(data_ratios), 3)
+            entry["ratio_delta"] = round(reco - cur, 3)
+        else:
+            entry["recommended_ratio"] = None
+            entry["raw_median_ratio"] = round(median(data_ratios), 3) if data_ratios else None
+            entry["ratio_delta"] = None
         by_cat.append(entry)
 
     out["compared"] = len(all_errors)
     out["by_category"] = by_cat
     out["overall"] = _agg(all_errors)
     out["note"] = (
-        "predicted_offer = resale_price x policy_max_offer_pct; "
-        "actual = recorded purchase_cost. Lower error = better-calibrated policy."
+        "predicted_offer = resale_price x acquisition_ratio (live engine STEP 7); "
+        "actual = recorded purchase_cost. recommended_ratio = clamped median of "
+        f"purchase/sell on >={_MIN_SAMPLES_FOR_RECO} real deals. Lower error = better."
     )
     return out

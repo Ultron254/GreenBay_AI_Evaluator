@@ -334,6 +334,172 @@ def airtable_patch_missing(
 
 
 # ---------------------------------------------------------------------------
+# Gemini re-pricing pass — retro-fill REAL historical "New Price (Estimate)"
+# ---------------------------------------------------------------------------
+# Legacy sessions stored a hallucinated category default (45000/65000) as the
+# new price. Now that Gemini grounding works, re-query each UNIQUE model once
+# and backfill the real launch price into Airtable + the DB. De-duping by model
+# keeps it to ~1 paid Gemini call per distinct model.
+_reprice_state: dict[str, Any] = {"running": False, "started_at": None, "progress": {}}
+
+
+def _distinct_models_to_reprice(db: Session, since_dt, limit: int) -> list[dict]:
+    """Distinct (brand, model, category, size, country) needing a real price."""
+    rows = (
+        db.query(
+            ValuationSession.brand,
+            ValuationSession.model,
+            ValuationSession.category,
+            ValuationSession.size_value,
+            ValuationSession.size_unit,
+            ValuationSession.country,
+        )
+        .filter(
+            ValuationSession.created_at >= since_dt,
+            ValuationSession.model.isnot(None),
+            ValuationSession.model != "",
+        )
+        .distinct()
+        .all()
+    )
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        key = (r.model or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "brand": r.brand or "",
+            "model": r.model or "",
+            "category": r.category or "",
+            "size_value": r.size_value,
+            "size_unit": r.size_unit,
+            "country": r.country or "KE",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _run_reprice_job(models: list[dict], since: str, update_db: bool) -> None:
+    """Background worker: 1 Gemini call per model, patch Airtable + DB."""
+    from greenbay_ai_evaluator.services.market_price_service import gemini_price_research
+    from greenbay_ai_evaluator.services.airtable_service import (
+        list_records_by_model, patch_record_by_id,
+    )
+    from app.database.db import SessionLocal
+
+    prog = {"total": len(models), "done": 0, "repriced": 0, "not_found": 0,
+            "rows_patched": 0, "errors": 0}
+    _reprice_state["progress"] = prog
+    for m in models:
+        try:
+            res = gemini_price_research(
+                brand=m["brand"], model=m["model"], category=m["category"],
+                country=m["country"],
+                size_value=m["size_value"], size_unit=m["size_unit"],
+            )
+            price = float(res.launch_price) if res and res.launch_price else 0.0
+            if price > 0:
+                prog["repriced"] += 1
+                # Patch every Airtable row for this model.
+                for rec in list_records_by_model(m["model"]):
+                    if patch_record_by_id(rec["id"], {"New Price (Estimate)": price}):
+                        prog["rows_patched"] += 1
+                # Update the stored retail_price so future patches/dashboards
+                # reflect the real new price (does NOT recompute past offers).
+                if update_db:
+                    db = SessionLocal()
+                    try:
+                        (db.query(ValuationSession)
+                            .filter(ValuationSession.model == m["model"])
+                            .update({ValuationSession.retail_price: price},
+                                    synchronize_session=False))
+                        db.commit()
+                    finally:
+                        db.close()
+            else:
+                prog["not_found"] += 1
+        except Exception as e:  # noqa: BLE001
+            prog["errors"] += 1
+            logger.warning(f"reprice {m.get('model')}: {e}")
+        finally:
+            prog["done"] += 1
+            if prog["done"] % 5 == 0 or prog["done"] == prog["total"]:
+                logger.info(
+                    f"Gemini reprice: {prog['done']}/{prog['total']} "
+                    f"repriced={prog['repriced']} rows={prog['rows_patched']} "
+                    f"not_found={prog['not_found']} errors={prog['errors']}"
+                )
+    _reprice_state["running"] = False
+    logger.info(f"Gemini reprice DONE: {prog}")
+
+
+@evaluator_router.post("/admin/reprice-historical")
+def reprice_historical(
+    since: str = "2026-01-01",
+    dry_run: bool = True,
+    limit: int = 500,
+    update_db: bool = True,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """Re-query Gemini once per UNIQUE historical model and backfill the REAL
+    'New Price (Estimate)' into Airtable (and the stored retail_price).
+
+    dry_run=true  -> no Gemini calls; returns the unique-model list + est. cost.
+    dry_run=false -> launches a BACKGROUND job (avoids gateway timeouts) and
+                     returns immediately; watch progress via GET the same path.
+    """
+    from datetime import datetime as _dt
+    try:
+        since_dt = _dt.fromisoformat(since)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="since must be YYYY-MM-DD")
+
+    models = _distinct_models_to_reprice(db, since_dt, max(1, min(limit, 2000)))
+
+    if dry_run:
+        return {
+            "dry_run": True, "since": since,
+            "unique_models": len(models),
+            "estimated_gemini_calls": len(models),
+            "sample": [
+                {"brand": m["brand"], "model": m["model"], "category": m["category"]}
+                for m in models[:15]
+            ],
+            "note": "Run with dry_run=false to launch the background re-pricing job.",
+        }
+
+    if _reprice_state["running"]:
+        return {"started": False, "reason": "already running",
+                "progress": _reprice_state.get("progress", {})}
+
+    import threading
+    from datetime import datetime as _dt2
+    _reprice_state["running"] = True
+    _reprice_state["started_at"] = _dt2.utcnow().isoformat()
+    threading.Thread(
+        target=_run_reprice_job, args=(models, since, update_db), daemon=True
+    ).start()
+    return {
+        "started": True, "since": since, "unique_models": len(models),
+        "note": "Background job launched. GET this endpoint to see progress.",
+    }
+
+
+@evaluator_router.get("/admin/reprice-historical")
+def reprice_historical_status(_: bool = Depends(verify_admin_key)):
+    """Progress of the most recent / running Gemini re-pricing job."""
+    return {
+        "running": _reprice_state["running"],
+        "started_at": _reprice_state["started_at"],
+        "progress": _reprice_state.get("progress", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Size resolution (v6.1) — drives accurate per-size pricing
 # ---------------------------------------------------------------------------
 import re as _re

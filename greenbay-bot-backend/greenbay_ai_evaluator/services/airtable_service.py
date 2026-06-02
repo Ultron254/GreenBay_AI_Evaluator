@@ -405,6 +405,36 @@ def find_record_by_model_price(model: str, ai_price: float) -> dict | None:
         return None
 
 
+def list_records_by_model(model: str, max_records: int = 50) -> list[dict]:
+    """Return [{'id','fields'}] for every row with an exact Model Number match.
+
+    Used by the Gemini re-pricing pass to backfill 'New Price (Estimate)' on all
+    historical rows of a model at once. Best-effort, never raises."""
+    cfg = _get_config()
+    if cfg is None or not model:
+        return []
+    try:
+        import requests
+        from urllib.parse import quote
+        safe_model = str(model).replace('"', '\\"')
+        formula = f'{{Model Number}}="{safe_model}"'
+        table = quote(cfg["table"])
+        url = (
+            f"https://api.airtable.com/v0/{cfg['base_id']}/{table}"
+            f"?filterByFormula={quote(formula)}&maxRecords={int(max(1, min(max_records, 100)))}"
+        )
+        resp = requests.get(url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return []
+        return [
+            {"id": r["id"], "fields": r.get("fields", {}) or {}}
+            for r in resp.json().get("records", [])
+        ]
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"Airtable list_records_by_model failed: {e}")
+        return []
+
+
 def patch_record_by_id(record_id: str, fields: dict) -> bool:
     """Patch arbitrary fields on a record by its Airtable id. Best-effort."""
     cfg = _get_config()
