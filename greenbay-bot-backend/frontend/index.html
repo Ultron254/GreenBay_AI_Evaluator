@@ -770,16 +770,22 @@
                             <h3>Your Contact Details</h3>
                             <p class="step-description">We need your details to process the trade-in and contact you about pickup or drop-off.</p>
                             <div class="form-group">
-                                <label class="form-label">Your Full Name</label>
+                                <label class="form-label">Your Full Name <span style="color:var(--red);">*</span></label>
                                 <input type="text" class="form-input" id="sellerNameInput"
-                                    placeholder="e.g. John Maina"
+                                    placeholder="e.g. John Maina" required aria-required="true"
+                                    autocomplete="name"
                                     oninput="updateAnswer('sellerName', this.value)">
+                                <p class="form-hint" id="nameError" style="display:none;color:var(--red);">
+                                    Please enter your full name.</p>
                             </div>
                             <div class="form-group" style="margin-top: 16px;">
-                                <label class="form-label">Your Phone Number</label>
+                                <label class="form-label">Your Phone Number <span style="color:var(--red);">*</span></label>
                                 <input type="tel" class="form-input" id="sellerPhoneInput"
-                                    placeholder="e.g. 0712 345 678"
+                                    placeholder="e.g. 0712 345 678" required aria-required="true"
+                                    autocomplete="tel" inputmode="tel"
                                     oninput="updateAnswer('sellerPhone', this.value)">
+                                <p class="form-hint" id="phoneError" style="display:none;color:var(--red);">
+                                    Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>
                                 <p class="form-hint"><i data-lucide="lock"
                                         style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
                                     Your details are kept confidential and used only for this trade-in.</p>

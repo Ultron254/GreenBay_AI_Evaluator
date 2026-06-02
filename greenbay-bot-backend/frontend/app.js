@@ -263,7 +263,7 @@ function isStepValid(step) {
         case 6: return !!state.answers.condition;
         case 7: return !!state.answers.ownership;
         case 8: return true; // issues can be empty
-        case 9: return state.answers.sellerName.trim().length > 0 && state.answers.sellerPhone.trim().length >= 9;
+        case 9: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
         case 10: return state.answers.photos.length >= 3;
         case 11: return true; // price can be null ("make me an offer")
         default: return true;
@@ -386,8 +386,27 @@ function handleCustomBrand(value) {
     }
 }
 
+// Accepts local (0712345678 / 0112345678), bare (712345678) and international
+// (+254712345678) formats once spaces/dashes/parentheses are removed.
+function isValidPhone(raw) {
+    if (!raw) return false;
+    const cleaned = String(raw).replace(/[\s\-()]/g, '');
+    return /^\+\d{9,15}$/.test(cleaned) ||   // +<country><number>
+           /^0\d{8,11}$/.test(cleaned)  ||   // local, leading 0
+           /^\d{9,12}$/.test(cleaned);       // bare national number
+}
+
 function updateAnswer(field, value) {
     state.answers[field] = value;
+    // Inline validation feedback for the contact step.
+    if (field === 'sellerPhone') {
+        const err = document.getElementById('phoneError');
+        if (err) err.style.display = (value && !isValidPhone(value)) ? 'block' : 'none';
+    }
+    if (field === 'sellerName') {
+        const err = document.getElementById('nameError');
+        if (err) err.style.display = (value && value.trim().length < 2) ? 'block' : 'none';
+    }
     document.getElementById('nextBtn').disabled = !isStepValid(state.currentStep);
     saveState();
 }

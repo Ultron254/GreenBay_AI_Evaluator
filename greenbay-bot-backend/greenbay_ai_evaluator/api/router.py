@@ -345,6 +345,38 @@ def _at_empty(v) -> bool:
     return v is None or v == 0 or (isinstance(v, str) and not v.strip())
 
 
+@evaluator_router.get("/admin/contact-data-stats")
+def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    """Read-only: do stored sessions actually carry seller name/phone? Confirms
+    whether historical name/phone is recoverable for an Airtable backfill, and
+    whether recent (post-wiring) evaluations are capturing it."""
+    total = db.query(ValuationSession).count()
+
+    def _nonempty(col) -> int:
+        return db.query(ValuationSession).filter(col.isnot(None), col != "").count()
+
+    recent = (
+        db.query(ValuationSession)
+        .order_by(ValuationSession.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    return {
+        "total_sessions": total,
+        "with_name": _nonempty(ValuationSession.seller_name),
+        "with_phone": _nonempty(ValuationSession.seller_phone),
+        "recent": [
+            {
+                "id": str(s.id)[:8],
+                "created_at": str(getattr(s, "created_at", "")),
+                "has_name": bool((s.seller_name or "").strip()),
+                "has_phone": bool((s.seller_phone or "").strip()),
+            }
+            for s in recent
+        ],
+    }
+
+
 @evaluator_router.get("/admin/airtable-audit")
 def airtable_audit(samples: int = 15, _: bool = Depends(verify_admin_key)):
     """Read-only deep audit of the live Airtable base. Reports total rows, the
