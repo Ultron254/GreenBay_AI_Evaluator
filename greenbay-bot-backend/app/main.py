@@ -329,6 +329,7 @@ def create_app() -> FastAPI:
         "http://127.0.0.1:9100",
         "https://greenbay.market",
         "https://www.greenbay.market",
+        "https://evaluate.greenbay.market",
         "http://3.217.166.244",
         "https://3.217.166.244",
     ]

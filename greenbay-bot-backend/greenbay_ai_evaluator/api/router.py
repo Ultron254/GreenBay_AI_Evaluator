@@ -20,6 +20,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
+from greenbay_ai_evaluator.api.security import verify_admin_key
 from greenbay_ai_evaluator.api.schemas import (
     AcceptOfferResponse,
     CounterRequest,
@@ -97,16 +98,12 @@ evaluator_router = APIRouter()
 # GET /tradein/health/services?key=...
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/health/services")
-def health_services(key: str = ""):
+def health_services(_: bool = Depends(verify_admin_key)):
     """Run live probes against every external dependency.
 
-    Gated by DASHBOARD_KEY (same gate as the ops dashboard) so the report —
+    Gated by DASHBOARD_KEY (header X-Admin-Key or ?key=) so the report —
     which can include error snippets — is not publicly exposed.
     """
-    import os as _os
-    expected = _os.environ.get("DASHBOARD_KEY", "greenbay-admin-2026")
-    if not key or key != expected:
-        raise HTTPException(status_code=403, detail="forbidden")
     from greenbay_ai_evaluator.services.live_healthcheck_service import (
         run_live_healthcheck,
     )
@@ -120,21 +117,16 @@ def health_services(key: str = ""):
 # ---------------------------------------------------------------------------
 @evaluator_router.post("/admin/airtable-backfill")
 def airtable_backfill(
-    key: str = "",
     since: str = "2026-05-22",
     dry_run: bool = True,
     limit: int = 2000,
     db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
 ):
     """Backfill Airtable from ValuationSession rows + replay the fallback queue.
 
     De-dupes against existing Airtable rows via the 'Ref: <id8>' marker in Notes.
     """
-    import os as _os
-    expected = _os.environ.get("DASHBOARD_KEY", "greenbay-admin-2026")
-    if not key or key != expected:
-        raise HTTPException(status_code=403, detail="forbidden")
-
     from datetime import datetime as _dt
     try:
         since_dt = _dt.fromisoformat(since)
@@ -561,6 +553,73 @@ def _build_airtable_payload_from_session(vs: ValuationSession) -> dict:
     if sv and su:
         payload["Size"] = f"{sv:g} {su}"
     return payload
+
+
+def _enrich_justification(
+    *,
+    base_trace: str,
+    price_verification: dict | None,
+    internet_result,
+    size_value: float | None,
+    size_unit: str | None,
+    size_source: str | None,
+    reference_source: str,
+) -> str:
+    """Append real, auditable evidence to the engine's math trace (issue #8).
+
+    Captures: the new-price source (verified vs estimate), Gemini/Google search
+    source URLs, the size used and how it was obtained, and which reference data
+    drove the base value. This is what gets stored in 'AI Pricing Justification'.
+    """
+    lines: list[str] = [base_trace or "", "", "EVIDENCE & SOURCES", "-" * 50]
+
+    # Size
+    if size_value and size_unit:
+        lines.append(f"Size used: {size_value:g} {size_unit} (source: {size_source or 'user'})")
+    else:
+        lines.append("Size: UNKNOWN — could not be provided or inferred (lowers confidence)")
+
+    # Reference data that drove the base value
+    if reference_source:
+        lines.append(f"Base value reference: {reference_source}")
+    else:
+        lines.append("Base value reference: external research / reconciled retail (no GreenBay match)")
+
+    # New-price verification + Gemini sources
+    pv = price_verification or {}
+    verified = pv.get("new_price_verified")
+    num_real = pv.get("num_real_sources", 0)
+    reconciled = pv.get("reconciled_price")
+    if verified:
+        lines.append(
+            f"New price: VERIFIED from {num_real} real source(s); "
+            f"reconciled retail = KES {float(reconciled or 0):,.0f}"
+        )
+    else:
+        lines.append(
+            "New price: NOT VERIFIED — no live market source returned a price; "
+            "value is a category estimate and this evaluation was routed for review."
+        )
+
+    # List the actual source URLs Gemini grounded on (real evidence)
+    src_urls: list[str] = []
+    if internet_result is not None:
+        for s in (getattr(internet_result, "sources", None) or [])[:5]:
+            url = s.get("url") if isinstance(s, dict) else None
+            if url:
+                src_urls.append(url)
+    if src_urls:
+        lines.append("Google/Gemini sources:")
+        lines.extend(f"  - {u}" for u in src_urls)
+
+    # Per-source price breakdown from reconciliation
+    for s in (pv.get("sources") or []):
+        tag = " (estimate)" if s.get("is_estimate") else ""
+        lines.append(
+            f"  · {s.get('source')}: KES {float(s.get('price') or 0):,.0f}{tag}"
+        )
+
+    return "\n".join(l for l in lines if l is not None)
 
 
 def _policy_snapshot(policy: PricingPolicy) -> dict:
@@ -1353,9 +1412,21 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"CR-3 hash storage failed: {e}")
 
+        # Issue #8: enrich the justification with real evidence — Gemini source
+        # links, new-price verification status, size used, and the formula.
+        enriched_justification = _enrich_justification(
+            base_trace=result.pricing_justification,
+            price_verification=price_verification,
+            internet_result=internet_result,
+            size_value=size_value,
+            size_unit=size_unit,
+            size_source=size_source,
+            reference_source=reference_source,
+        )
+
         # Airtable: backup data repository (async, non-blocking, write-only)
         try:
-            if not result.pricing_justification:
+            if not enriched_justification:
                 logger.warning("Pricing justification is empty — this should not happen")
 
             images_for_airtable = _repressign_images_for_airtable(
@@ -1372,7 +1443,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 vertex_result=vertex_result,
                 had_image_inputs=bool(req.image_data or req.image_urls),
                 s3_configured=s3_configured_for_airtable,
-                pricing_justification=result.pricing_justification,
+                pricing_justification=enriched_justification,
             )
             logger.info(
                 f"Airtable payload: justification_len={len(result.pricing_justification)}, "
@@ -1516,6 +1587,15 @@ def accept_offer(
         })
     except Exception as e:
         logger.warning(f"Accept notification failed: {e}")
+
+    # Issue #13: email the GreenBay team that the price was accepted.
+    try:
+        from greenbay_ai_evaluator.services.email_service import (
+            snapshot_session, send_evaluation_accepted_email,
+        )
+        send_evaluation_accepted_email(snapshot_session(vs))
+    except Exception as e:
+        logger.warning(f"Accept email failed: {e}")
 
     return AcceptOfferResponse(
         session_id=session_id,
