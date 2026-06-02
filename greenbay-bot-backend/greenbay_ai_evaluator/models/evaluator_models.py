@@ -129,6 +129,11 @@ class ValuationSession(Base):
     country = Column(String(10), nullable=True, default="KE")
     currency_code = Column(String(10), nullable=True, default="KES")
 
+    # Appliance size (v6.1 — drives accurate per-size pricing)
+    size_value = Column(Float, nullable=True)   # e.g. 55 (inches), 8 (kg), 250 (litres)
+    size_unit = Column(String(20), nullable=True)  # "inch" | "kg" | "litre"
+    size_source = Column(String(20), nullable=True)  # "user" | "vision" | "model_lookup"
+
     # Final negotiation outcome (set when negotiation concludes)
     final_decision = Column(String(20), nullable=True)  # accept | decline
     final_offer = Column(Float, nullable=True)

@@ -76,6 +76,16 @@ class EvaluateRequest(BaseModel):
     brand: str = Field(..., max_length=100, description="Brand name")
     model: str = Field("", max_length=200, description="Model identifier")
     age_years: float = Field(0.0, ge=0, le=50, description="Approx product age in years")
+    # v6.1 — appliance size (drives accurate per-size pricing). Optional: if the
+    # user doesn't know, the backend infers it from the model number / photos.
+    size_value: float | None = Field(
+        None, ge=0, le=10_000,
+        description="Numeric size: TV inches, washer kg, fridge/freezer litres",
+    )
+    size_unit: str | None = Field(
+        None, max_length=20,
+        description="Unit for size_value: 'inch' | 'kg' | 'litre'",
+    )
     condition_grade: str = Field(
         ...,
         max_length=20,
@@ -96,7 +106,7 @@ class EvaluateRequest(BaseModel):
     retail_price_source: str = Field("", max_length=100, description="Where retail price came from")
     country: str = Field("KE", max_length=5, description="Country code: KE, UG, NG")
 
-    @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", mode="before")
+    @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", "size_unit", mode="before")
     @classmethod
     def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
         return _strip_tags(v)

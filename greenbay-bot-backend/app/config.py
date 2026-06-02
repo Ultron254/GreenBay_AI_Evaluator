@@ -141,6 +141,14 @@ class Settings(BaseSettings):
         env="GOOGLE_VERTEX_MODEL",
     )
 
+    # AWS SES (transactional email for internal team notifications — issue #13)
+    ses_region: str = Field(default="", env="SES_REGION")
+    ses_sender_email: str = Field(default="", env="SES_SENDER_EMAIL")
+    team_notification_emails: str = Field(
+        default="allanmatano@greenbay.market,kelvin@greenbay.market",
+        env="TEAM_NOTIFICATION_EMAILS",
+    )
+
     # LangSmith Configuration
     langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY", repr=False)
     langsmith_project: str = Field(default="greenbay-chatbot", env="LANGSMITH_PROJECT")

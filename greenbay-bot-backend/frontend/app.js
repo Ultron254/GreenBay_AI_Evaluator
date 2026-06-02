@@ -339,6 +339,43 @@ function selectOption(el, field) {
     saveState();
 }
 
+/* Appliance size capture (drives accurate per-size pricing) */
+const SIZE_CONFIG = {
+    tv_monitor: { unit: 'inch', label: 'What is the screen size?', unitLabel: 'inches', placeholder: 'e.g. 55' },
+    washing_machine: { unit: 'kg', label: 'What is the load capacity?', unitLabel: 'kg', placeholder: 'e.g. 8' },
+    refrigerator: { unit: 'litre', label: 'What is the capacity?', unitLabel: 'litres', placeholder: 'e.g. 250' },
+    freezer: { unit: 'litre', label: 'What is the capacity?', unitLabel: 'litres', placeholder: 'e.g. 200' },
+};
+
+function configureSizeStep() {
+    const group = document.getElementById('sizeGroup');
+    if (!group) return;
+    const cfg = SIZE_CONFIG[state.answers.category];
+    if (!cfg) {
+        group.style.display = 'none';
+        return;
+    }
+    group.style.display = 'block';
+    document.getElementById('sizeLabel').textContent = cfg.label;
+    document.getElementById('sizeUnitLabel').textContent = cfg.unitLabel;
+    const input = document.getElementById('sizeInput');
+    input.placeholder = cfg.placeholder;
+    if (state.answers.sizeValue) input.value = state.answers.sizeValue;
+}
+
+function updateSize(value) {
+    const cfg = SIZE_CONFIG[state.answers.category];
+    const num = parseFloat(value);
+    if (cfg && !isNaN(num) && num > 0) {
+        state.answers.sizeValue = num;
+        state.answers.sizeUnit = cfg.unit;
+    } else {
+        state.answers.sizeValue = null;
+        state.answers.sizeUnit = null;
+    }
+    saveState();
+}
+
 function handleCustomBrand(value) {
     if (value.trim().length > 0) {
         // Deselect option cards
@@ -785,6 +822,7 @@ function promptNextStep(step) {
         if (descGroup) {
             descGroup.style.display = state.answers.category === 'other' ? 'block' : 'none';
         }
+        configureSizeStep();
     }
 
     const msg = prompts[step];
@@ -913,6 +951,8 @@ async function callEvaluationAPI() {
         retail_price: defaultRetail[a.category] || 35000,
         retail_price_source: 'category_default',
         country: window.__gbCountry || 'KE',
+        size_value: a.sizeValue || null,
+        size_unit: a.sizeUnit || null,
     };
 
     try {

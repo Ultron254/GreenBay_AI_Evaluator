@@ -77,16 +77,34 @@ def _extract_json_from_text(text: str) -> dict | None:
         return None
 
 
+def _format_size_hint(size_value: float | None, size_unit: str | None) -> str:
+    """Build a human phrase like '55 inch' / '8 kg' / '250 litre' for the prompt."""
+    if not size_value or size_value <= 0 or not size_unit:
+        return ""
+    unit = size_unit.lower().strip()
+    if unit in ("inch", "inches", '"', "in"):
+        return f"{size_value:g} inch"
+    if unit in ("kg", "kgs", "kilogram", "kilograms"):
+        return f"{size_value:g} kg"
+    if unit in ("litre", "litres", "liter", "liters", "l"):
+        return f"{size_value:g} litre"
+    return f"{size_value:g} {unit}"
+
+
 def gemini_price_research(
     *,
     brand: str,
     model: str,
     category: str,
     country: str = "KE",
+    size_value: float | None = None,
+    size_unit: str | None = None,
 ) -> InternetPriceResult:
     """Call Gemini 2.5 Flash with Google Search grounding for retail price.
 
     Uses the existing Vertex AI service account — no new credentials needed.
+    The size hint (inches / kg / litres) is critical: without it a 43" and a
+    55" TV produce identical prompts and identical (wrong) prices.
     """
     result = InternetPriceResult()
     country_name = _COUNTRY_NAMES.get(country, "Kenya")
@@ -108,16 +126,28 @@ def gemini_price_research(
         logger.warning("Gemini price research: no Vertex credentials")
         return result
 
-    product_desc = f"{brand} {model}".strip() or category
+    size_hint = _format_size_hint(size_value, size_unit)
+    # Build the most specific product description we can.
+    parts = [p for p in (brand, model, size_hint) if p]
+    product_desc = " ".join(parts).strip() or category
 
     prompt = (
-        f"Find the current NEW retail price of {product_desc} ({category}) "
-        f"in {country_name}. "
+        f"You are a pricing researcher. Using Google Search, find the current "
+        f"NEW retail price of this exact appliance in {country_name}:\n"
+        f"  Brand: {brand or 'unknown'}\n"
+        f"  Model: {model or 'unknown'}\n"
+        f"  Size/capacity: {size_hint or 'unknown'}\n"
+        f"  Category: {category}\n\n"
+        f"Search mainstream {country_name} retailers (e.g. Jumia, Kilimall, "
+        f"brand stores, electronics shops). The size/capacity MUST match — a "
+        f"43-inch TV and a 55-inch TV have very different prices, so do not "
+        f"return a generic category price. "
         f"Return ONLY a JSON object with these exact fields: "
         f'{{"new_price": <number in {currency}>, "currency": "{currency}", '
+        f'"matched_product": "<the exact product/title you priced>", '
         f'"sources": [<list of source URLs>]}}. '
-        f"If multiple prices exist, return the median of mainstream retailer "
-        f"prices, not the cheapest or most expensive outlier."
+        f"If you cannot find a price for this specific size/model, return "
+        f'{{"new_price": null}} rather than guessing.'
     )
 
     try:
@@ -225,10 +255,13 @@ def search_internet_price(
     category: str,
     condition: str = "",
     country: str = "KE",
+    size_value: float | None = None,
+    size_unit: str | None = None,
 ) -> InternetPriceResult:
     """Search for retail and resale prices using Gemini with Google Search grounding."""
     return gemini_price_research(
         brand=brand, model=model, category=category, country=country,
+        size_value=size_value, size_unit=size_unit,
     )
 
 

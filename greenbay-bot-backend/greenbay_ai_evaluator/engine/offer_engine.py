@@ -311,9 +311,20 @@ def reconcile_retail_price(
     expert_avg: float | None = None,
     historical_avg: float | None = None,
     comparables_avg: float | None = None,
+    frontend_source: str = "",
 ) -> dict[str, Any]:
-    """Reconcile retail price from multiple independent signals."""
+    """Reconcile retail price from multiple independent signals.
+
+    *frontend_source* lets the caller flag that the frontend price is merely a
+    hardcoded category-default estimate (e.g. "category_default"). When it is,
+    that price is NOT counted as a real verification source — so a fabricated
+    guess can never masquerade as a verified market price, and confidence does
+    not get inflated by it.
+    """
     sources: list[dict[str, Any]] = []
+    _frontend_is_estimate = frontend_source.lower().strip() in (
+        "category_default", "whatsapp_category_estimate", "default", "",
+    )
 
     human_specs: list[tuple[str, float | None, float]] = [
         ("historical_sheet", historical_avg, 8.0),
@@ -339,10 +350,15 @@ def reconcile_retail_price(
     for key, price, w in ai_specs:
         if price is not None and price > 0:
             ai_entries.append((price, w))
-            sources.append({
+            src_entry = {
                 "source": key, "price": price, "weight": w,
                 "tier": "ai_market_research",
-            })
+            }
+            # Flag the frontend category-default guess so it is not treated
+            # as a real, verified source downstream.
+            if key == "frontend" and _frontend_is_estimate:
+                src_entry["is_estimate"] = True
+            sources.append(src_entry)
 
     human_avg_val = _tier_weighted_average(human_entries)
     ai_avg = _tier_weighted_average(ai_entries)
@@ -377,14 +393,19 @@ def reconcile_retail_price(
         reconciled = frontend_price if frontend_price > 0 else 0.0
 
     num_sources = len(sources)
+    # Real sources exclude the frontend category-default estimate.
+    num_real_sources = sum(1 for s in sources if not s.get("is_estimate"))
+    new_price_verified = num_real_sources > 0
 
     return {
         "reconciled_price": _round_kes_500(reconciled),
         "sources": sources,
         "num_sources": num_sources,
+        "num_real_sources": num_real_sources,
+        "new_price_verified": new_price_verified,
         "human_intelligence_avg": round(human_avg_val, 2) if human_avg_val is not None else None,
         "ai_market_research_avg": round(ai_avg, 2) if ai_avg is not None else None,
-        "confidence": min(100.0, num_sources * 20.0 + 10.0),
+        "confidence": min(100.0, num_real_sources * 20.0 + 10.0),
         "frontend_price": frontend_price,
     }
 
@@ -543,7 +564,14 @@ def compute_valuation(
     walkaway_limit = _round_price(acquisition_price * 0.7, round_step)
 
     # -- STEP 9: Confidence score --------------------------------------------
-    num_pv_sources = price_verification.get("num_sources", 0) if price_verification else 0
+    # Use REAL sources only (a frontend category-default guess must not inflate
+    # confidence or make a fabricated price look verified).
+    if price_verification:
+        num_pv_sources = price_verification.get(
+            "num_real_sources", price_verification.get("num_sources", 0)
+        )
+    else:
+        num_pv_sources = 0
     has_vision = bool(
         price_verification
         and (price_verification.get("google_lens_data") or price_verification.get("vision_analysis"))

@@ -92,6 +92,82 @@ evaluator_router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Live service health-check (issue: "I don't know what's broken in prod")
+# Key-gated. Makes REAL calls to each dependency, never raises.
+# GET /tradein/health/services?key=...
+# ---------------------------------------------------------------------------
+@evaluator_router.get("/health/services")
+def health_services(key: str = ""):
+    """Run live probes against every external dependency.
+
+    Gated by DASHBOARD_KEY (same gate as the ops dashboard) so the report —
+    which can include error snippets — is not publicly exposed.
+    """
+    import os as _os
+    expected = _os.environ.get("DASHBOARD_KEY", "greenbay-admin-2026")
+    if not key or key != expected:
+        raise HTTPException(status_code=403, detail="forbidden")
+    from greenbay_ai_evaluator.services.live_healthcheck_service import (
+        run_live_healthcheck,
+    )
+    return run_live_healthcheck()
+
+
+# ---------------------------------------------------------------------------
+# Size resolution (v6.1) — drives accurate per-size pricing
+# ---------------------------------------------------------------------------
+import re as _re
+
+_SIZE_UNIT_BY_CATEGORY: dict[str, str] = {
+    "tv": "inch", "tv_monitor": "inch", "monitor": "inch",
+    "washing_machine": "kg", "washer": "kg",
+    "refrigerator": "litre", "fridge": "litre", "freezer": "litre", "chiller": "litre",
+}
+
+
+def _infer_size_from_text(category: str, *texts: str) -> tuple[float | None, str | None]:
+    """Best-effort size inference from model number / vision text / titles.
+
+    Returns (value, unit) or (None, None). Category-aware so we don't, e.g.,
+    read a TV's '43' as litres.
+    """
+    cat = (category or "").lower().strip()
+    unit = _SIZE_UNIT_BY_CATEGORY.get(cat)
+    if not unit:
+        return None, None
+
+    blob = " ".join(t for t in texts if t).lower()
+    if not blob:
+        return None, None
+
+    if unit == "inch":
+        # explicit "55 inch" / '55"' first
+        m = _re.search(r'(\d{2,3})\s*(?:inch|inches|"|”|in\b)', blob)
+        if m:
+            v = float(m.group(1))
+            if 14 <= v <= 120:
+                return v, "inch"
+        # leading 2-digit token in a model code, e.g. 43S5K, 55T6C, UA55
+        for m in _re.finditer(r'\b[a-z]{0,3}(\d{2,3})[a-z0-9]*\b', blob):
+            v = float(m.group(1))
+            if 19 <= v <= 100:  # plausible TV diagonal
+                return v, "inch"
+    elif unit == "kg":
+        m = _re.search(r'(\d{1,2}(?:\.\d)?)\s*kg', blob)
+        if m:
+            v = float(m.group(1))
+            if 3 <= v <= 25:
+                return v, "kg"
+    elif unit == "litre":
+        m = _re.search(r'(\d{2,4})\s*(?:litre|liter|litres|liters|ltr|l\b)', blob)
+        if m:
+            v = float(m.group(1))
+            if 30 <= v <= 1000:
+                return v, "litre"
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _load_policy(category: str, db: Session) -> PricingPolicy:
@@ -473,6 +549,26 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             except Exception as le:
                 logger.warning(f"Google Lens identification failed: {le}")
 
+        # 3d. Resolve appliance size (v6.1) — user value wins; else infer.
+        size_value = req.size_value if (req.size_value and req.size_value > 0) else None
+        size_unit = req.size_unit or _SIZE_UNIT_BY_CATEGORY.get((req.category or "").lower().strip())
+        size_source = "user" if size_value else None
+        if not size_value:
+            _vision_obs = ""
+            _vision_model = ""
+            if vision_result:
+                _vision_obs = " ".join(str(x) for x in (vision_result.get("key_observations") or []))
+                _vision_model = str(vision_result.get("model_detected") or "")
+            _lens_name = lens_result.product_name if lens_result else ""
+            inferred_v, inferred_u = _infer_size_from_text(
+                req.category, req.model, _vision_model, _vision_obs, _lens_name,
+            )
+            if inferred_v:
+                size_value, size_unit, size_source = inferred_v, inferred_u, "inferred"
+                logger.info(f"Size inferred: {size_value} {size_unit} (from model/vision text)")
+            else:
+                logger.info("Size unknown: could not infer; pricing confidence will be lower")
+
         # 4. Score images (OpenCV if base64 data available)
         iq_result = score_images(
             image_urls=req.image_urls,
@@ -508,6 +604,30 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             viq = vision_result.get("photo_quality_score")
             if viq is not None:
                 iq_result.score = viq
+
+            # v6.1 FIX (issue #11): the vision grade was previously discarded,
+            # so condition was driven entirely by the seller's wizard choice
+            # (skewed to "A"). Reconcile: when vision is confident and grades
+            # the item WORSE than the seller claimed, trust the photos.
+            _grade_rank = {"A": 0, "B": 1, "C": 2, "D": 3}
+            vision_grade = str(vision_result.get("condition_grade") or "").upper().strip()
+            vision_defects = vision_result.get("defects", [])
+            has_visible_wear = any(
+                str(d.get("severity", "")).lower() in ("medium", "high")
+                for d in vision_defects
+            )
+            if vision_grade in _grade_rank:
+                # Take the worse of seller-reported vs vision-reported grade.
+                if _grade_rank[vision_grade] > _grade_rank.get(grade, 1):
+                    logger.info(
+                        f"Condition grade adjusted by vision: seller={grade} -> "
+                        f"vision={vision_grade} (visible wear={has_visible_wear})"
+                    )
+                    grade = vision_grade
+                elif has_visible_wear and grade == "A":
+                    # Vision saw real wear but still said A — downgrade to B as a floor.
+                    logger.info("Condition downgraded A->B: vision detected visible wear")
+                    grade = "B"
 
         # 5d. Age-based condition grade cap (hard rule)
         # Products cannot be Grade A if old, regardless of what vision says
@@ -551,6 +671,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 brand=req.brand, model=req.model,
                 category=req.category, condition=req.condition_grade,
                 country=_search_country,
+                size_value=size_value, size_unit=size_unit,
             )
             internet_price = internet_result.launch_price
             logger.info(f"Internet price: {internet_price} (confidence: {internet_result.confidence})")
@@ -669,6 +790,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 expert_avg=expert_avg,
                 historical_avg=historical_avg,
                 comparables_avg=db_comparables_avg,
+                frontend_source=req.retail_price_source,
             )
 
             # Add detailed breakdown if sources responded
@@ -756,6 +878,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     expert_avg=expert_avg,
                     historical_avg=None,
                     comparables_avg=db_comparables_avg,
+                    frontend_source=req.retail_price_source,
                 )
             src_list = []
             if price_verification and price_verification.get("sources"):
@@ -971,6 +1094,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             decision_reason=result.decision_reason,
             country=req_country,
             currency_code=req_currency,
+            size_value=size_value,
+            size_unit=size_unit,
+            size_source=size_source,
             pricing_policy_snapshot=_policy_snapshot(policy),
             comparable_data={
                 "count": comp_result.count,

@@ -562,6 +562,21 @@
                                         style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
                                     You'll upload a photo of the model label in the next step for verification.</p>
                             </div>
+                            <!-- Appliance size (TV inches / washer kg / fridge litres) -->
+                            <div class="form-group" id="sizeGroup" style="display:none; margin-top: 16px;">
+                                <label class="form-label" id="sizeLabel">What is the size?</label>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <input type="number" min="0" step="1" class="form-input" id="sizeInput"
+                                        style="max-width:160px;"
+                                        placeholder="e.g. 55"
+                                        oninput="updateSize(this.value)">
+                                    <span id="sizeUnitLabel" style="font-weight:600;color:var(--forest);"></span>
+                                </div>
+                                <p class="form-hint" id="sizeHint">
+                                    Size strongly affects the price (a 43" and a 55" TV are very different).
+                                    If you're not sure, leave it blank — we'll estimate it from your photos and model number.
+                                </p>
+                            </div>
                             <!-- Other category description -->
                             <div class="form-group" id="otherDescriptionGroup" style="display:none; margin-top: 16px;">
                                 <label class="form-label">Describe your appliance</label>
