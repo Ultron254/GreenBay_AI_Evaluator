@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import statistics
 import traceback
 from datetime import datetime, timezone
@@ -58,6 +59,9 @@ ACQUISITION_RATIOS: dict[str, float] = {
     "woofer": 0.85,
     "water_dispenser": 0.78,
     "chiller": 0.77,
+    # Calibrated from real purchase/sell data (>=20 deals each, Jun 2026):
+    "kettle": 0.60,      # was defaulting to 0.70 -> overpriced (within-20% only 49%)
+    "iron_box": 0.72,
 }
 DEFAULT_ACQUISITION_RATIO = 0.70
 
@@ -543,11 +547,28 @@ def lookup_sales_stock(
     return None
 
 
+_RE_SEP = re.compile(r"[\s_\-/]+")
+
+
+def _collapse(s: str) -> str:
+    """Lower-case and strip ALL separators so 'washing machine', 'washing_machine'
+    and 'washing-machine' all compare equal (fixes multi-word categories silently
+    falling back to the default ratio)."""
+    return _RE_SEP.sub("", (s or "").lower())
+
+
 def get_category_acquisition_ratio(category: str) -> float:
-    """Return the acquisition ratio for a category from the real-data table."""
-    cat_n = _normalize(category)
+    """Return the acquisition ratio for a category from the real-data table.
+
+    Separator-insensitive: the live engine passes slugs like 'washing_machine'
+    while the sales sheet stores 'washing machine'; both must resolve to 0.74.
+    """
+    cat_c = _collapse(category)
+    if not cat_c:
+        return DEFAULT_ACQUISITION_RATIO
     for key, ratio in ACQUISITION_RATIOS.items():
-        if key in cat_n or cat_n in key:
+        key_c = _collapse(key)
+        if key_c in cat_c or cat_c in key_c:
             return ratio
     return DEFAULT_ACQUISITION_RATIO
 
