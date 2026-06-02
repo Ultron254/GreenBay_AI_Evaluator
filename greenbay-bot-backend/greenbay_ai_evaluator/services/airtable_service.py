@@ -377,6 +377,34 @@ def find_record_by_ref(session_ref8: str) -> dict | None:
         return None
 
 
+def find_record_by_model_price(model: str, ai_price: float) -> dict | None:
+    """Fallback match for historical rows without a Ref marker: match on exact
+    Model Number AND AI Evaluated Price (KES). Returns {'id','fields'} or None."""
+    cfg = _get_config()
+    if cfg is None or not model:
+        return None
+    try:
+        import requests
+        from urllib.parse import quote
+        safe_model = str(model).replace('"', '\\"')
+        formula = f'AND({{Model Number}}="{safe_model}",{{AI Evaluated Price (KES)}}={float(ai_price or 0)})'
+        table = quote(cfg["table"])
+        url = (
+            f"https://api.airtable.com/v0/{cfg['base_id']}/{table}"
+            f"?filterByFormula={quote(formula)}&maxRecords=1"
+        )
+        resp = requests.get(url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return None
+        records = resp.json().get("records", [])
+        if not records:
+            return None
+        return {"id": records[0]["id"], "fields": records[0].get("fields", {}) or {}}
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"Airtable find_record_by_model_price failed: {e}")
+        return None
+
+
 def patch_record_by_id(record_id: str, fields: dict) -> bool:
     """Patch arbitrary fields on a record by its Airtable id. Best-effort."""
     cfg = _get_config()

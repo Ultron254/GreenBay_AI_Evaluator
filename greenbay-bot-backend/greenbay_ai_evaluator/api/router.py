@@ -265,7 +265,7 @@ def airtable_patch_missing(
         raise HTTPException(status_code=400, detail="since must be YYYY-MM-DD")
 
     from greenbay_ai_evaluator.services.airtable_service import (
-        _get_config, find_record_by_ref, patch_record_by_id,
+        _get_config, find_record_by_ref, find_record_by_model_price, patch_record_by_id,
     )
     if _get_config() is None:
         raise HTTPException(status_code=400, detail="Airtable not configured")
@@ -289,7 +289,11 @@ def airtable_patch_missing(
         return v is None or v == "" or v == 0
 
     for vs in sessions:
+        # Prefer the exact Ref marker; fall back to Model+AI-price for older rows
+        # that were written before the Ref marker existed.
         rec = find_record_by_ref(str(vs.id)[:8])
+        if not rec and vs.model and vs.opening_offer:
+            rec = find_record_by_model_price(vs.model, float(vs.opening_offer))
         if not rec:
             result["no_match"] += 1
             continue
