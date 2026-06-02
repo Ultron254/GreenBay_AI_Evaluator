@@ -149,6 +149,14 @@ class Settings(BaseSettings):
         env="TEAM_NOTIFICATION_EMAILS",
     )
 
+    # Simple SMTP alternative to SES (e.g. Google Workspace / Gmail app password).
+    # If SMTP_HOST is set, email goes via SMTP and SES is not needed at all.
+    smtp_host: str = Field(default="", env="SMTP_HOST")
+    smtp_port: int = Field(default=587, env="SMTP_PORT")
+    smtp_user: str = Field(default="", env="SMTP_USER", repr=False)
+    smtp_password: str = Field(default="", env="SMTP_PASSWORD", repr=False)
+    smtp_from: str = Field(default="", env="SMTP_FROM")
+
     # LangSmith Configuration
     langsmith_api_key: Optional[str] = Field(default=None, env="LANGSMITH_API_KEY", repr=False)
     langsmith_project: str = Field(default="greenbay-chatbot", env="LANGSMITH_PROJECT")

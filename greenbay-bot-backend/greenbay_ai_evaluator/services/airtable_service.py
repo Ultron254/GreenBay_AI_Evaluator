@@ -351,6 +351,43 @@ def patch_in_house_evaluator_price(record_id: str, price_kes: float) -> bool:
     return False
 
 
+def find_record_by_ref(session_ref8: str) -> dict | None:
+    """Return {'id', 'fields'} for the Airtable row whose Notes contains
+    'Ref: <session_ref8>', or None. Best-effort, never raises."""
+    cfg = _get_config()
+    if cfg is None:
+        return None
+    try:
+        import requests
+        from urllib.parse import quote
+        table = quote(cfg["table"])
+        url = (
+            f"https://api.airtable.com/v0/{cfg['base_id']}/{table}"
+            f"?filterByFormula=FIND('{session_ref8}',{{Notes}})&maxRecords=1"
+        )
+        resp = requests.get(url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return None
+        records = resp.json().get("records", [])
+        if not records:
+            return None
+        return {"id": records[0]["id"], "fields": records[0].get("fields", {}) or {}}
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"Airtable find_record_by_ref failed: {e}")
+        return None
+
+
+def patch_record_by_id(record_id: str, fields: dict) -> bool:
+    """Patch arbitrary fields on a record by its Airtable id. Best-effort."""
+    cfg = _get_config()
+    if cfg is None or not fields:
+        return False
+    ok, err = _patch_record(cfg, record_id, fields)
+    if not ok:
+        logger.warning(f"Airtable PATCH {record_id}: {err}")
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # Public API — WRITE
 # ---------------------------------------------------------------------------

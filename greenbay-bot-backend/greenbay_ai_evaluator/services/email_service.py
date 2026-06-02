@@ -141,14 +141,71 @@ def build_accepted_email(vs: dict[str, Any]) -> tuple[str, str, str]:
     return subject, text_body, html_body
 
 
+def _send_smtp(subject: str, text_body: str, html_body: str) -> bool:
+    """Send via plain SMTP (e.g. Google Workspace / Gmail app password).
+
+    Used when SMTP_HOST is configured — simpler than SES (no identity
+    verification or sandbox). Returns True on success.
+    """
+    from app.config import get_settings
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    s = get_settings()
+    host = getattr(s, "smtp_host", "") or ""
+    if not host:
+        return False
+    recipients = _recipients()
+    if not recipients:
+        logger.warning("Email: no TEAM_NOTIFICATION_EMAILS configured — skipping")
+        return False
+    sender = getattr(s, "smtp_from", "") or getattr(s, "smtp_user", "") or ""
+    if not sender:
+        logger.warning("Email: SMTP_FROM / SMTP_USER not configured — skipping")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = ", ".join(recipients)
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        port = int(getattr(s, "smtp_port", 587) or 587)
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.ehlo()
+            try:
+                server.starttls()
+                server.ehlo()
+            except smtplib.SMTPException:
+                pass  # server may not support STARTTLS (e.g. port 465 wrappers)
+            user = getattr(s, "smtp_user", "") or ""
+            pwd = getattr(s, "smtp_password", "") or ""
+            if user and pwd:
+                server.login(user, pwd)
+            server.sendmail(sender, recipients, msg.as_string())
+        logger.info(f"Email: sent via SMTP to {recipients}")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Email: SMTP send failed: {e}")
+        return False
+
+
 def _send_ses(subject: str, text_body: str, html_body: str) -> bool:
+    """Deliver email. Prefers SMTP when SMTP_HOST is set, else uses AWS SES."""
     from app.config import get_settings
     s = get_settings()
+
+    # Simpler path first: SMTP (Google Workspace / Gmail / any provider).
+    if getattr(s, "smtp_host", ""):
+        return _send_smtp(subject, text_body, html_body)
 
     sender = getattr(s, "ses_sender_email", "") or ""
     recipients = _recipients()
     if not sender:
-        logger.warning("Email: SES_SENDER_EMAIL not configured — skipping accepted-offer email")
+        logger.warning("Email: no SMTP_HOST and no SES_SENDER_EMAIL — email is OFF")
         return False
     if not recipients:
         logger.warning("Email: no TEAM_NOTIFICATION_EMAILS configured — skipping")
@@ -177,7 +234,7 @@ def _send_ses(subject: str, text_body: str, html_body: str) -> bool:
                 },
             },
         )
-        logger.info(f"Email: accepted-offer notification sent to {recipients}")
+        logger.info(f"Email: notification sent via SES to {recipients}")
         return True
     except Exception as e:
         logger.warning(f"Email: SES send failed: {e}")

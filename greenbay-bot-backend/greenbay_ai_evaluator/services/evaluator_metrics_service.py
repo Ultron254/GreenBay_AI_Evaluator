@@ -141,6 +141,31 @@ def compute_evaluator_metrics(db: Session, days: int = 30) -> dict[str, Any]:
         })
     out["by_category"] = category_summary
 
+    # Daily time series (volume + avg confidence) for trend charts
+    daily: dict[str, dict[str, Any]] = {}
+    for s in sessions:
+        if not s.created_at:
+            continue
+        day = s.created_at.date().isoformat()
+        b = daily.setdefault(day, {"count": 0, "conf_sum": 0.0, "conf_n": 0, "accepted": 0})
+        b["count"] += 1
+        if s.confidence_score is not None:
+            b["conf_sum"] += float(s.confidence_score)
+            b["conf_n"] += 1
+        d = (s.final_decision or s.decision or "").lower()
+        if d.startswith("accept"):
+            b["accepted"] += 1
+    timeseries = [
+        {
+            "date": day,
+            "count": b["count"],
+            "avg_confidence": round(b["conf_sum"] / b["conf_n"], 1) if b["conf_n"] else 0.0,
+            "accepted": b["accepted"],
+        }
+        for day, b in sorted(daily.items())
+    ]
+    out["timeseries"] = timeseries
+
     # Recent evaluations (latest 20)
     recent = []
     for s in sorted(sessions, key=lambda x: x.created_at or since, reverse=True)[:20]:

@@ -123,11 +123,23 @@ def dashboard_metrics(
     return compute_evaluator_metrics(db, days=max(1, min(days, 365)))
 
 
-@evaluator_router.get("/dashboard")
-def dashboard_page(_: bool = Depends(verify_admin_key)):
-    """Serve the single-page ops dashboard (service health + pricing performance).
+@evaluator_router.get("/dashboard/calibration")
+def dashboard_calibration(
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """Back-test the pricing policy against real sold prices (issue #12, gated)."""
+    from greenbay_ai_evaluator.services.calibration_service import compute_calibration
+    return compute_calibration(db)
 
-    Open in a browser as: /tradein/dashboard?key=YOUR_DASHBOARD_KEY
+
+@evaluator_router.get("/dashboard")
+def dashboard_page():
+    """Serve the single-page ops dashboard shell (NOT gated).
+
+    The HTML itself contains no data — it asks for the access key and then
+    fetches the gated /dashboard/metrics and /health/services endpoints with
+    it. This lets the home page link to the dashboard without leaking the key.
     """
     from fastapi.responses import HTMLResponse
     from greenbay_ai_evaluator.api.dashboard_page import DASHBOARD_HTML
@@ -227,6 +239,84 @@ def airtable_backfill(
     logger.info(
         f"Airtable backfill complete: written={result['written']} "
         f"failed={result['failed']} replayed={result['fallback_replayed']}"
+    )
+    return result
+
+
+@evaluator_router.post("/admin/airtable-patch-missing")
+def airtable_patch_missing(
+    since: str = "2026-04-01",
+    dry_run: bool = True,
+    limit: int = 5000,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """Backfill EMPTY columns on existing Airtable rows from stored sessions.
+
+    Matches a row to its session via the 'Ref: <id8>' marker in Notes (added to
+    every live write). Only fields that are currently empty/zero are patched, so
+    it is idempotent and safe to re-run. Fills: New Price (Estimate), Country,
+    Currency, Customer Asking Price (KES), Customer Name, Customer Phone.
+    """
+    from datetime import datetime as _dt
+    try:
+        since_dt = _dt.fromisoformat(since)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="since must be YYYY-MM-DD")
+
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, find_record_by_ref, patch_record_by_id,
+    )
+    if _get_config() is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+
+    sessions = (
+        db.query(ValuationSession)
+        .filter(ValuationSession.created_at >= since_dt)
+        .order_by(ValuationSession.created_at.asc())
+        .limit(max(1, min(limit, 20000)))
+        .all()
+    )
+
+    result: dict[str, Any] = {
+        "since": since, "dry_run": dry_run,
+        "sessions_scanned": len(sessions),
+        "rows_matched": 0, "rows_patched": 0, "no_match": 0, "already_full": 0,
+        "samples": [],
+    }
+
+    def _empty(v) -> bool:
+        return v is None or v == "" or v == 0
+
+    for vs in sessions:
+        rec = find_record_by_ref(str(vs.id)[:8])
+        if not rec:
+            result["no_match"] += 1
+            continue
+        result["rows_matched"] += 1
+        cur = rec["fields"]
+        desired = {
+            "New Price (Estimate)": float(getattr(vs, "retail_price", 0) or 0),
+            "Country": getattr(vs, "country", "KE") or "KE",
+            "Currency": getattr(vs, "currency_code", "KES") or "KES",
+            "Customer Asking Price (KES)": float(vs.seller_asking_price or 0),
+            "Customer Name": vs.seller_name or "",
+            "Customer Phone": vs.seller_phone or "",
+        }
+        patch = {k: v for k, v in desired.items() if _empty(cur.get(k)) and not _empty(v)}
+        if not patch:
+            result["already_full"] += 1
+            continue
+        if len(result["samples"]) < 10:
+            result["samples"].append({"id": str(vs.id)[:8], "patch": patch})
+        if dry_run:
+            continue
+        if patch_record_by_id(rec["id"], patch):
+            result["rows_patched"] += 1
+
+    logger.info(
+        f"Airtable patch-missing: matched={result['rows_matched']} "
+        f"patched={result['rows_patched']} no_match={result['no_match']}"
     )
     return result
 
@@ -489,12 +579,14 @@ def _build_airtable_payload(
     else:
         attachment_summary = "Images not attached (upload or presign failed)"
 
-    # Notes: combine the decision reason with any Vertex AI observations
+    # Notes: combine the decision reason with any Vertex AI observations.
+    # The 'Ref:' marker lets accept-offer / backfill patches find this row later.
     note_parts: list[str] = []
     if vs.decision_reason:
         note_parts.append(str(vs.decision_reason))
     if vertex_observations:
         note_parts.append(f"Vertex AI: {vertex_observations}")
+    note_parts.append(f"Ref: {str(vs.id)[:8]}")
     notes = " | ".join(p for p in note_parts if p)[:2000]
 
     payload: dict[str, Any] = {
@@ -508,6 +600,7 @@ def _build_airtable_payload(
         "Product Images": images_for_airtable,
         "Customer Asking Price (KES)": float(req.seller_asking_price or 0),
         "AI Evaluated Price (KES)": float(vs.opening_offer or 0),
+        "New Price (Estimate)": float(getattr(vs, "retail_price", 0) or 0),
         "Vertex AI Price (KES)": vertex_price,
         "Attachment Summary": attachment_summary,
         "Customer Name": req.seller_name or "",
@@ -565,6 +658,7 @@ def _build_airtable_payload_from_session(vs: ValuationSession) -> dict:
         "Condition": vs.condition_grade or "",
         "Customer Asking Price (KES)": float(vs.seller_asking_price or 0),
         "AI Evaluated Price (KES)": float(vs.opening_offer or 0),
+        "New Price (Estimate)": float(getattr(vs, "retail_price", 0) or 0),
         "Customer Name": vs.seller_name or "",
         "Customer Phone": vs.seller_phone or "",
         "Evaluation Status": vs.decision or "",
