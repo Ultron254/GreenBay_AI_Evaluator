@@ -333,6 +333,179 @@ def airtable_patch_missing(
     return result
 
 
+_AUDIT_COLS = [
+    "Date Submitted", "Brand", "Model Number", "Category", "Condition",
+    "AI Evaluated Price (KES)", "New Price (Estimate)", "Vertex AI Price (KES)",
+    "Customer Asking Price (KES)", "Customer Name", "Customer Phone",
+    "Country", "Currency", "AI Pricing Justification", "Notes",
+]
+
+
+def _at_empty(v) -> bool:
+    return v is None or v == 0 or (isinstance(v, str) and not v.strip())
+
+
+@evaluator_router.get("/admin/airtable-audit")
+def airtable_audit(samples: int = 15, _: bool = Depends(verify_admin_key)):
+    """Read-only deep audit of the live Airtable base. Reports total rows, the
+    empty-cell count per important column, and (the key one) the rows that HAVE a
+    Model Number but are MISSING a New Price — so we can see exactly what's left."""
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated,
+    )
+    cfg = _get_config()
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+
+    total = 0
+    empties = {c: 0 for c in _AUDIT_COLS}
+    missing_np_count = 0
+    missing_np_models: list[dict] = []
+    for rec in list_records_paginated(cfg, fields=_AUDIT_COLS):
+        f = rec.get("fields", {}) or {}
+        total += 1
+        for c in _AUDIT_COLS:
+            if _at_empty(f.get(c)):
+                empties[c] += 1
+        model = f.get("Model Number")
+        if model and str(model).strip() and _at_empty(f.get("New Price (Estimate)")):
+            missing_np_count += 1
+            if len(missing_np_models) < samples:
+                missing_np_models.append({
+                    "id": rec["id"],
+                    "brand": f.get("Brand", ""),
+                    "model": model,
+                    "category": f.get("Category", ""),
+                    "ai_price": f.get("AI Evaluated Price (KES)"),
+                })
+
+    return {
+        "total_rows": total,
+        "empty_counts": empties,
+        "missing_new_price_with_model": {
+            "count": missing_np_count,
+            "note": "Rows that have a Model Number but no New Price — fixable via "
+                    "POST /admin/airtable-fill-newprice",
+            "samples": missing_np_models,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Airtable: fill MISSING New Price on rows that have a model number
+# ---------------------------------------------------------------------------
+_fill_np_state: dict[str, Any] = {"running": False, "started_at": None, "progress": {}}
+
+
+def _run_fill_newprice_job(limit: int) -> None:
+    """Fill empty 'New Price (Estimate)' on Airtable rows that have a model:
+    reuse another row of the same model that already has a price (free), else a
+    Gemini grounded search. One lookup per distinct model."""
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated, patch_record_by_id,
+    )
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        _airtable_new_price_for, _gemini_new_price,
+    )
+    cfg = _get_config()
+    prog = {"targets": 0, "done": 0, "filled": 0, "from_airtable": 0,
+            "from_gemini": 0, "not_found": 0}
+    _fill_np_state["progress"] = prog
+    if cfg is None:
+        prog["error"] = "Airtable not configured"
+        return
+
+    rows = list_records_paginated(
+        cfg, fields=["Model Number", "Brand", "Category", "New Price (Estimate)"],
+    )
+    targets = [
+        r for r in rows
+        if str((r.get("fields", {}) or {}).get("Model Number", "")).strip()
+        and _at_empty((r.get("fields", {}) or {}).get("New Price (Estimate)"))
+    ]
+    prog["targets"] = len(targets)
+    cache: dict[str, float] = {}
+    calls = 0
+    for r in targets:
+        f = r.get("fields", {}) or {}
+        model = str(f.get("Model Number", "")).strip()
+        brand = str(f.get("Brand", "")).strip()
+        category = str(f.get("Category", "")).strip()
+        key = model.lower()
+        if key in cache:
+            price = cache[key]
+            src = "cache"
+        else:
+            price = _airtable_new_price_for(model)
+            src = "airtable" if price else ""
+            if not price and calls < limit:
+                calls += 1
+                price = _gemini_new_price(brand or model, model, category)
+                src = "gemini" if price else ""
+            cache[key] = price or 0.0
+        prog["done"] += 1
+        if price and price > 0:
+            if patch_record_by_id(r["id"], {"New Price (Estimate)": round(price)}):
+                prog["filled"] += 1
+                if src == "airtable":
+                    prog["from_airtable"] += 1
+                elif src == "gemini":
+                    prog["from_gemini"] += 1
+        else:
+            prog["not_found"] += 1
+
+
+@evaluator_router.post("/admin/airtable-fill-newprice")
+def airtable_fill_newprice(
+    dry_run: bool = True, limit: int = 1000, _: bool = Depends(verify_admin_key),
+):
+    """Fill empty New Price on Airtable rows that have a Model Number.
+    dry_run=true -> count targets only. dry_run=false -> BACKGROUND fill job."""
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated,
+    )
+    cfg = _get_config()
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+    if dry_run:
+        rows = list_records_paginated(
+            cfg, fields=["Model Number", "New Price (Estimate)"],
+        )
+        targets = [
+            r for r in rows
+            if str((r.get("fields", {}) or {}).get("Model Number", "")).strip()
+            and _at_empty((r.get("fields", {}) or {}).get("New Price (Estimate)"))
+        ]
+        return {"dry_run": True, "rows_total": len(rows),
+                "rows_with_model_missing_newprice": len(targets)}
+    if _fill_np_state.get("running"):
+        return {"started": False, "reason": "already running",
+                "progress": _fill_np_state.get("progress", {})}
+
+    import threading
+    from datetime import datetime as _dt
+    _fill_np_state["running"] = True
+    _fill_np_state["started_at"] = _dt.utcnow().isoformat()
+
+    def _job():
+        try:
+            _run_fill_newprice_job(limit)
+        finally:
+            _fill_np_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+@evaluator_router.get("/admin/airtable-fill-newprice")
+def airtable_fill_newprice_status(_: bool = Depends(verify_admin_key)):
+    return {
+        "running": _fill_np_state.get("running"),
+        "started_at": _fill_np_state.get("started_at"),
+        "progress": _fill_np_state.get("progress", {}),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Gemini re-pricing pass — retro-fill REAL historical "New Price (Estimate)"
 # ---------------------------------------------------------------------------
