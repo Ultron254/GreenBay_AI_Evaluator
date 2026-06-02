@@ -188,7 +188,9 @@ def gemini_price_research(
     for attempt in range(2):
         try:
             import requests as _req
-            resp = _req.post(endpoint, headers=headers, json=body, timeout=30)
+            # Grounded search has been observed at ~35-38s; a 30s timeout was
+            # killing the first attempt every time. Give it real headroom.
+            resp = _req.post(endpoint, headers=headers, json=body, timeout=50)
         except Exception as e:
             logger.warning(f"Gemini price research: request failed (attempt {attempt+1}): {e}")
             continue
@@ -222,15 +224,35 @@ def gemini_price_research(
             )
         result.raw_snippets.append(text[:500])
 
-        # Extract grounding sources if available
-        grounding = candidate.get("groundingMetadata", {})
-        for chunk in grounding.get("groundingChunks", []):
-            web = chunk.get("web", {})
-            if web.get("uri"):
-                result.sources.append({
-                    "title": web.get("title", ""),
-                    "url": web["uri"],
-                })
+        # Extract grounding sources. Vertex has shipped these under a few
+        # different shapes; check all known locations so issue #8's
+        # justification gets the real URLs the price was grounded on.
+        grounding = candidate.get("groundingMetadata", {}) or {}
+        seen_urls: set[str] = set()
+
+        def _add_src(title: str, url: str) -> None:
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                result.sources.append({"title": title or "", "url": url})
+
+        for chunk in grounding.get("groundingChunks", []) or []:
+            web = (chunk.get("web") or {}) if isinstance(chunk, dict) else {}
+            _add_src(web.get("title", ""), web.get("uri", ""))
+        # Alternate/legacy shapes
+        for attr in grounding.get("groundingAttributions", []) or []:
+            web = (attr.get("web") or {}) if isinstance(attr, dict) else {}
+            _add_src(web.get("title", ""), web.get("uri", "") or web.get("url", ""))
+        sep = grounding.get("searchEntryPoint") or {}
+        for q in grounding.get("webSearchQueries", []) or []:
+            result.raw_snippets.append(f"search_query: {q}")
+
+        if not result.sources:
+            # Surface the actual metadata keys so we can map the real shape
+            # from the next health-check without guessing.
+            logger.warning(
+                f"Gemini price research: price found but 0 sources captured; "
+                f"groundingMetadata keys={list(grounding.keys())}"
+            )
 
         parsed = _extract_json_from_text(text)
         if parsed and parsed.get("new_price"):
