@@ -49,6 +49,55 @@ RETRY_BACKOFFS = (1, 3, 9)           # seconds between retries
 REQUEST_TIMEOUT = 15                 # per-request timeout
 RATE_LIMIT_DELAY = 0.25              # 5 req/sec max → 250ms spacing
 
+# Cache of the table's known column names (from the Airtable Meta API).
+# Prevents 422 UNKNOWN_FIELD_NAME from silently killing every write when a
+# column we send doesn't exist on the base (root cause of the May-22 stop).
+_schema_lock = threading.Lock()
+_known_fields_cache: dict[str, Any] = {"fields": None, "fetched_at": 0.0}
+_SCHEMA_TTL = 600  # seconds
+
+import re as _re
+
+_UNKNOWN_FIELD_RE = _re.compile(r'[Uu]nknown field name[:\s]+["\']([^"\']+)["\']')
+
+
+def _get_known_fields(cfg: dict[str, str], force: bool = False) -> Optional[set[str]]:
+    """Return the set of existing column names on the table, or None if unknown.
+
+    Uses the Airtable Meta API (requires the token to have schema.bases:read).
+    If the meta call is not permitted/available we return None, and the writer
+    falls back to its self-healing 422 retry instead of pre-filtering.
+    """
+    now = time.time()
+    with _schema_lock:
+        if (
+            not force
+            and _known_fields_cache["fields"] is not None
+            and (now - _known_fields_cache["fetched_at"]) < _SCHEMA_TTL
+        ):
+            return _known_fields_cache["fields"]
+
+    import requests
+    url = f"https://api.airtable.com/v0/meta/bases/{cfg['base_id']}/tables"
+    try:
+        resp = requests.get(url, headers=_auth_headers(cfg), timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            logger.debug(f"Airtable meta schema unavailable: HTTP {resp.status_code}")
+            return None
+        tables = resp.json().get("tables", [])
+    except Exception as e:
+        logger.debug(f"Airtable meta schema fetch failed: {e}")
+        return None
+
+    target = next((t for t in tables if t.get("name") == cfg["table"]), None)
+    if not target:
+        return None
+    names = {f.get("name") for f in target.get("fields", []) if f.get("name")}
+    with _schema_lock:
+        _known_fields_cache["fields"] = names
+        _known_fields_cache["fetched_at"] = now
+    return names
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -127,22 +176,49 @@ def _dump_fallback(payload: dict) -> Optional[Path]:
 
 
 def _post_record(cfg: dict[str, str], fields: dict) -> tuple[bool, Optional[str]]:
-    """POST a single record to Airtable. Returns (success, error_message)."""
+    """POST a single record to Airtable, self-healing on unknown-field errors.
+
+    If Airtable rejects the record with a 422 "Unknown field name" error, the
+    offending column is dropped and the write is retried (up to 8 times) so a
+    single missing column never discards the whole record. The set of dropped
+    columns is logged so the team can add them to the base later.
+    """
     import requests
 
-    body = {"fields": fields, "typecast": True}
-    try:
-        resp = requests.post(
-            _base_url(cfg),
-            headers=_auth_headers(cfg),
-            json=body,
-            timeout=REQUEST_TIMEOUT,
-        )
+    work = dict(fields)
+    dropped: list[str] = []
+    for _ in range(8):
+        body = {"fields": work, "typecast": True}
+        try:
+            resp = requests.post(
+                _base_url(cfg),
+                headers=_auth_headers(cfg),
+                json=body,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+
         if resp.status_code in (200, 201):
+            if dropped:
+                logger.warning(
+                    f"Airtable: wrote record after dropping unknown columns {dropped} "
+                    f"(add these columns to the base to capture them)"
+                )
             return True, None
-        return False, f"HTTP {resp.status_code}: {resp.text[:240]}"
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+
+        text = resp.text[:300]
+        if resp.status_code == 422:
+            m = _UNKNOWN_FIELD_RE.search(text)
+            if m:
+                bad = m.group(1)
+                if bad in work:
+                    work.pop(bad, None)
+                    dropped.append(bad)
+                    continue
+        return False, f"HTTP {resp.status_code}: {text}"
+
+    return False, f"HTTP 422: too many unknown fields (dropped {dropped})"
 
 
 def _patch_record(cfg: dict[str, str], record_id: str, fields: dict) -> tuple[bool, Optional[str]]:
@@ -317,6 +393,21 @@ def write_evaluation(data: dict) -> bool:
     if not fields:
         return False
 
+    # Pre-filter to columns that actually exist on the base (when the schema is
+    # readable). This avoids 422s entirely; _post_record's self-healing handles
+    # the case where the schema can't be read.
+    known = _get_known_fields(cfg)
+    if known:
+        missing = [k for k in fields if k not in known]
+        if missing:
+            logger.warning(
+                f"Airtable: dropping columns not present on base: {missing} "
+                f"(add them to '{cfg['table']}' to capture these values)"
+            )
+        fields = {k: v for k, v in fields.items() if k in known}
+        if not fields:
+            return False
+
     last_err: Optional[str] = None
     for attempt, backoff in enumerate((0,) + RETRY_BACKOFFS, start=1):
         if backoff:
@@ -365,12 +456,27 @@ def retry_failed_writes() -> int:
 
     logger.info(f"Airtable: attempting to replay {len(pending_files)} pending records")
 
+    # Refresh schema once so replays also get pre-filtered to existing columns.
+    known = _get_known_fields(cfg, force=True)
+    consecutive_failures = 0
+    MAX_CONSECUTIVE = 5  # circuit breaker: stop only on a sustained outage
+
     for fp in pending_files:
         try:
             fields = json.loads(fp.read_text(encoding="utf-8"))
         except Exception as e:
             logger.warning(f"Airtable replay: skipping unreadable {fp.name}: {e}")
             continue
+
+        if known:
+            fields = {k: v for k, v in fields.items() if k in known}
+            if not fields:
+                # Nothing left to write — drop the stale file.
+                try:
+                    fp.unlink()
+                except Exception:
+                    pass
+                continue
 
         ok, err = _post_record(cfg, fields)
         if ok:
@@ -379,13 +485,20 @@ def retry_failed_writes() -> int:
             except Exception:
                 pass
             recovered += 1
+            consecutive_failures = 0
             _bump_today_counter(success=True)
         else:
             logger.warning(f"Airtable replay: {fp.name} still failing — {err}")
             _bump_today_counter(success=False)
-            # Stop replaying on first failure to avoid hammering the API
-            # during a known outage.
-            break
+            consecutive_failures += 1
+            # Only stop on a sustained outage, not a single bad record — a
+            # single un-replayable file used to block the entire backlog.
+            if consecutive_failures >= MAX_CONSECUTIVE:
+                logger.warning(
+                    f"Airtable replay: {consecutive_failures} consecutive failures — "
+                    f"pausing replay (likely an outage). {recovered} recovered so far."
+                )
+                break
 
         time.sleep(RATE_LIMIT_DELAY)
 

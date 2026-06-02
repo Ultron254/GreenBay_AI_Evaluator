@@ -946,6 +946,8 @@ async function callEvaluationAPI() {
         condition_score: conditionScores[a.condition] || 60,
         defects: defects,
         seller_asking_price: a.price || null,
+        seller_name: a.sellerName || null,
+        seller_phone: a.sellerPhone || null,
         image_urls: [],
         image_data: combinedImageData,
         retail_price: defaultRetail[a.category] || 35000,
