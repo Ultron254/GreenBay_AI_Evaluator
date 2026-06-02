@@ -248,15 +248,22 @@ def airtable_patch_missing(
     since: str = "2026-04-01",
     dry_run: bool = True,
     limit: int = 5000,
+    include_new_price: bool = False,
     db: Session = Depends(get_db),
     _: bool = Depends(verify_admin_key),
 ):
     """Backfill EMPTY columns on existing Airtable rows from stored sessions.
 
-    Matches a row to its session via the 'Ref: <id8>' marker in Notes (added to
-    every live write). Only fields that are currently empty/zero are patched, so
-    it is idempotent and safe to re-run. Fills: New Price (Estimate), Country,
-    Currency, Customer Asking Price (KES), Customer Name, Customer Phone.
+    Matches a row to its session via the 'Ref: <id8>' marker in Notes (or, for
+    older rows, by Model Number + AI price). Only currently-empty fields are
+    patched, so it is idempotent.
+
+    Safely fills: Country, Currency, Customer Asking Price, Name, Phone.
+
+    NOTE: 'New Price (Estimate)' is NOT backfilled by default, because sessions
+    created before the Gemini fix stored the old hallucinated category default
+    (45000/65000). Pass include_new_price=true ONLY if you accept those legacy
+    values; real historical new-prices require a Gemini re-pricing pass instead.
     """
     from datetime import datetime as _dt
     try:
@@ -300,13 +307,14 @@ def airtable_patch_missing(
         result["rows_matched"] += 1
         cur = rec["fields"]
         desired = {
-            "New Price (Estimate)": float(getattr(vs, "retail_price", 0) or 0),
             "Country": getattr(vs, "country", "KE") or "KE",
             "Currency": getattr(vs, "currency_code", "KES") or "KES",
             "Customer Asking Price (KES)": float(vs.seller_asking_price or 0),
             "Customer Name": vs.seller_name or "",
             "Customer Phone": vs.seller_phone or "",
         }
+        if include_new_price:
+            desired["New Price (Estimate)"] = float(getattr(vs, "retail_price", 0) or 0)
         patch = {k: v for k, v in desired.items() if _empty(cur.get(k)) and not _empty(v)}
         if not patch:
             result["already_full"] += 1
