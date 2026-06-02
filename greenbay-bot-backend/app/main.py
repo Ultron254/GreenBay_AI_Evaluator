@@ -262,6 +262,13 @@ async def lifespan(app: FastAPI):
     reference_data_task = asyncio.create_task(reference_data_loop())
     logger.info("Reference data service started (initial load + 6-hour refresh)")
 
+    # Service monitor: periodic health-check + email alerts on failure / low quota.
+    try:
+        from greenbay_ai_evaluator.services.monitor_service import start_monitor_loop
+        start_monitor_loop()
+    except Exception as _mon_e:  # noqa: BLE001
+        logger.warning(f"Service monitor failed to start: {_mon_e}")
+
     # Sheet → Airtable: human evaluator prices (J/K) into In-House Evaluator Price (30 min).
     async def _sheet_human_price_sync_loop():
         from greenbay_ai_evaluator.services.sheet_to_airtable_human_price_sync import (

@@ -184,6 +184,16 @@ def _send_ses(subject: str, text_body: str, html_body: str) -> bool:
         return False
 
 
+def send_alert_email(subject: str, body: str) -> bool:
+    """Send an ops alert email to the team (synchronous). Returns success."""
+    html = (
+        "<div style='font-family:Arial,sans-serif;max-width:600px;'>"
+        "<h2 style='color:#b91c1c;'>GreenBay Evaluator Alert</h2>"
+        f"<pre style='white-space:pre-wrap;font-size:14px;'>{body}</pre></div>"
+    )
+    return _send_ses(f"[GreenBay ALERT] {subject}", body, html)
+
+
 def send_evaluation_accepted_email(snapshot: dict[str, Any]) -> None:
     """Fire-and-forget: email the team that an offer was accepted. Never raises.
 

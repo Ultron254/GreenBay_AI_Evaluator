@@ -110,6 +110,30 @@ def health_services(_: bool = Depends(verify_admin_key)):
     return run_live_healthcheck()
 
 
+@evaluator_router.get("/dashboard/metrics")
+def dashboard_metrics(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """Pricing/performance metrics for the ops dashboard (gated)."""
+    from greenbay_ai_evaluator.services.evaluator_metrics_service import (
+        compute_evaluator_metrics,
+    )
+    return compute_evaluator_metrics(db, days=max(1, min(days, 365)))
+
+
+@evaluator_router.get("/dashboard")
+def dashboard_page(_: bool = Depends(verify_admin_key)):
+    """Serve the single-page ops dashboard (service health + pricing performance).
+
+    Open in a browser as: /tradein/dashboard?key=YOUR_DASHBOARD_KEY
+    """
+    from fastapi.responses import HTMLResponse
+    from greenbay_ai_evaluator.api.dashboard_page import DASHBOARD_HTML
+    return HTMLResponse(content=DASHBOARD_HTML)
+
+
 # ---------------------------------------------------------------------------
 # Airtable backfill (issue #2/#9): replay fallback queue + backfill DB rows
 # that were never written to Airtable (e.g. the silent stop since May 22).
