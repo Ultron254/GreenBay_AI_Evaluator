@@ -683,12 +683,31 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
         return row[i] if i is not None and i < len(row) else ""
 
     price_cache: dict[str, float] = {}
-    updates: list[dict] = []
+    pending: list[dict] = []
     calls = 0
+
+    def _flush() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        try:
+            ws.batch_update(pending, value_input_option="USER_ENTERED")
+            out["written"] += len(pending)
+        except Exception as e:  # noqa: BLE001
+            out["error"] = (
+                f"write failed: {type(e).__name__}: {e}. "
+                f"Grant EDIT access to the service account ({_service_account_email()})."
+            )
+        pending = []
+
     for ridx, row in enumerate(values[hidx + 1:], start=hidx + 2):  # 1-based sheet row
         if not any(str(c).strip() for c in row):
             continue
         out["rows"] += 1
+        # Resumable + idempotent: skip rows that already hold a clean number.
+        if _safe_float(cell(row, "new_price")):
+            out["skipped"] += 1
+            continue
         item = str(cell(row, "item")).strip()
         model = str(cell(row, "model")).strip()
         if model.replace(".", "").isdigit():
@@ -704,7 +723,6 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
             continue
         else:
             if dry_run:
-                # Avoid paid calls during preview; just count what we'd price.
                 out["priced"] += 1
                 continue
             calls += 1
@@ -714,22 +732,18 @@ def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
             out["not_found"] += 1
             continue
         out["priced"] += 1
-        updates.append({"range": f"{np_letter}{ridx}", "values": [[round(price)]]})
+        pending.append({"range": f"{np_letter}{ridx}", "values": [[round(price)]]})
+        # Flush incrementally so a restart never loses completed work.
+        if len(pending) >= 15:
+            _flush()
+            if out.get("error"):
+                return out
 
     if dry_run:
         out["note"] = "Preview only. Run dry_run=false to price (Gemini) + write."
         return out
 
-    # Write in batches of 100 ranges.
-    try:
-        for i in range(0, len(updates), 100):
-            ws.batch_update(updates[i:i + 100], value_input_option="USER_ENTERED")
-            out["written"] += len(updates[i:i + 100])
-    except Exception as e:  # noqa: BLE001
-        out["error"] = (
-            f"write failed: {type(e).__name__}: {e}. "
-            f"Grant EDIT access to the service account ({_service_account_email()})."
-        )
+    _flush()
     return out
 
 
