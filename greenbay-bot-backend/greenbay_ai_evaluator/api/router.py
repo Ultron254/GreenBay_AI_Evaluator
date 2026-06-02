@@ -489,6 +489,19 @@ def reprice_historical(
     }
 
 
+@evaluator_router.post("/admin/sync-internal-prices")
+def sync_internal_prices(_: bool = Depends(verify_admin_key)):
+    """Pull the 'Internal Team Price' column from the AI Evaluation & Pricing
+    Tracker sheet into the AI-vs-human monitoring panel (idempotent).
+
+    These prices are tagged and are NEVER used by the pricing engine — they only
+    populate the dashboard accuracy comparison."""
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        sync_internal_prices_from_sheet,
+    )
+    return sync_internal_prices_from_sheet()
+
+
 @evaluator_router.get("/admin/reprice-historical")
 def reprice_historical_status(_: bool = Depends(verify_admin_key)):
     """Progress of the most recent / running Gemini re-pricing job."""
@@ -1226,13 +1239,19 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         # --- Source D: Expert feedback average (learning from past expert prices) ---
         try:
             from sqlalchemy import func as sqla_func, desc as sqla_desc
-            # Query expert feedback for similar products (same category + brand)
+            from greenbay_ai_evaluator.services.reference_data_service import (
+                SHEET_INTERNAL_MARKER,
+            )
+            # Query expert feedback for similar products (same category + brand).
+            # EXCLUDE sheet-synced internal prices: those are monitoring-only and
+            # must NOT drive pricing (prices stay grounded in math + market data).
             expert_query = (
                 db.query(ExpertPriceFeedback)
                 .filter(
                     ExpertPriceFeedback.product_category == req.category,
                     ExpertPriceFeedback.brand == req.brand,
                     ExpertPriceFeedback.expert_price > 0,
+                    ExpertPriceFeedback.expert_name != SHEET_INTERNAL_MARKER,
                 )
             )
             # If we know the model, prefer exact model matches

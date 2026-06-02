@@ -33,6 +33,15 @@ PRICING_MATRIX_SHEET_ID = "1_6RqiRaGshsY-iVssXpyLR2avlHsV_riiwXHTKqMz3c"
 SALES_STOCK_SHEET_ID = "1k7Zw8psnjIw9BukH7vVwESDR-k1PU60wlERWjljk_fE"
 SALES_STOCK_TAB = "Final Data"
 
+# AI Evaluation & Pricing Tracker — the team logs the human/internal price here
+# (sometimes filled in later). We ingest the 'Internal Team Price' column for the
+# AI-vs-human MONITORING panel ONLY. It is deliberately NEVER fed into the pricing
+# engine (see SHEET_INTERNAL_MARKER usage in the router) so prices stay grounded
+# in the math + sales/matrix/Gemini, with or without an internal price present.
+EVAL_TRACKER_SHEET_ID = "1DCKTWSxvGYQzuEPoJanQFF5ssM9oWnqVmEoEmh1MhAU"
+EVAL_TRACKER_TAB = "Customer Initiated Evaluation"
+SHEET_INTERNAL_MARKER = "Sheet: Customer Initiated Eval"  # expert_name tag for synced rows
+
 MATRIX_TAB_TO_CATEGORY: dict[str, str] = {
     "TV Pricing Matrix": "TV",
     "Cooker Pricing Matrix": "Cooker",
@@ -404,6 +413,191 @@ def _persist_per_row(db, label: str, objs: list, model_cls) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Internal/in-house price ingestion (monitoring only — NOT used for pricing)
+# ---------------------------------------------------------------------------
+_CATEGORY_KEYWORDS: list[tuple[str, str]] = [
+    ("refrigerator", "refrigerator"), ("fridge", "refrigerator"),
+    ("freezer", "freezer"), ("chiller", "chiller"),
+    ("washing", "washing_machine"), ("washer", "washing_machine"),
+    ("cooker", "cooker_oven"), ("oven", "cooker_oven"),
+    ("microwave", "microwave"),
+    ("tv", "tv_monitor"), ("television", "tv_monitor"), ("monitor", "tv_monitor"),
+    ("woofer", "woofer"), ("subwoofer", "woofer"),
+    ("soundbar", "soundbar"), ("sound bar", "soundbar"),
+    ("home theatre", "soundbar"), ("home theater", "soundbar"),
+    ("water dispenser", "water_dispenser"), ("dispenser", "water_dispenser"),
+    ("kettle", "kettle"), ("iron", "iron_box"),
+]
+
+
+def _infer_category_from_text(text: str) -> str:
+    t = (text or "").lower()
+    for kw, slug in _CATEGORY_KEYWORDS:
+        if kw in t:
+            return slug
+    return "other"
+
+
+def _infer_brand_from_text(item: str) -> str:
+    """First meaningful token of the item description is usually the brand."""
+    tokens = [w for w in (item or "").strip().split() if w]
+    return tokens[0].strip().title() if tokens else ""
+
+
+def _find_header_index(values: list[list[str]]) -> tuple[int, dict[str, int]]:
+    """Locate the header row + map our target columns to indices, by name.
+
+    The sheet's columns are fixed even though casual rows look ragged, so we map
+    by header text (separator/case-insensitive contains) rather than position.
+    """
+    targets = {
+        "date": ["date"],
+        "item": ["item"],
+        "model": ["model"],
+        "condition": ["condition"],
+        "age": ["age"],
+        "ai_price": ["ai price"],
+        "customer_price": ["customer selling price"],
+        "internal_price": ["internal team price"],
+        "final_price": ["final price offered"],
+        "accepted": ["accepted"],
+        "notes": ["notes"],
+        "rationale": ["rationale"],
+    }
+    for ridx, row in enumerate(values[:10]):
+        norm = [_RE_SEP.sub(" ", str(c or "").lower()).strip() for c in row]
+        if any("ai price" in c for c in norm) and any("internal team price" in c for c in norm):
+            col_map: dict[str, int] = {}
+            for key, needles in targets.items():
+                for cidx, cell in enumerate(norm):
+                    if any(n in cell for n in needles):
+                        col_map[key] = cidx
+                        break
+            return ridx, col_map
+    return -1, {}
+
+
+def _read_customer_initiated_evals(gc) -> list[dict]:
+    """Read AI-vs-internal price pairs from the evaluation tracker sheet.
+
+    Returns dicts with system_price (AI) + expert_price (internal team). Only
+    rows where BOTH parse to a real price (>=500) are kept."""
+    out: list[dict] = []
+    try:
+        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+        try:
+            ws = ss.worksheet(EVAL_TRACKER_TAB)
+        except Exception:
+            ws = ss.sheet1  # fall back to first tab
+        values = ws.get_all_values()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Internal price sync: read failed: {type(e).__name__}: {e}")
+        return out
+
+    hidx, cmap = _find_header_index(values)
+    if hidx < 0 or "ai_price" not in cmap or "internal_price" not in cmap:
+        logger.warning("Internal price sync: header row not found")
+        return out
+
+    def cell(row, key):
+        i = cmap.get(key)
+        return row[i] if i is not None and i < len(row) else ""
+
+    for row in values[hidx + 1:]:
+        if not any(str(c).strip() for c in row):
+            continue
+        ai = _safe_float(cell(row, "ai_price"))
+        internal = _safe_float(cell(row, "internal_price"))
+        if not ai or not internal or ai < 500 or internal < 500:
+            continue
+        item = str(cell(row, "item")).strip()
+        model = str(cell(row, "model")).strip()
+        # Model column sometimes holds a condition digit; ignore pure numbers.
+        if model.replace(".", "").isdigit():
+            model = ""
+        out.append({
+            "item": item,
+            "brand": _infer_brand_from_text(item),
+            "model": model,
+            "category": _infer_category_from_text(item),
+            "system_price": ai,
+            "expert_price": internal,
+            "date": str(cell(row, "date")).strip(),
+            "accepted": str(cell(row, "accepted")).strip(),
+            "notes": (str(cell(row, "notes")).strip() or str(cell(row, "rationale")).strip()),
+        })
+    logger.info(f"Internal price sync: parsed {len(out)} AI/internal pairs from sheet")
+    return out
+
+
+def sync_internal_prices_from_sheet() -> dict:
+    """Upsert sheet internal prices into ExpertPriceFeedback (idempotent).
+
+    Tagged with SHEET_INTERNAL_MARKER so the dashboard's AI-vs-human panel fills
+    up while the PRICING path explicitly excludes these rows."""
+    result = {"parsed": 0, "inserted": 0, "skipped_existing": 0}
+    gc = _get_gspread_client()
+    if gc is None:
+        result["error"] = "no gspread client"
+        return result
+
+    rows = _read_customer_initiated_evals(gc)
+    result["parsed"] = len(rows)
+    if not rows:
+        return result
+
+    try:
+        from app.database.db import SessionLocal
+        from app.database.models import ExpertPriceFeedback
+    except Exception as e:  # noqa: BLE001
+        result["error"] = f"import failed: {e}"
+        return result
+
+    db = SessionLocal()
+    try:
+        for r in rows:
+            # Idempotency: same marker + model + both prices already present.
+            exists = (
+                db.query(ExpertPriceFeedback)
+                .filter(
+                    ExpertPriceFeedback.expert_name == SHEET_INTERNAL_MARKER,
+                    ExpertPriceFeedback.model == (r["model"] or ""),
+                    ExpertPriceFeedback.expert_price == r["expert_price"],
+                    ExpertPriceFeedback.system_price == r["system_price"],
+                )
+                .first()
+            )
+            if exists:
+                result["skipped_existing"] += 1
+                continue
+            db.add(ExpertPriceFeedback(
+                valuation_session_id=None,
+                expert_name=SHEET_INTERNAL_MARKER,
+                expert_price=r["expert_price"],
+                system_price=r["system_price"],
+                price_difference=r["expert_price"] - r["system_price"],
+                expert_reasoning=(
+                    f"[{r.get('date','')}] {r.get('item','')} "
+                    f"{r.get('accepted','')} {r.get('notes','')}"
+                ).strip(),
+                product_category=r["category"],
+                brand=r["brand"],
+                model=r["model"] or None,
+            ))
+            result["inserted"] += 1
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        result["error"] = f"{type(e).__name__}: {e}"
+        logger.error(f"Internal price sync: persist failed: {e}")
+    finally:
+        db.close()
+
+    logger.info(f"Internal price sync: {result}")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Refresh
 # ---------------------------------------------------------------------------
 async def refresh_reference_data() -> tuple[int, int]:
@@ -422,6 +616,13 @@ async def refresh_reference_data() -> tuple[int, int]:
     _last_refresh = datetime.now(timezone.utc)
 
     await asyncio.to_thread(_persist_to_db, matrix_rows, sales_rows)
+
+    # Monitoring-only: pull internal/human prices from the eval tracker sheet.
+    # Never raises into the refresh path.
+    try:
+        await asyncio.to_thread(sync_internal_prices_from_sheet)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Internal price sync skipped: {e}")
 
     return len(matrix_rows), len(sales_rows)
 
