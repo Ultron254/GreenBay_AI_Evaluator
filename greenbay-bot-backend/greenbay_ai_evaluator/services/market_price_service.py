@@ -242,7 +242,17 @@ def gemini_price_research(
         for attr in grounding.get("groundingAttributions", []) or []:
             web = (attr.get("web") or {}) if isinstance(attr, dict) else {}
             _add_src(web.get("title", ""), web.get("uri", "") or web.get("url", ""))
+        # citationMetadata shape (cites the URLs a passage was drawn from)
+        cm = candidate.get("citationMetadata", {}) or {}
+        for c in (cm.get("citationSources") or cm.get("citations") or []):
+            if isinstance(c, dict):
+                _add_src(c.get("title", ""), c.get("uri", "") or c.get("url", ""))
+        # searchEntryPoint.renderedContent embeds source <a href="..."> links
         sep = grounding.get("searchEntryPoint") or {}
+        rendered = sep.get("renderedContent", "") if isinstance(sep, dict) else ""
+        if rendered:
+            for href in re.findall(r'href="(https?://[^"]+)"', rendered):
+                _add_src("", href)
         for q in grounding.get("webSearchQueries", []) or []:
             result.raw_snippets.append(f"search_query: {q}")
 

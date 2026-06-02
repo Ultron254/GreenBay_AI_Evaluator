@@ -502,6 +502,52 @@ def sync_internal_prices(_: bool = Depends(verify_admin_key)):
     return sync_internal_prices_from_sheet()
 
 
+@evaluator_router.post("/admin/backfill-sheet-newprice")
+def backfill_sheet_newprice(
+    dry_run: bool = True,
+    limit: int = 1000,
+    _: bool = Depends(verify_admin_key),
+):
+    """Backfill the tracker sheet's 'New price (estimate)' column with real Gemini
+    prices (header-aware), mirroring the Airtable backfill.
+
+    dry_run=true -> preview row counts (no Gemini calls, no writes).
+    dry_run=false -> BACKGROUND job: prices each unique item + writes the column.
+    """
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        backfill_sheet_new_prices, _sheet_backfill_state,
+    )
+    if dry_run:
+        return backfill_sheet_new_prices(dry_run=True, limit=limit)
+    if _sheet_backfill_state.get("running"):
+        return {"started": False, "reason": "already running",
+                "progress": _sheet_backfill_state.get("progress", {})}
+
+    import threading
+    from datetime import datetime as _dt
+    _sheet_backfill_state["running"] = True
+    _sheet_backfill_state["started_at"] = _dt.utcnow().isoformat()
+
+    def _job():
+        try:
+            backfill_sheet_new_prices(dry_run=False, limit=limit)
+        finally:
+            _sheet_backfill_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+@evaluator_router.get("/admin/backfill-sheet-newprice")
+def backfill_sheet_newprice_status(_: bool = Depends(verify_admin_key)):
+    from greenbay_ai_evaluator.services.reference_data_service import _sheet_backfill_state
+    return {
+        "running": _sheet_backfill_state.get("running"),
+        "started_at": _sheet_backfill_state.get("started_at"),
+        "progress": _sheet_backfill_state.get("progress", {}),
+    }
+
+
 @evaluator_router.get("/admin/reprice-historical")
 def reprice_historical_status(_: bool = Depends(verify_admin_key)):
     """Progress of the most recent / running Gemini re-pricing job."""
@@ -1602,6 +1648,18 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         _cc = get_currency_config(req_country)
         req_currency = _cc["code"]
 
+        # New Price (Estimate): prefer the reconciled/Gemini-grounded retail price
+        # over the frontend guess, so the stored value (and therefore Airtable +
+        # Google Sheet) reflects the real new price. Falls back to the frontend
+        # value when no real market source was available.
+        new_price_estimate = req.retail_price
+        try:
+            _rp = (price_verification or {}).get("reconciled_price")
+            if _rp and float(_rp) > 0:
+                new_price_estimate = float(_rp)
+        except Exception:  # noqa: BLE001
+            pass
+
         vs = ValuationSession(
             trade_in_session_id=req.trade_in_session_id,
             category=req.category,
@@ -1616,7 +1674,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             seller_phone=req.seller_phone,
             image_quality_score=iq_result.score,
             risk_score=risk_result.score,
-            retail_price=req.retail_price,
+            retail_price=new_price_estimate,
             estimated_resale_value=result.estimated_resale_value,
             confidence_score=result.confidence_score,
             acquisition_ceiling=result.acquisition_ceiling,
@@ -1770,33 +1828,39 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Airtable dispatch failed: {e}")
 
-        # CR-4: Auto-populate Google Sheet (async, non-blocking)
+        # CR-4: mirror the evaluation into the tracker Google Sheet (async,
+        # non-blocking). Header-aware writer so columns align with the real sheet,
+        # and the SAME reconciled new price we send to Airtable (1:1 match).
         try:
-            import asyncio
-            import concurrent.futures
+            import threading
+
+            _sheet_item = " ".join(
+                p for p in [(req.brand or "").strip(), (req.model or "").strip()] if p
+            ) or (req.category or "Item")
+            _status_map = {
+                "accept": "Accepted", "reject": "Rejected",
+                "redirect_to_agents": "Rejected", "negotiate": "Pending",
+                "review": "Under Review",
+            }
 
             def _append_sheet():
-                from greenbay_ai_evaluator.services.google_sheets_service import append_evaluation_row
-                append_evaluation_row(
-                    category=req.category,
-                    brand=req.brand,
-                    model=req.model,
-                    condition=req.condition_grade,
-                    condition_grade=grade,
-                    age_years=req.age_years,
-                    retail_price_estimate=req.retail_price,
-                    wants_trade_in=True,
+                from greenbay_ai_evaluator.services.reference_data_service import (
+                    append_tracker_row,
+                )
+                append_tracker_row(
+                    item=_sheet_item,
+                    model=req.model or "",
+                    new_price=new_price_estimate,
                     ai_price=result.opening_offer,
                     ai_confidence=result.confidence_score,
-                    customer_asking_price=req.seller_asking_price,
-                    status="",
-                    notes="",
-                    decision=result.decision,
+                    customer_price=req.seller_asking_price,
+                    condition=grade,
+                    status=_status_map.get(result.decision, "Pending"),
+                    notes=f"Ref: {str(vs.id)[:8]}",
                 )
 
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                pool.submit(_append_sheet)  # Fire and forget
-            logger.info("CR-4: Google Sheet append queued")
+            threading.Thread(target=_append_sheet, daemon=True).start()
+            logger.info("CR-4: tracker sheet append queued (header-aware)")
         except Exception as e:
             logger.warning(f"CR-4 Google Sheet append failed: {e}")
 
@@ -1904,13 +1968,16 @@ def accept_offer(
         logger.warning(f"Accept notification failed: {e}")
 
     # Issue #13: email the GreenBay team that the price was accepted.
-    try:
-        from greenbay_ai_evaluator.services.email_service import (
-            snapshot_session, send_evaluation_accepted_email,
-        )
-        send_evaluation_accepted_email(snapshot_session(vs))
-    except Exception as e:
-        logger.warning(f"Accept email failed: {e}")
+    # TEMPORARILY DISABLED (per request): the SES sender is not yet verified, so
+    # sending would fail. Commented out so it never runs / logs noise. Re-enable
+    # by uncommenting once SMTP_* or a verified SES sender is configured.
+    # try:
+    #     from greenbay_ai_evaluator.services.email_service import (
+    #         snapshot_session, send_evaluation_accepted_email,
+    #     )
+    #     send_evaluation_accepted_email(snapshot_session(vs))
+    # except Exception as e:
+    #     logger.warning(f"Accept email failed: {e}")
 
     return AcceptOfferResponse(
         session_id=session_id,

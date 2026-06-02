@@ -456,7 +456,9 @@ def _find_header_index(values: list[list[str]]) -> tuple[int, dict[str, int]]:
         "model": ["model"],
         "condition": ["condition"],
         "age": ["age"],
+        "new_price": ["new price"],
         "ai_price": ["ai price"],
+        "ai_confidence": ["confidence"],
         "customer_price": ["customer selling price"],
         "internal_price": ["internal team price"],
         "final_price": ["final price offered"],
@@ -595,6 +597,194 @@ def sync_internal_prices_from_sheet() -> dict:
 
     logger.info(f"Internal price sync: {result}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Tracker-sheet New Price write-back (header-aware; matches Airtable 1:1)
+# ---------------------------------------------------------------------------
+_sheet_backfill_state: dict = {"running": False, "started_at": None, "progress": {}}
+_tracker_write_layout: dict | None = None  # cached {cmap, ncols}
+
+
+def _col_letter(idx: int) -> str:
+    """0-indexed column -> A1 letter (handles A..ZZ)."""
+    s = ""
+    n = idx
+    while True:
+        s = chr(ord("A") + n % 26) + s
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return s
+
+
+def _service_account_email() -> str:
+    try:
+        import json as _json
+        from app.config import get_settings
+        s = get_settings()
+        f = (getattr(s, "google_sheets_credentials_file", "") or
+             getattr(s, "google_vertex_credentials_file", "") or "")
+        if f and Path(f).exists():
+            with open(f, "r", encoding="utf-8") as fh:
+                return _json.load(fh).get("client_email", "") or ""
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _gemini_new_price(item: str, model: str, category: str, country: str = "KE") -> float | None:
+    """Best-effort Gemini-grounded NEW retail price for a tracker row."""
+    try:
+        from greenbay_ai_evaluator.services.market_price_service import gemini_price_research
+        brand = _infer_brand_from_text(item)
+        cat = category or _infer_category_from_text(item)
+        res = gemini_price_research(
+            brand=brand, model=(model or item), category=cat, country=country,
+        )
+        if res and res.launch_price and res.launch_price > 0:
+            return float(res.launch_price)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Sheet backfill: price lookup failed for {item!r}: {e}")
+    return None
+
+
+def backfill_sheet_new_prices(dry_run: bool = True, limit: int = 1000) -> dict:
+    """Fill the 'New price (estimate)' column in the tracker sheet with real
+    Gemini prices (one call per unique item), matching what we did in Airtable.
+
+    Header-aware: writes to the column actually titled 'New price (estimate)',
+    never by hard-coded position. Best-effort; reports permission issues clearly.
+    """
+    out: dict = {"dry_run": dry_run, "rows": 0, "priced": 0, "written": 0,
+                 "not_found": 0, "skipped": 0}
+    _sheet_backfill_state["progress"] = out
+    gc = _get_gspread_client()
+    if gc is None:
+        out["error"] = "no gspread client"
+        return out
+    try:
+        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+        ws = ss.worksheet(EVAL_TRACKER_TAB)
+        values = ws.get_all_values()
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"read failed: {type(e).__name__}: {e}"
+        return out
+
+    hidx, cmap = _find_header_index(values)
+    if hidx < 0 or "new_price" not in cmap:
+        out["error"] = "could not locate 'New price (estimate)' column"
+        return out
+    np_col = cmap["new_price"]
+    np_letter = _col_letter(np_col)
+
+    def cell(row, key):
+        i = cmap.get(key)
+        return row[i] if i is not None and i < len(row) else ""
+
+    price_cache: dict[str, float] = {}
+    updates: list[dict] = []
+    calls = 0
+    for ridx, row in enumerate(values[hidx + 1:], start=hidx + 2):  # 1-based sheet row
+        if not any(str(c).strip() for c in row):
+            continue
+        out["rows"] += 1
+        item = str(cell(row, "item")).strip()
+        model = str(cell(row, "model")).strip()
+        if model.replace(".", "").isdigit():
+            model = ""
+        if not item and not model:
+            out["skipped"] += 1
+            continue
+        key = f"{item}|{model}".lower()
+        if key in price_cache:
+            price = price_cache[key]
+        elif calls >= limit:
+            out["skipped"] += 1
+            continue
+        else:
+            if dry_run:
+                # Avoid paid calls during preview; just count what we'd price.
+                out["priced"] += 1
+                continue
+            calls += 1
+            price = _gemini_new_price(item, model, _infer_category_from_text(item))
+            price_cache[key] = price or 0.0
+        if not price or price <= 0:
+            out["not_found"] += 1
+            continue
+        out["priced"] += 1
+        updates.append({"range": f"{np_letter}{ridx}", "values": [[round(price)]]})
+
+    if dry_run:
+        out["note"] = "Preview only. Run dry_run=false to price (Gemini) + write."
+        return out
+
+    # Write in batches of 100 ranges.
+    try:
+        for i in range(0, len(updates), 100):
+            ws.batch_update(updates[i:i + 100], value_input_option="USER_ENTERED")
+            out["written"] += len(updates[i:i + 100])
+    except Exception as e:  # noqa: BLE001
+        out["error"] = (
+            f"write failed: {type(e).__name__}: {e}. "
+            f"Grant EDIT access to the service account ({_service_account_email()})."
+        )
+    return out
+
+
+def append_tracker_row(
+    *, item: str, model: str = "", new_price: float | None = None,
+    ai_price: float | None = None, ai_confidence: float | None = None,
+    customer_price: float | None = None, condition: str = "", age: str = "",
+    status: str = "", notes: str = "", date_str: str | None = None,
+) -> bool:
+    """Append one evaluation to the tracker sheet, placing each value in the
+    column that actually carries that header (robust to layout). Best-effort."""
+    global _tracker_write_layout
+    gc = _get_gspread_client()
+    if gc is None:
+        return False
+    try:
+        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+        ws = ss.worksheet(EVAL_TRACKER_TAB)
+        if _tracker_write_layout is None:
+            hidx, cmap = _find_header_index(ws.get_all_values())
+            if hidx < 0 or not cmap:
+                logger.warning("Tracker append: header not found")
+                return False
+            _tracker_write_layout = {"cmap": cmap, "ncols": max(cmap.values()) + 1}
+        cmap = _tracker_write_layout["cmap"]
+        ncols = _tracker_write_layout["ncols"]
+        row = [""] * ncols
+
+        def setc(key, val):
+            i = cmap.get(key)
+            if i is not None and i < ncols and val not in (None, ""):
+                row[i] = val
+
+        from datetime import datetime as _dt
+        setc("date", date_str or _dt.now().strftime("%d/%m/%Y"))
+        setc("item", item)
+        setc("model", model)
+        setc("condition", condition)
+        setc("age", age)
+        if new_price:
+            setc("new_price", round(float(new_price)))
+        if ai_price:
+            setc("ai_price", round(float(ai_price)))
+        if ai_confidence:
+            setc("ai_confidence", f"{float(ai_confidence):.0f}%")
+        if customer_price:
+            setc("customer_price", round(float(customer_price)))
+        setc("accepted", status)
+        setc("notes", notes)
+        # NEVER touch internal_price / final_price (human-managed columns).
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Tracker append failed: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
