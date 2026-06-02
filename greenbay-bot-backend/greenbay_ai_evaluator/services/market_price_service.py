@@ -169,7 +169,14 @@ def gemini_price_research(
         "tools": [{"googleSearch": {}}],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 512,
+            # Raised from 512: with Google Search grounding the grounded answer
+            # plus citations needs headroom, otherwise the JSON gets truncated.
+            "maxOutputTokens": 2048,
+            # gemini-2.5-flash has "thinking" ON by default; thinking tokens
+            # count against maxOutputTokens and were eating the entire budget,
+            # leaving NO visible text (root cause of "returned NO price").
+            # Disable it for this factual lookup.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -181,7 +188,7 @@ def gemini_price_research(
     for attempt in range(2):
         try:
             import requests as _req
-            resp = _req.post(endpoint, headers=headers, json=body, timeout=20)
+            resp = _req.post(endpoint, headers=headers, json=body, timeout=30)
         except Exception as e:
             logger.warning(f"Gemini price research: request failed (attempt {attempt+1}): {e}")
             continue
@@ -191,16 +198,28 @@ def gemini_price_research(
                 f"Gemini price research: HTTP {resp.status_code} "
                 f"(attempt {attempt+1}): {resp.text[:200]}"
             )
+            # Self-heal: some Vertex API versions reject thinkingConfig with a
+            # 400. Strip it and let the next attempt run without it.
+            if resp.status_code == 400 and "thinking" in resp.text.lower():
+                body["generationConfig"].pop("thinkingConfig", None)
+                logger.warning("Gemini price research: removed thinkingConfig and will retry")
             continue
 
+        finish_reason = ""
         try:
             data = resp.json()
             candidate = (data.get("candidates") or [{}])[0]
+            finish_reason = candidate.get("finishReason", "")
             parts = (candidate.get("content") or {}).get("parts", [])
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
         except Exception:
             text = ""
 
+        if not text:
+            logger.warning(
+                f"Gemini price research: empty text (attempt {attempt+1}, "
+                f"finishReason={finish_reason!r}) — raising token budget if MAX_TOKENS"
+            )
         result.raw_snippets.append(text[:500])
 
         # Extract grounding sources if available
@@ -240,7 +259,11 @@ def gemini_price_research(
                 )
                 continue
         else:
-            logger.warning(f"Gemini price research: no JSON/price in response (attempt {attempt+1})")
+            logger.warning(
+                f"Gemini price research: no JSON/price in response "
+                f"(attempt {attempt+1}, finishReason={finish_reason!r}); "
+                f"text snippet: {text[:200]!r}"
+            )
 
     return result
 
