@@ -357,6 +357,23 @@ def airtable_debug(n: int = 3, _: bool = Depends(verify_admin_key)):
     if cfg is None:
         raise HTTPException(status_code=400, detail="Airtable not configured")
     known = _get_known_fields(cfg, force=True)
+
+    # Field types from the Meta API — a computed/read-only type silently ignores
+    # writes even though Airtable returns 200, which looks like an "empty column".
+    field_types: dict[str, str] = {}
+    try:
+        import requests as _rq
+        from greenbay_ai_evaluator.services.airtable_service import _auth_headers
+        _murl = f"https://api.airtable.com/v0/meta/bases/{cfg['base_id']}/tables"
+        _mr = _rq.get(_murl, headers=_auth_headers(cfg), timeout=15)
+        if _mr.status_code == 200:
+            for t in _mr.json().get("tables", []):
+                if t.get("name") == cfg["table"]:
+                    for f in t.get("fields", []):
+                        field_types[f.get("name", "")] = f.get("type", "?")
+    except Exception as _e:  # noqa: BLE001
+        field_types = {"_error": str(_e)}
+
     recs = list_records_paginated(cfg)
     recs_sorted = sorted(
         recs, key=lambda r: (r.get("fields", {}) or {}).get("Date Submitted", ""),
@@ -364,6 +381,7 @@ def airtable_debug(n: int = 3, _: bool = Depends(verify_admin_key)):
     )[: max(1, min(n, 10))]
     return {
         "known_fields": sorted(known) if known else None,
+        "field_types": field_types,
         "total_rows": len(recs),
         "recent": [
             {
