@@ -345,6 +345,38 @@ def _at_empty(v) -> bool:
     return v is None or v == 0 or (isinstance(v, str) and not v.strip())
 
 
+@evaluator_router.get("/admin/airtable-debug")
+def airtable_debug(n: int = 3, _: bool = Depends(verify_admin_key)):
+    """Ground truth: the EXACT schema column names the writer sees, plus which
+    fields the most-recent records actually carry. Pinpoints name mismatches /
+    silently-dropped columns."""
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, _get_known_fields, list_records_paginated,
+    )
+    cfg = _get_config()
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+    known = _get_known_fields(cfg, force=True)
+    recs = list_records_paginated(cfg)
+    recs_sorted = sorted(
+        recs, key=lambda r: (r.get("fields", {}) or {}).get("Date Submitted", ""),
+        reverse=True,
+    )[: max(1, min(n, 10))]
+    return {
+        "known_fields": sorted(known) if known else None,
+        "total_rows": len(recs),
+        "recent": [
+            {
+                "id": r["id"],
+                "date": (r.get("fields", {}) or {}).get("Date Submitted", ""),
+                "product": (r.get("fields", {}) or {}).get("Product Name", ""),
+                "fields_present": sorted((r.get("fields", {}) or {}).keys()),
+            }
+            for r in recs_sorted
+        ],
+    }
+
+
 @evaluator_router.post("/admin/delete-eval-record")
 def delete_eval_record(ref: str, _: bool = Depends(verify_admin_key)):
     """Delete an evaluation everywhere it was mirrored — the Airtable row and any
