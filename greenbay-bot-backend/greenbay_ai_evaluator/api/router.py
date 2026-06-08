@@ -13,7 +13,7 @@ import asyncio
 import base64
 import io
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
@@ -705,6 +705,209 @@ def airtable_fill_newprice_status(_: bool = Depends(verify_admin_key)):
         "running": _fill_np_state.get("running"),
         "started_at": _fill_np_state.get("started_at"),
         "progress": _fill_np_state.get("progress", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Airtable: backfill the 'AI Pricing Justification' column (now Long text)
+# ---------------------------------------------------------------------------
+# The live, evidence-rich justification (with Gemini source URLs) is generated at
+# evaluation time and was never persisted to the DB, so historical rows cannot be
+# reconstructed byte-for-byte. This backfill does the next best thing:
+#   1. If my earlier Notes-fallback stashed the real compact justification into
+#      the Notes column ("... || JUSTIFICATION: <text>"), recover that text and
+#      move it into the proper (now text) column, then clean the Notes suffix.
+#   2. Otherwise compose an accurate pricing rationale from the row's OWN stored
+#      numbers (new price, AI offer, condition, age, asking/vertex, decision).
+# Rows that already have a non-empty justification are skipped.
+_JUSTIF_MARKER = " || JUSTIFICATION: "
+_backfill_justif_state: dict[str, Any] = {"running": False, "started_at": None, "progress": {}}
+
+_JUSTIF_COLS = [
+    "Brand", "Model Number", "Category", "Condition", "Age (Years)",
+    "AI Evaluated Price (KES)", "New Price (Estimate)", "Vertex AI Price (KES)",
+    "Customer Asking Price (KES)", "Currency", "Evaluation Status",
+    "AI Pricing Justification", "Notes",
+]
+
+
+def _num(v) -> Optional[float]:
+    try:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _compose_justification_from_row(f: dict) -> str:
+    """Build a truthful pricing rationale from a row's stored numbers."""
+    cur = (f.get("Currency") or "KES").strip() or "KES"
+    parts: list[str] = ["PRICING SUMMARY (backfilled from stored record)"]
+    desc = " ".join(
+        str(f.get(k, "")).strip()
+        for k in ("Brand", "Model Number", "Category")
+        if str(f.get(k, "")).strip()
+    )
+    if desc:
+        parts.append(f"Item: {desc}")
+    age = f.get("Age (Years)")
+    if age not in (None, "", 0):
+        parts.append(f"Age: {age} yr")
+    cond = str(f.get("Condition", "")).strip()
+    if cond:
+        parts.append(f"Condition: {cond}")
+    newp = _num(f.get("New Price (Estimate)"))
+    ai = _num(f.get("AI Evaluated Price (KES)"))
+    if newp:
+        parts.append(f"New price (estimate): {cur} {newp:,.0f}")
+    if ai:
+        parts.append(f"AI trade-in offer: {cur} {ai:,.0f}")
+    if newp and ai and newp > 0:
+        parts.append(f"Offer is {ai / newp * 100:.0f}% of the new price.")
+    ask = _num(f.get("Customer Asking Price (KES)"))
+    if ask:
+        parts.append(f"Customer asking: {cur} {ask:,.0f}")
+    vx = _num(f.get("Vertex AI Price (KES)"))
+    if vx:
+        parts.append(f"Vertex AI cross-check: {cur} {vx:,.0f}")
+    status = str(f.get("Evaluation Status", "")).strip()
+    if status:
+        parts.append(f"Decision: {status}")
+    parts.append(
+        "Note: original live market-source URLs were not stored for historical "
+        "rows; new evaluations now capture the full evidence-rich justification "
+        "automatically."
+    )
+    return "\n".join(parts)
+
+
+def _run_backfill_justif_job(limit: int, force: bool) -> None:
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated, patch_record_by_id,
+    )
+    cfg = _get_config()
+    prog = {"rows": 0, "targets": 0, "done": 0, "from_notes": 0,
+            "composed": 0, "notes_cleaned": 0, "skipped": 0, "errors": 0}
+    _backfill_justif_state["progress"] = prog
+    if cfg is None:
+        prog["error"] = "Airtable not configured"
+        return
+
+    rows = list_records_paginated(cfg, fields=_JUSTIF_COLS)
+    prog["rows"] = len(rows)
+    done = 0
+    for r in rows:
+        f = r.get("fields", {}) or {}
+        existing = str(f.get("AI Pricing Justification", "") or "").strip()
+        if existing and not force:
+            prog["skipped"] += 1
+            continue
+        notes = str(f.get("Notes", "") or "")
+        patch: dict[str, Any] = {}
+        if _JUSTIF_MARKER in notes:
+            head, _, tail = notes.partition(_JUSTIF_MARKER)
+            recovered = tail.strip()
+            if recovered:
+                patch["AI Pricing Justification"] = recovered[:10000]
+                patch["Notes"] = head.strip(" |")[:2000]
+                prog["from_notes"] += 1
+                prog["notes_cleaned"] += 1
+        if "AI Pricing Justification" not in patch:
+            composed = _compose_justification_from_row(f)
+            # Only compose when we have at least a price to anchor on.
+            if _num(f.get("New Price (Estimate)")) or _num(f.get("AI Evaluated Price (KES)")):
+                patch["AI Pricing Justification"] = composed[:10000]
+                prog["composed"] += 1
+            else:
+                prog["skipped"] += 1
+                continue
+        prog["targets"] += 1
+        if done >= limit:
+            continue
+        done += 1
+        try:
+            if patch_record_by_id(r["id"], patch):
+                prog["done"] += 1
+            else:
+                prog["errors"] += 1
+        except Exception:  # noqa: BLE001
+            prog["errors"] += 1
+
+
+@evaluator_router.post("/admin/backfill-justification")
+def backfill_justification(
+    dry_run: bool = True,
+    limit: int = 2000,
+    force: bool = False,
+    _: bool = Depends(verify_admin_key),
+):
+    """Backfill the 'AI Pricing Justification' column on historical Airtable rows.
+
+    dry_run=true  -> count what would change (no writes).
+    dry_run=false -> BACKGROUND job; GET this path for live progress.
+    force=true    -> also rewrite rows that already have a justification.
+    """
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated, _get_known_fields,
+    )
+    cfg = _get_config()
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+
+    # Refresh schema cache so the writer sees the now-text column type.
+    try:
+        _get_known_fields(cfg, force=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if dry_run:
+        rows = list_records_paginated(cfg, fields=_JUSTIF_COLS)
+        from_notes = composed = skipped = 0
+        for r in rows:
+            f = r.get("fields", {}) or {}
+            existing = str(f.get("AI Pricing Justification", "") or "").strip()
+            if existing and not force:
+                skipped += 1
+                continue
+            if _JUSTIF_MARKER in str(f.get("Notes", "") or ""):
+                from_notes += 1
+            elif _num(f.get("New Price (Estimate)")) or _num(f.get("AI Evaluated Price (KES)")):
+                composed += 1
+            else:
+                skipped += 1
+        return {
+            "dry_run": True, "rows_total": len(rows),
+            "would_recover_from_notes": from_notes,
+            "would_compose_from_numbers": composed,
+            "would_skip": skipped,
+        }
+
+    if _backfill_justif_state.get("running"):
+        return {"started": False, "reason": "already running",
+                "progress": _backfill_justif_state.get("progress", {})}
+
+    import threading
+    from datetime import datetime as _dt
+    _backfill_justif_state["running"] = True
+    _backfill_justif_state["started_at"] = _dt.utcnow().isoformat()
+
+    def _job():
+        try:
+            _run_backfill_justif_job(limit, force)
+        finally:
+            _backfill_justif_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+@evaluator_router.get("/admin/backfill-justification")
+def backfill_justification_status(_: bool = Depends(verify_admin_key)):
+    return {
+        "running": _backfill_justif_state.get("running"),
+        "started_at": _backfill_justif_state.get("started_at"),
+        "progress": _backfill_justif_state.get("progress", {}),
     }
 
 

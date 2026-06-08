@@ -53,6 +53,11 @@ jobs:
             # deterministic and keeps postgres/redis/qdrant up for fast recovery.
             sudo docker compose stop app shopify-sync || true
             sudo docker compose rm -f app shopify-sync || true
+            # Belt-and-suspenders: compose rm only removes containers it still
+            # tracks. A dangling container left under the raw name (e.g. after a
+            # crashed run) makes `up` abort with "name already in use". Force
+            # remove by explicit name so a stale container can never block deploy.
+            sudo docker rm -f greenbay-bot greenbay-shopify-sync 2>/dev/null || true
 
             # Bring everything up. If up fails, dump the app container logs so we
             # can diagnose without needing to SSH in.
