@@ -1158,7 +1158,7 @@ Start New Evaluation
 </div>
 </div>
 `;
-        addChatMessage('bot', `I'd like an expert to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. The preliminary estimate is KES ${formatKES(offer)}, but our team can give you a more precise valuation. Click the WhatsApp button to connect with them!`);
+        addChatMessage('bot', `I'd like an expert to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. The preliminary estimate is ${currency} ${formatKES(offer)}, but our team can give you a more precise valuation. Click the WhatsApp button to connect with them!`);
         lucide.createIcons();
         return;
     }
@@ -1171,13 +1171,13 @@ Start New Evaluation
  <div class="offer-grade ${gradeClass}">
  Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
  </div>
- <div class="offer-amount">KES ${formatKES(offer)}</div>
+ <div class="offer-amount">${currency} ${formatKES(offer)}</div>
  <div class="offer-validity">Valid for 7 days</div>
  
  <div class="offer-breakdown">
  <div class="offer-breakdown-row">
  <span class="label">Estimated resale value</span>
- <span class="value">KES ${formatKES(data.estimated_resale_value)}</span>
+ <span class="value">${currency} ${formatKES(data.estimated_resale_value)}</span>
  </div>
  <div class="offer-breakdown-row">
  <span class="label">Confidence score</span>

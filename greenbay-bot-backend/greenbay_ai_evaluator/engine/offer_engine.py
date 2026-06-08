@@ -379,15 +379,19 @@ def reconcile_retail_price(
     ai_entries: list[tuple[float, float]] = []
     for key, price, w in ai_specs:
         if price is not None and price > 0:
-            ai_entries.append((price, w))
+            # The frontend category-default guess must never move the price — it
+            # is an un-sourced estimate. Record it for transparency but keep it
+            # OUT of the weighted blend (was previously pulling ai_avg).
+            is_estimate = key == "frontend" and _frontend_is_estimate
+            if not is_estimate:
+                ai_entries.append((price, w))
             src_entry = {
                 "source": key, "price": price, "weight": w,
                 "tier": "ai_market_research",
             }
-            # Flag the frontend category-default guess so it is not treated
-            # as a real, verified source downstream.
-            if key == "frontend" and _frontend_is_estimate:
+            if is_estimate:
                 src_entry["is_estimate"] = True
+                src_entry["excluded_from_blend"] = True
             sources.append(src_entry)
 
     human_avg_val = _tier_weighted_average(human_entries)

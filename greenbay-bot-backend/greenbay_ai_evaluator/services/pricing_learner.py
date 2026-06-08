@@ -1,9 +1,10 @@
 """
 Self-learning pricing service (CR-2 + CR-4).
 
-Reads historical team-assessed prices from the Google Sheet and uses them
-to improve AI pricing accuracy over time. Acts as the "expert/historical"
-data source in the 60/40 pricing rebalance.
+Reads actual CLOSED-DEAL prices (accepted "Final Price Offered") from the
+Google Sheet and uses them to improve AI pricing accuracy over time. Acts as
+the real-sales "historical" data source. The human "Internal Team Price"
+opinion is deliberately NOT used to drive pricing — it is monitoring-only.
 
 Runs on startup and refreshes hourly via a background task.
 """
@@ -94,13 +95,26 @@ async def refresh_from_sheet() -> int:
             if not item:
                 continue
 
-            # Parse team price (column J — the ground truth).
-            # Uses ``sheet_price_parser.parse_sheet_price`` (imported as ``_parse_price``):
-            # strips KES/ksh, commas, multiplies trailing k/K by 1000, rejects N/A sentinels.
+            # GROUND TRUTH FOR LEARNING = the actual transaction price on a closed
+            # deal ("Final Price Offered" on an accepted row). This is what GreenBay
+            # really paid, so it is a legitimate historical signal — unlike the
+            # "Internal Team Price" (a human's pre-deal OPINION), which per policy is
+            # MONITORING-ONLY and must never drive the price.
+            status = (
+                row.get("Accepted / Rejected")
+                or row.get("Accepted/Rejected")
+                or row.get("Status")
+                or ""
+            ).strip().lower()
+            is_accepted = "accept" in status
+            final_price_str = (
+                row.get("Final Price Offered") or row.get("Final Price") or ""
+            ).strip()
+            learn_price = _parse_price(final_price_str) if is_accepted else None
+
+            # Internal Team Price + AI Price: kept ONLY for the accuracy metric.
             team_price_str = row.get("Internal Team Price", "").strip()
             team_price = _parse_price(team_price_str)
-
-            # Parse AI price for accuracy tracking
             ai_price_str = row.get("AI Price", "").strip()
             ai_price = _parse_price(ai_price_str)
 
@@ -129,10 +143,10 @@ async def refresh_from_sheet() -> int:
                     "count": 0,
                 }
 
-            # Add team price if available
-            if team_price and team_price > 0:
+            # Add the real closed-deal price (accepted Final Price Offered) only
+            if learn_price and learn_price > 0:
                 weight = _recency_weight(date)
-                new_cache[key]["prices"].append(team_price)
+                new_cache[key]["prices"].append(learn_price)
                 new_cache[key]["weights"].append(weight)
                 new_cache[key]["conditions"].append(condition)
                 new_cache[key]["ages"].append(age_str)
@@ -188,14 +202,14 @@ def get_historical_price(
 ) -> dict[str, Any] | None:
     """Look up the best historical price estimate for a product.
 
-    Uses weighted average of team-assessed prices, with exponential
+    Uses weighted average of actual accepted-deal prices, with exponential
     decay favoring more recent data.
 
     Returns None if no historical data is available, or a dict with:
-      - price: weighted average team price
+      - price: weighted average closed-deal price
       - confidence: 0-100 based on data quantity and recency
       - data_points: number of historical comparisons used
-      - source: "google_sheet_historical"
+      - source: "google_sheet_closed_deal"
     """
     if not _price_cache:
         return None
@@ -239,7 +253,7 @@ def get_historical_price(
         "price": round(weighted_price, 2),
         "confidence": round(confidence, 1),
         "data_points": entry["count"],
-        "source": "google_sheet_historical",
+        "source": "google_sheet_closed_deal",
     }
 
 

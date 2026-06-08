@@ -759,6 +759,16 @@ def _distinct_models_to_reprice(db: Session, since_dt, limit: int) -> list[dict]
 
 def _run_reprice_job(models: list[dict], since: str, update_db: bool) -> None:
     """Background worker: 1 Gemini call per model, patch Airtable + DB."""
+    try:
+        _run_reprice_job_inner(models, since, update_db)
+    finally:
+        # Always clear the flag, even if setup/imports raise — otherwise a single
+        # crash would block every future run until a restart.
+        _reprice_state["running"] = False
+        logger.info("Gemini reprice: worker exited, running flag cleared")
+
+
+def _run_reprice_job_inner(models: list[dict], since: str, update_db: bool) -> None:
     from greenbay_ai_evaluator.services.market_price_service import gemini_price_research
     from greenbay_ai_evaluator.services.airtable_service import (
         list_records_by_model, patch_record_by_id,
@@ -807,7 +817,6 @@ def _run_reprice_job(models: list[dict], since: str, update_db: bool) -> None:
                     f"repriced={prog['repriced']} rows={prog['rows_patched']} "
                     f"not_found={prog['not_found']} errors={prog['errors']}"
                 )
-    _reprice_state["running"] = False
     logger.info(f"Gemini reprice DONE: {prog}")
 
 
