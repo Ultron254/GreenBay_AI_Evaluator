@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -833,6 +834,8 @@ def _run_backfill_justif_job(limit: int, force: bool) -> None:
                 prog["errors"] += 1
         except Exception:  # noqa: BLE001
             prog["errors"] += 1
+        # Stay under Airtable's 5 req/s limit so patches don't 429 silently.
+        time.sleep(0.22)
 
 
 @evaluator_router.post("/admin/backfill-justification")
@@ -2086,8 +2089,14 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             sales_result = lookup_sales_stock(
                 brand=req.brand, model=req.model, category=req.category,
             )
-            if sales_result and sales_result.get("match_type") == "exact_model":
-                reference_resale_value = sales_result["median_selling_price"]
+            _exact_median = (sales_result or {}).get("median_selling_price")
+            if (
+                sales_result
+                and sales_result.get("match_type") == "exact_model"
+                and _exact_median
+                and float(_exact_median) > 0
+            ):
+                reference_resale_value = float(_exact_median)
                 reference_source = "sales_stock_exact"
                 v6_has_sales_stock_match = True
                 logger.info(
@@ -2118,8 +2127,15 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                         )
 
             # Priority 3: Brand+category match in sales stock
-            if not reference_resale_value and sales_result and sales_result.get("match_type") == "brand_category":
-                reference_resale_value = sales_result["median_selling_price"]
+            _cat_median = (sales_result or {}).get("median_selling_price")
+            if (
+                not reference_resale_value
+                and sales_result
+                and sales_result.get("match_type") == "brand_category"
+                and _cat_median
+                and float(_cat_median) > 0
+            ):
+                reference_resale_value = float(_cat_median)
                 reference_source = "sales_stock_category"
                 v6_has_sales_stock_match = True
                 logger.info(
@@ -3123,7 +3139,7 @@ def submit_expert_feedback(req: ExpertFeedbackRequest, db: Session = Depends(get
     try:
         # Look up the valuation session to get product details
         vs = db.query(ValuationSession).filter(
-            ValuationSession.id == int(req.valuation_session_id)
+            ValuationSession.id == req.valuation_session_id
         ).first()
 
         system_price = None

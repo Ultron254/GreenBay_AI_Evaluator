@@ -106,7 +106,14 @@ async def refresh_from_sheet() -> int:
                 or row.get("Status")
                 or ""
             ).strip().lower()
-            is_accepted = "accept" in status
+            # Precise match: a status like "Not Accepted" / "Unaccepted" / "Rejected"
+            # must NOT count as a closed deal. Treat as accepted only on explicit
+            # affirmative tokens, and never when a negation is present.
+            _neg = any(n in status for n in ("not ", "non", "un", "reject", "decline", "no "))
+            is_accepted = (not _neg) and (
+                status.startswith("accept")
+                or status in {"accepted", "accept", "yes", "closed", "done", "completed"}
+            )
             final_price_str = (
                 row.get("Final Price Offered") or row.get("Final Price") or ""
             ).strip()

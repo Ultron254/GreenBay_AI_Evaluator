@@ -677,16 +677,26 @@ def compute_valuation(
     # we cap the offer AND route to human review (confidence forced below 80).
     new_price_ceiling_applied = False
     new_price_anchor = 0.0
-    if price_verification and price_verification.get("reconciled_price"):
+
+    def _f(v) -> float:
         try:
-            new_price_anchor = float(price_verification["reconciled_price"] or 0)
+            return float(v or 0)
         except (TypeError, ValueError):
-            new_price_anchor = 0.0
+            return 0.0
+
+    # Anchor on a GENUINE new-price signal. The blended ``reconciled_price`` mixes
+    # resale/acquisition figures and can sit well below the true new price, which
+    # would make this ceiling fire spuriously. Prefer the grounded internet
+    # (Gemini) new-price source when present, then the blend, ignoring the
+    # frontend category-default estimate (used only as a last resort).
+    if price_verification:
+        internet_new = 0.0
+        for s in (price_verification.get("sources") or []):
+            if s.get("source") == "internet_lookup" and not s.get("discarded"):
+                internet_new = max(internet_new, _f(s.get("price")))
+        new_price_anchor = max(internet_new, _f(price_verification.get("reconciled_price")))
     if new_price_anchor <= 0:
-        try:
-            new_price_anchor = float(retail_price or 0)
-        except (TypeError, ValueError):
-            new_price_anchor = 0.0
+        new_price_anchor = _f(retail_price)
 
     if new_price_anchor > 0:
         max_ratio = _max_tradein_to_new(category)

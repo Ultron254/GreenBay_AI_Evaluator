@@ -811,7 +811,7 @@ function mirrorStepToChat(step) {
             : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
         9: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
         10: () => `${a.photos.length} photos uploaded`,
-        11: () => a.price ? `Your asking price: <strong>KES ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        11: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
     };
 
     const fn = messages[step];
@@ -1211,12 +1211,12 @@ Start New Evaluation
  ${(data.price_verification.sources || []).map(s => `
  <div class="offer-breakdown-row">
  <span class="label">${s.source.replace(/_/g, ' ')}</span>
- <span class="value">KES ${formatKES(s.price)}</span>
+ <span class="value">${currency} ${formatKES(s.price)}</span>
  </div>
  `).join('')}
  <div class="offer-breakdown-row" style="border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px;">
  <span class="label" style="font-weight:600;">Reconciled Price</span>
- <span class="value" style="font-weight:600;">KES ${formatKES(data.price_verification.reconciled_price)}</span>
+ <span class="value" style="font-weight:600;">${currency} ${formatKES(data.price_verification.reconciled_price)}</span>
  </div>
  </div>
  ` : ''}
@@ -1252,20 +1252,20 @@ Start New Evaluation
         accept: ` <strong>Your GreenBay Offer</strong><br><br>
  ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
  Condition: Grade ${data.condition_grade}<br>
- <strong>KES ${formatKES(offer)}</strong><br><br>
+ <strong>${currency} ${formatKES(offer)}</strong><br><br>
  Your price works perfectly for us! We'd love to proceed. `,
 
         negotiate: ` <strong>Your GreenBay Valuation</strong><br><br>
  ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}<br>
  Condition: Grade ${data.condition_grade}<br><br>
- ${a.price ? `I appreciate the KES ${formatKES(a.price)} ask. ` : ''}After checking current market prices and assessing the condition, I can offer:<br><br>
- <strong>KES ${formatKES(data.opening_offer)}</strong><br><br>
+ ${a.price ? `I appreciate the ${currency} ${formatKES(a.price)} ask. ` : ''}After checking current market prices and assessing the condition, I can offer:<br><br>
+ <strong>${currency} ${formatKES(data.opening_offer)}</strong><br><br>
  This factors in the current market and the condition I've assessed. Would this work for you?`,
 
-        decline: `I appreciate you sharing your price. Based on current market data and the condition assessment, the most we could offer is <strong>KES ${formatKES(data.opening_offer)}</strong>.<br><br>
+        decline: `I appreciate you sharing your price. Based on current market data and the condition assessment, the most we could offer is <strong>${currency} ${formatKES(data.opening_offer)}</strong>.<br><br>
  I know there's a gap , if you'd like to reconsider, our offer stands for 7 days. `,
 
-        review: `Based on my analysis, I'd like a human team member to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. Our preliminary offer is <strong>KES ${formatKES(data.opening_offer)}</strong>, but we want to make sure we get this right! A specialist will be in touch shortly. `,
+        review: `Based on my analysis, I'd like a human team member to take a closer look at your ${a.brand} ${CATEGORY_NAMES[a.category]}. Our preliminary offer is <strong>${currency} ${formatKES(data.opening_offer)}</strong>, but we want to make sure we get this right! A specialist will be in touch shortly. `,
     };
 
     setTimeout(() => {
@@ -1321,7 +1321,7 @@ function submitExpertFeedback() {
             const diff = data.price_difference;
             if (diff !== null && diff !== undefined) {
                 const dir = diff > 0 ? 'higher' : 'lower';
-                success.innerHTML = `✅ Recorded! Your price is KES ${formatKES(Math.abs(diff))} ${dir} than the AI's offer.`;
+                success.innerHTML = `✅ Recorded! Your price is ${curSym()} ${formatKES(Math.abs(diff))} ${dir} than the AI's offer.`;
             }
         }
         addChatMessage('bot', `Expert feedback recorded — thank you, ${name}! 🎯`);
@@ -1481,7 +1481,7 @@ function submitCounterFromInput() {
 }
 
 async function submitCounterOffer(sellerCounter) {
-    addChatMessage('user', `I'd like KES ${formatKES(sellerCounter)}`);
+    addChatMessage('user', `I'd like ${curSym()} ${formatKES(sellerCounter)}`);
     state.negotiation.counters.push(sellerCounter);
 
     showTypingIndicator();
@@ -1558,12 +1558,12 @@ function handleNegotiationResponse(data) {
 
     if (data.decision === 'accept') {
         neg.status = 'accepted';
-        addChatMessage('bot', `KES ${formatKES(data.system_offer)} works! You've got a deal!`);
+        addChatMessage('bot', `${curSym()} ${formatKES(data.system_offer)} works! You've got a deal!`);
         showPickupDropoffChoice(data.system_offer);
 
     } else if (data.decision === 'decline') {
         neg.status = 'declined';
-        addChatMessage('bot', `Unfortunately we can't go above KES ${formatKES(data.system_offer)} for this unit at this time. Our offer stands for 7 days if you change your mind. <br><br>
+        addChatMessage('bot', `Unfortunately we can't go above ${curSym()} ${formatKES(data.system_offer)} for this unit at this time. Our offer stands for 7 days if you change your mind. <br><br>
  Thanks for your time — you're welcome to come back anytime!`);
         showNoDeal(data.system_offer);
 
@@ -1577,7 +1577,7 @@ function handleNegotiationResponse(data) {
             ? `<br><br>This is genuinely the maximum I can offer for this unit.`
             : '';
 
-        addChatMessage('bot', `I understand you'd like more. The best I can do is <strong>KES ${formatKES(data.system_offer)}</strong>. ${data.reason}${incentive}${urgency}<br><br>
+        addChatMessage('bot', `I understand you'd like more. The best I can do is <strong>${curSym()} ${formatKES(data.system_offer)}</strong>. ${data.reason}${incentive}${urgency}<br><br>
  What do you think?`);
 
         // Update round tracker
@@ -1595,11 +1595,11 @@ function handleNegotiationResponse(data) {
 
 function updateOfferCard(newOffer, roundsRemaining) {
     const amountEl = document.querySelector('.offer-amount');
-    if (amountEl) amountEl.textContent = `KES ${formatKES(newOffer)}`;
+    if (amountEl) amountEl.textContent = `${curSym()} ${formatKES(newOffer)}`;
 
     const acceptBtn = document.querySelector('.btn-accept');
     if (acceptBtn) {
-        acceptBtn.textContent = ` Accept KES ${formatKES(newOffer)}`;
+        acceptBtn.textContent = ` Accept ${curSym()} ${formatKES(newOffer)}`;
         acceptBtn.setAttribute('onclick', `acceptOffer(${newOffer})`);
     }
 }
@@ -1646,7 +1646,7 @@ function showPickupDropoffChoice(amount) {
     resultsStep.innerHTML = `
  <div class="deal-result">
  <div class="result-icon">🎉</div>
- <h3>Deal Confirmed — KES ${formatKES(amount)}</h3>
+ <h3>Deal Confirmed — ${curSym()} ${formatKES(amount)}</h3>
  <p>Your ${a.brand} ${CATEGORY_NAMES[a.category]} has been accepted. Choose how to proceed:</p>
  
  <div style="display:grid;gap:16px;margin:24px 0;">
@@ -1689,7 +1689,7 @@ function showPickupDropoffChoice(amount) {
  </div>
  <div class="deal-summary-row total">
  <span>Agreed Price</span>
- <span>KES ${formatKES(amount)}</span>
+ <span>${curSym()} ${formatKES(amount)}</span>
  </div>
  </div>
  </div>
@@ -1820,7 +1820,7 @@ function showDropoffLocations(amount) {
  </div>
  <div class="deal-summary-row total">
  <span>Amount Due on Drop-off</span>
- <span>KES ${formatKES(amount)}</span>
+ <span>${curSym()} ${formatKES(amount)}</span>
  </div>
  </div>
 
@@ -1871,7 +1871,7 @@ function showFinalConfirmation(amount, method, address, day) {
  </div>
  <div class="deal-summary-row total">
  <span>Agreed Price</span>
- <span>KES ${formatKES(amount)}</span>
+ <span>${curSym()} ${formatKES(amount)}</span>
  </div>
  </div>
  
@@ -1946,10 +1946,10 @@ function showNoDeal(lastOffer) {
  <div class="deal-result">
  <div class="result-icon"></div>
  <h3>Offer Stands for 7 Days</h3>
- <p>Our offer of <strong>KES ${formatKES(lastOffer)}</strong> for your ${a.brand} ${CATEGORY_NAMES[a.category]} is still available.</p>
+ <p>Our offer of <strong>${curSym()} ${formatKES(lastOffer)}</strong> for your ${a.brand} ${CATEGORY_NAMES[a.category]} is still available.</p>
  
  <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;">
-<button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept KES ${formatKES(lastOffer)}</button>
+<button class="btn btn-primary" onclick="acceptOffer(${lastOffer})">Accept ${curSym()} ${formatKES(lastOffer)}</button>
 <button class="btn btn-secondary" onclick="startNewEvaluation()">
   <i data-lucide="rotate-ccw" style="width:14px;height:14px;margin-right:4px;"></i>
   Start New Evaluation
@@ -2014,6 +2014,12 @@ function resetEvaluator() {
 function formatKES(num) {
     if (!num && num !== 0) return 'N/A';
     return Math.round(num).toLocaleString('en-KE');
+}
+
+// Current evaluation's display currency (e.g. KES, UGX, NGN). Always falls back
+// to KES so existing single-market behaviour is unchanged.
+function curSym() {
+    return (state.evaluation && state.evaluation.currency_code) || 'KES';
 }
 
 function sleep(ms) {
