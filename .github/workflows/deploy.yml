@@ -67,8 +67,31 @@ jobs:
               exit 1
             fi
 
-            # Wait (up to 3 min) for the app container to become healthy before
-            # moving on. The Dockerfile healthcheck uses start_period=180s.
+            # Run migrations BEFORE gating on health. A release may ship code that
+            # needs a new column, so the app can only become healthy AFTER the
+            # schema is upgraded — running alembic after the health gate risked a
+            # deadlock. First wait for the container to be *running* (not yet
+            # healthy) so we can exec into it.
+            echo "=== Waiting for greenbay-bot to be running ==="
+            for i in $(seq 1 24); do
+              state="$(sudo docker inspect -f '{{.State.Running}}' greenbay-bot 2>/dev/null || echo false)"
+              if [ "$state" = "true" ]; then break; fi
+              sleep 5
+            done
+
+            echo "=== Running database migrations (alembic upgrade head) ==="
+            if ! sudo docker exec greenbay-bot alembic upgrade head; then
+              echo "::error::alembic upgrade head FAILED — schema is out of date!"
+              echo "--- current revision ---"
+              sudo docker exec greenbay-bot alembic current || true
+              echo "--- heads ---"
+              sudo docker exec greenbay-bot alembic heads || true
+              exit 1
+            fi
+            echo "--- confirming single head ---"
+            sudo docker exec greenbay-bot alembic heads || true
+
+            # Now wait (up to 3 min) for the app to report healthy.
             echo "=== Waiting for greenbay-bot to become healthy ==="
             healthy=""
             for i in $(seq 1 36); do
@@ -87,18 +110,6 @@ jobs:
               sudo docker compose logs --tail=300 app || true
               exit 1
             fi
-
-            echo "=== Running database migrations (alembic upgrade head) ==="
-            if ! sudo docker exec greenbay-bot alembic upgrade head; then
-              echo "::error::alembic upgrade head FAILED — schema is out of date!"
-              echo "--- current revision ---"
-              sudo docker exec greenbay-bot alembic current || true
-              echo "--- heads ---"
-              sudo docker exec greenbay-bot alembic heads || true
-              exit 1
-            fi
-            echo "--- confirming single head ---"
-            sudo docker exec greenbay-bot alembic heads || true
 
             echo "=== Seeding pricing policies ==="
             sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py || true

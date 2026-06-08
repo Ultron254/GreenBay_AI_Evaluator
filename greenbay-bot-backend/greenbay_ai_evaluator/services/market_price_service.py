@@ -199,7 +199,9 @@ def gemini_price_research(
         "Content-Type": "application/json",
     }
 
-    for attempt in range(2):
+    _GEMINI_BACKOFFS = (2, 6, 12)  # seconds; used for 429/transient retries
+    _MAX_ATTEMPTS = 3
+    for attempt in range(_MAX_ATTEMPTS):
         try:
             import requests as _req
             # Grounded search has been observed at ~35-38s; a 30s timeout was
@@ -207,6 +209,8 @@ def gemini_price_research(
             resp = _req.post(endpoint, headers=headers, json=body, timeout=50)
         except Exception as e:
             logger.warning(f"Gemini price research: request failed (attempt {attempt+1}): {e}")
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_GEMINI_BACKOFFS[attempt])
             continue
 
         if resp.status_code != 200:
@@ -214,6 +218,16 @@ def gemini_price_research(
                 f"Gemini price research: HTTP {resp.status_code} "
                 f"(attempt {attempt+1}): {resp.text[:200]}"
             )
+            # Rate limited / quota exhausted — honor Retry-After then back off.
+            if (resp.status_code == 429 or "RESOURCE_EXHAUSTED" in resp.text) and attempt < _MAX_ATTEMPTS - 1:
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after else _GEMINI_BACKOFFS[attempt]
+                except (TypeError, ValueError):
+                    delay = _GEMINI_BACKOFFS[attempt]
+                logger.warning(f"Gemini price research: rate limited — backing off {delay}s")
+                time.sleep(delay)
+                continue
             # Self-heal: some Vertex API versions reject thinkingConfig with a
             # 400. Strip it and let the next attempt run without it.
             if resp.status_code == 400 and "thinking" in resp.text.lower():

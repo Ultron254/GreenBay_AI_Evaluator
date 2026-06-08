@@ -244,18 +244,35 @@ def _patch_record(cfg: dict[str, str], record_id: str, fields: dict) -> tuple[bo
     table = quote(cfg["table"])
     url = f"https://api.airtable.com/v0/{cfg['base_id']}/{table}/{record_id}"
     body = {"fields": fields, "typecast": True}
-    try:
-        resp = requests.patch(
-            url,
-            headers=_auth_headers(cfg),
-            json=body,
-            timeout=REQUEST_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            return True, None
-        return False, f"HTTP {resp.status_code}: {resp.text[:240]}"
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+    # Retry on 429 (rate limit) with backoff so bulk patch loops don't drop rows.
+    last_err: Optional[str] = None
+    for attempt in range(len(RETRY_BACKOFFS) + 1):
+        try:
+            resp = requests.patch(
+                url,
+                headers=_auth_headers(cfg),
+                json=body,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                return True, None
+            if resp.status_code == 429 and attempt < len(RETRY_BACKOFFS):
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after else RETRY_BACKOFFS[attempt]
+                except (TypeError, ValueError):
+                    delay = RETRY_BACKOFFS[attempt]
+                last_err = "HTTP 429 (rate limited)"
+                time.sleep(delay)
+                continue
+            return False, f"HTTP {resp.status_code}: {resp.text[:240]}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            if attempt < len(RETRY_BACKOFFS):
+                time.sleep(RETRY_BACKOFFS[attempt])
+                continue
+            return False, last_err
+    return False, last_err or "patch failed"
 
 
 def list_records_paginated(

@@ -656,6 +656,8 @@ def _run_fill_newprice_job(limit: int) -> None:
                     prog["from_gemini"] += 1
         else:
             prog["not_found"] += 1
+        # Space out writes to stay well under Airtable's 5 req/s limit.
+        time.sleep(0.22)
 
 
 @evaluator_router.post("/admin/airtable-fill-newprice")
@@ -2083,6 +2085,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         reference_source = ""
         v6_has_matrix_match = False
         v6_has_sales_stock_match = False
+        v6_matrix_new_price: float | None = None
 
         try:
             # Priority 1: Exact model match in sales stock
@@ -2111,6 +2114,14 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     brand=req.brand, model=req.model, category=req.category,
                 )
                 if matrix_result:
+                    # Capture the matrix NEW price separately — it is a genuine
+                    # new-retail signal, used as a fallback for New Price (Estimate).
+                    _mnp = matrix_result.get("new_price")
+                    try:
+                        if _mnp and float(_mnp) > 0:
+                            v6_matrix_new_price = float(_mnp)
+                    except (TypeError, ValueError):
+                        pass
                     rec_min = matrix_result.get("recommended_min") or 0
                     rec_max = matrix_result.get("recommended_max") or 0
                     if rec_min > 0 and rec_max > 0:
@@ -2254,17 +2265,31 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         _cc = get_currency_config(req_country)
         req_currency = _cc["code"]
 
-        # New Price (Estimate): prefer the reconciled/Gemini-grounded retail price
-        # over the frontend guess, so the stored value (and therefore Airtable +
-        # Google Sheet) reflects the real new price. Falls back to the frontend
-        # value when no real market source was available.
-        new_price_estimate = req.retail_price
-        try:
-            _rp = (price_verification or {}).get("reconciled_price")
-            if _rp and float(_rp) > 0:
-                new_price_estimate = float(_rp)
-        except Exception:  # noqa: BLE001
-            pass
+        # New Price (Estimate): this column must reflect the genuine NEW-retail
+        # price, NOT the blended reconciled figure (which mixes resale/acquisition
+        # signals and reads low). Source priority:
+        #   1. Gemini grounded launch price (real, current new price)
+        #   2. Pricing-matrix new price (curated new-retail signal)
+        #   3. Reconciled blend (fallback when no clean new-price signal exists)
+        #   4. Frontend guess (last resort)
+        def _pos(v) -> float:
+            try:
+                return float(v) if v and float(v) > 0 else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+
+        _gemini_new = _pos(internet_price)
+        _matrix_new = _pos(v6_matrix_new_price)
+        _reconciled = _pos((price_verification or {}).get("reconciled_price"))
+        _frontend_new = _pos(req.retail_price)
+        new_price_estimate = (
+            _gemini_new or _matrix_new or _reconciled or _frontend_new or req.retail_price
+        )
+        logger.info(
+            f"New Price (Estimate) source: gemini={_gemini_new or '-'} "
+            f"matrix={_matrix_new or '-'} reconciled={_reconciled or '-'} "
+            f"-> {new_price_estimate}"
+        )
 
         vs = ValuationSession(
             trade_in_session_id=req.trade_in_session_id,
