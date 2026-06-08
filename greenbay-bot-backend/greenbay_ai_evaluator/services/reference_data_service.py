@@ -63,14 +63,22 @@ ACQUISITION_RATIOS: dict[str, float] = {
     "washing_machine": 0.74,
     "washer": 0.74,
     "freezer": 0.77,
-    "microwave": 0.72,
-    "soundbar": 0.72,
-    "woofer": 0.85,
-    "water_dispenser": 0.78,
     "chiller": 0.77,
+    # Small / low-value appliances: trimmed Jun 2026 after the AI-vs-internal
+    # tracker showed consistent over-valuation here (AI ~35% of new vs internal
+    # ~20%). These items are harder to resell and need a wider acquisition margin.
+    "microwave": 0.55,        # was 0.72
+    "soundbar": 0.55,         # was 0.72
+    "woofer": 0.55,           # was 0.85
+    "speaker": 0.55,
+    "home_theatre": 0.55,
+    "water_dispenser": 0.58,  # was 0.78
+    "air_fryer": 0.55,
+    "fan": 0.50,
+    "blender": 0.50,
     # Calibrated from real purchase/sell data (>=20 deals each, Jun 2026):
     "kettle": 0.60,      # was defaulting to 0.70 -> overpriced (within-20% only 49%)
-    "iron_box": 0.72,
+    "iron_box": 0.55,    # was 0.72 -> over-valued vs internal
 }
 DEFAULT_ACQUISITION_RATIO = 0.70
 
