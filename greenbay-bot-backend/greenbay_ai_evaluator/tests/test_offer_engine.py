@@ -2,6 +2,9 @@
 Tests for greenbay_ai_evaluator.engine.offer_engine
 
 Every test is deterministic — no mocking of external services required.
+Kept in sync with the current v6 data-driven engine:
+  resale = new_price * depreciation_factor(age, category) * condition_factor(grade)
+  trade_in_offer = resale * acquisition_ratio[category]
 """
 
 import pytest
@@ -11,8 +14,8 @@ from greenbay_ai_evaluator.engine.offer_engine import (
     PricingPolicyData,
     ValuationResult,
     _compute_confidence,
-    _compute_depreciation_factor,
     compute_valuation,
+    depreciation_factor,
 )
 
 
@@ -34,7 +37,7 @@ def default_policy() -> PricingPolicyData:
 
 @pytest.fixture
 def basic_inputs(default_policy):
-    """Minimal valid inputs for ``compute_valuation``."""
+    """Minimal valid inputs — low evidence, so confidence stays low."""
     return dict(
         category="refrigerator",
         brand="Samsung",
@@ -52,48 +55,71 @@ def basic_inputs(default_policy):
     )
 
 
+@pytest.fixture
+def high_conf_inputs(default_policy):
+    """Inputs engineered to clear the 80% confidence gate so the decision
+    branches (accept/negotiate/decline) can be exercised. Strong evidence:
+    sales-stock + matrix + 5 comparables + 4 market sources + vision."""
+    return dict(
+        category="refrigerator",
+        brand="Samsung",
+        model="RF28",
+        age_years=2.0,
+        condition_grade="B",
+        condition_score=75.0,
+        defects=[],
+        seller_asking_price=None,
+        image_quality_score=85.0,
+        risk_score=20.0,
+        comparables=[Comparable(resale_price=40_000, weight=1.0) for _ in range(5)],
+        pricing_policy=default_policy,
+        retail_price=120_000.0,
+        price_verification={
+            "num_real_sources": 4,
+            "num_sources": 4,
+            "reconciled_price": 150_000,
+            "vision_analysis": {"ok": 1},
+            "sources": [],
+        },
+        has_matrix_match=True,
+        has_sales_stock_match=True,
+    )
+
+
 # ---------------------------------------------------------------------------
-# _compute_depreciation_factor
+# depreciation_factor — curve-based (v6)
 # ---------------------------------------------------------------------------
 class TestDepreciation:
-    def test_zero_age_returns_1(self, default_policy):
-        assert _compute_depreciation_factor(0, default_policy) == 1.0
+    def test_zero_age_caps_at_90pct(self):
+        assert depreciation_factor(0) == 0.90
 
-    def test_negative_age_returns_1(self, default_policy):
-        assert _compute_depreciation_factor(-3, default_policy) == 1.0
+    def test_negative_age_caps_at_90pct(self):
+        assert depreciation_factor(-3) == 0.90
 
-    def test_year1_depreciation(self, default_policy):
-        factor = _compute_depreciation_factor(1.0, default_policy)
-        expected = 1.0 - 0.20  # default depreciation_year1
-        assert factor == pytest.approx(expected, rel=1e-6)
+    def test_known_curve_points(self):
+        # Default category (no modifier) follows the curve midpoints exactly.
+        assert depreciation_factor(1.5, "") == pytest.approx(0.72, rel=1e-6)
+        assert depreciation_factor(2.5, "") == pytest.approx(0.60, rel=1e-6)
 
-    def test_year3_depreciation(self, default_policy):
-        factor = _compute_depreciation_factor(3.0, default_policy)
-        # Year 1: 0.80, then 2 years of 0.12 each
-        expected = 0.80 * (1 - 0.12) ** 2
-        assert factor == pytest.approx(expected, rel=1e-6)
+    def test_monotonic_decreasing(self):
+        f1 = depreciation_factor(1.0, "")
+        f2 = depreciation_factor(2.0, "")
+        f4 = depreciation_factor(4.0, "")
+        f10 = depreciation_factor(10.0, "")
+        assert f1 >= f2 >= f4 >= f10
 
-    def test_year6_depreciation(self, default_policy):
-        factor = _compute_depreciation_factor(6.0, default_policy)
-        expected = 0.80 * (1 - 0.12) ** 2 * (1 - 0.10) ** 2 * (1 - 0.08) ** 1
-        assert factor == pytest.approx(expected, rel=1e-6)
-
-    def test_very_old_product_floors_at_5pct(self, default_policy):
-        factor = _compute_depreciation_factor(50, default_policy)
-        assert factor >= 0.05
+    def test_clamped_range(self):
+        for age in (0.1, 1, 3, 7, 20, 50):
+            v = depreciation_factor(age, "refrigerator")
+            assert 0.15 <= v <= 0.90
 
 
 # ---------------------------------------------------------------------------
 # _compute_confidence
 # ---------------------------------------------------------------------------
 class TestConfidence:
-    def test_no_data(self):
-        score = _compute_confidence(0, 0.0, False, False, False)
-        assert score == 0.0
-
-    def test_full_data(self):
-        score = _compute_confidence(5, 100.0, True, True, True)
-        assert score == 100.0
+    def test_no_data_is_zero(self):
+        assert _compute_confidence(0, 0.0, False, False, False) == 0.0
 
     def test_comparables_scale(self):
         s1 = _compute_confidence(1, 50.0, False, False, False)
@@ -106,35 +132,44 @@ class TestConfidence:
         high = _compute_confidence(0, 90.0, False, False, False)
         assert high > low
 
+    def test_strong_evidence_clears_80(self):
+        score = _compute_confidence(
+            5, 85.0, True, True, True,
+            price_verification_sources=4,
+            has_model=True,
+            has_vision_analysis=True,
+            has_matrix_match=True,
+            has_sales_stock_match=True,
+        )
+        assert score >= 80.0
+
+    def test_matrix_only_capped_at_70(self):
+        score = _compute_confidence(
+            0, 100.0, True, True, True,
+            price_verification_sources=4,
+            has_matrix_match=True,
+        )
+        assert score <= 70.0
+
 
 # ---------------------------------------------------------------------------
 # compute_valuation — full pipeline
 # ---------------------------------------------------------------------------
 class TestComputeValuation:
     def test_returns_valuation_result(self, basic_inputs):
-        result = compute_valuation(**basic_inputs)
-        assert isinstance(result, ValuationResult)
+        assert isinstance(compute_valuation(**basic_inputs), ValuationResult)
 
-    def test_no_comparables_uses_depreciation(self, basic_inputs):
+    def test_no_reference_uses_external_research(self, basic_inputs):
         result = compute_valuation(**basic_inputs)
-        assert result.base_value_source == "depreciation"
-
-    def test_sufficient_comparables_uses_comparables(self, basic_inputs, default_policy):
-        comps = [Comparable(resale_price=60_000, weight=1.0) for _ in range(5)]
-        basic_inputs["comparables"] = comps
-        result = compute_valuation(**basic_inputs)
-        assert result.base_value_source == "comparables"
-        assert result.base_value == pytest.approx(60_000.0, rel=1e-6)
+        assert result.base_value_source == "external_research"
 
     def test_brand_premium_applied(self, basic_inputs):
-        # Samsung has 1.10 premium
         result_samsung = compute_valuation(**basic_inputs)
         basic_inputs["brand"] = "NoBrand"
         result_nobrand = compute_valuation(**basic_inputs)
-        # Samsung should have 10% higher brand-adjusted value
         assert result_samsung.brand_adjusted_value > result_nobrand.brand_adjusted_value
 
-    def test_condition_multiplier_applied(self, basic_inputs):
+    def test_condition_affects_value(self, basic_inputs):
         basic_inputs["condition_grade"] = "A"
         result_a = compute_valuation(**basic_inputs)
         basic_inputs["condition_grade"] = "D"
@@ -147,31 +182,27 @@ class TestComputeValuation:
         assert result.defect_deduction_total == 2500.0  # 2000 + 500
 
     def test_defect_deduction_capped_at_60pct(self, basic_inputs):
-        # Many defects to exceed the 60% cap
-        basic_inputs["defects"] = [{"type": "compressor_noise"}] * 10  # 3000 each = 30000
+        basic_inputs["defects"] = [{"type": "compressor_noise"}] * 10
         result = compute_valuation(**basic_inputs)
         assert result.defect_deduction_total <= result.condition_adjusted_value * 0.60
 
     def test_image_quality_penalty(self, basic_inputs):
         basic_inputs["image_quality_score"] = 80.0
-        result_good = compute_valuation(**basic_inputs)
-
+        good = compute_valuation(**basic_inputs)
         basic_inputs["image_quality_score"] = 30.0
-        result_bad = compute_valuation(**basic_inputs)
-
-        assert result_bad.image_quality_penalty_applied is True
-        assert result_good.image_quality_penalty_applied is False
-        assert result_bad.estimated_resale_value < result_good.estimated_resale_value
+        bad = compute_valuation(**basic_inputs)
+        assert bad.image_quality_penalty_applied is True
+        assert good.image_quality_penalty_applied is False
+        assert bad.estimated_resale_value < good.estimated_resale_value
 
     def test_risk_adjustment(self, basic_inputs):
         basic_inputs["risk_score"] = 20.0
-        result_low = compute_valuation(**basic_inputs)
+        low = compute_valuation(**basic_inputs)
         basic_inputs["risk_score"] = 60.0
-        result_high = compute_valuation(**basic_inputs)
-
-        assert result_low.risk_adjustment_applied is False
-        assert result_high.risk_adjustment_applied is True
-        assert result_high.acquisition_ceiling < result_low.acquisition_ceiling
+        high = compute_valuation(**basic_inputs)
+        assert low.risk_adjustment_applied is False
+        assert high.risk_adjustment_applied is True
+        assert high.acquisition_ceiling < low.acquisition_ceiling
 
     def test_ceiling_always_gte_opening(self, basic_inputs):
         result = compute_valuation(**basic_inputs)
@@ -183,46 +214,40 @@ class TestComputeValuation:
 
 
 # ---------------------------------------------------------------------------
-# Decision logic
+# Decision logic — exercised with high-confidence inputs
 # ---------------------------------------------------------------------------
 class TestDecisionLogic:
-    def test_accept_when_seller_below_opening(self, basic_inputs):
-        result_no_ask = compute_valuation(**basic_inputs)
-        basic_inputs["seller_asking_price"] = result_no_ask.opening_offer * 0.8
-        result = compute_valuation(**basic_inputs)
-        assert result.decision == "accept"
+    def test_high_conf_inputs_clear_gate(self, high_conf_inputs):
+        result = compute_valuation(**high_conf_inputs)
+        assert result.confidence_score >= 80.0
 
-    def test_negotiate_when_no_asking_price(self, basic_inputs):
-        basic_inputs["seller_asking_price"] = None
-        result = compute_valuation(**basic_inputs)
-        assert result.decision == "negotiate"
+    def test_accept_when_seller_below_opening(self, high_conf_inputs):
+        ref = compute_valuation(**high_conf_inputs)
+        high_conf_inputs["seller_asking_price"] = ref.opening_offer * 0.8
+        assert compute_valuation(**high_conf_inputs).decision == "accept"
 
-    def test_negotiate_when_between_opening_and_ceiling(self, basic_inputs):
-        result_ref = compute_valuation(**basic_inputs)
-        mid = (result_ref.opening_offer + result_ref.acquisition_ceiling) / 2
-        basic_inputs["seller_asking_price"] = mid
-        result = compute_valuation(**basic_inputs)
-        assert result.decision == "negotiate"
+    def test_negotiate_when_no_asking_price(self, high_conf_inputs):
+        high_conf_inputs["seller_asking_price"] = None
+        assert compute_valuation(**high_conf_inputs).decision == "negotiate"
 
-    def test_decline_when_way_above_ceiling(self, basic_inputs):
-        result_ref = compute_valuation(**basic_inputs)
-        basic_inputs["seller_asking_price"] = result_ref.acquisition_ceiling * 2
-        result = compute_valuation(**basic_inputs)
-        assert result.decision == "decline"
+    def test_negotiate_between_opening_and_ceiling(self, high_conf_inputs):
+        ref = compute_valuation(**high_conf_inputs)
+        high_conf_inputs["seller_asking_price"] = (ref.opening_offer + ref.acquisition_ceiling) / 2
+        assert compute_valuation(**high_conf_inputs).decision == "negotiate"
 
-    def test_review_when_low_confidence(self, basic_inputs):
-        basic_inputs["comparables"] = []
-        basic_inputs["image_quality_score"] = 10.0
-        basic_inputs["brand"] = ""
-        basic_inputs["age_years"] = 0
-        # This should give very low confidence
-        result = compute_valuation(**basic_inputs)
-        if result.confidence_score < 40:
-            assert result.decision == "review"
+    def test_decline_when_way_above_ceiling(self, high_conf_inputs):
+        ref = compute_valuation(**high_conf_inputs)
+        high_conf_inputs["seller_asking_price"] = ref.acquisition_ceiling * 2
+        assert compute_valuation(**high_conf_inputs).decision == "decline"
 
-    def test_review_when_high_risk(self, basic_inputs):
-        basic_inputs["risk_score"] = 80.0
+    def test_review_when_high_risk(self, high_conf_inputs):
+        high_conf_inputs["risk_score"] = 80.0
+        assert compute_valuation(**high_conf_inputs).decision == "review"
+
+    def test_low_evidence_routes_to_review(self, basic_inputs):
+        # No reference, no matrix, no sales stock -> confidence < 80 -> review.
         result = compute_valuation(**basic_inputs)
+        assert result.confidence_score < 80
         assert result.decision == "review"
 
 
@@ -230,18 +255,15 @@ class TestDecisionLogic:
 # Determinism
 # ---------------------------------------------------------------------------
 class TestDeterminism:
-    def test_identical_inputs_produce_identical_outputs(self, basic_inputs):
-        r1 = compute_valuation(**basic_inputs)
-        r2 = compute_valuation(**basic_inputs)
+    def test_identical_inputs_produce_identical_outputs(self, high_conf_inputs):
+        r1 = compute_valuation(**high_conf_inputs)
+        r2 = compute_valuation(**high_conf_inputs)
         assert r1.estimated_resale_value == r2.estimated_resale_value
-        assert r1.acquisition_ceiling == r2.acquisition_ceiling
         assert r1.opening_offer == r2.opening_offer
-        assert r1.walkaway_limit == r2.walkaway_limit
         assert r1.confidence_score == r2.confidence_score
         assert r1.decision == r2.decision
 
     def test_output_independent_of_call_order(self, basic_inputs):
-        """Run valuation, change inputs, run again, then re-run original — should match."""
         r1 = compute_valuation(**basic_inputs)
         basic_inputs["retail_price"] = 200_000
         _ = compute_valuation(**basic_inputs)

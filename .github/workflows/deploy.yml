@@ -6,8 +6,33 @@ on:
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
+  test:
+    name: Run tests (gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: greenbay-bot-backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        # The deterministic engine/service tests only need loguru + pytest
+        # (config is pure constants; gspread/google clients are imported lazily).
+        run: pip install pytest pytest-asyncio loguru pydantic
+
+      - name: Run pytest
+        run: python -m pytest greenbay_ai_evaluator/tests/ -q
+
   deploy:
     name: Deploy to Production
+    needs: test          # deploy is BLOCKED unless the test gate passes
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -120,6 +145,31 @@ jobs:
               sudo docker compose logs --tail=200 app || true
               exit 1
             )
+
+            echo "=== Post-deploy smoke test (real evaluation) ==="
+            # Run one full evaluation against the live container, assert it
+            # returns a priced result, then delete the probe row from Airtable +
+            # the tracker sheet so no test data is left behind. Catches runtime
+            # regressions that unit tests can't (DB/Airtable/Gemini wiring).
+            SMOKE_PAYLOAD='{"category":"tv_monitor","brand":"Samsung","model":"ZZSMOKE-CI","age_years":2,"condition_grade":"B","condition_score":70,"retail_price":50000,"retail_price_source":"category_default","seller_name":"ZZSMOKE CI","seller_phone":"+254700000000","country":"KE"}'
+            SMOKE_RESP="$(curl -sf -X POST -H 'Content-Type: application/json' -d "$SMOKE_PAYLOAD" http://localhost:9100/tradein/evaluate)" || {
+              echo '::error::Smoke test FAILED — /tradein/evaluate did not return 200'
+              sudo docker compose logs --tail=200 app || true
+              exit 1
+            }
+            echo "$SMOKE_RESP" | grep -q 'opening_offer' || {
+              echo '::error::Smoke test FAILED — response missing opening_offer'
+              echo "$SMOKE_RESP"
+              exit 1
+            }
+            SID="$(echo "$SMOKE_RESP" | sed -n 's/.*"session_id"[: ]*"\([^"]*\)".*/\1/p' | cut -c1-8)"
+            echo "Smoke OK (session ${SID}); cleaning up probe row..."
+            if [ -n "$SID" ]; then
+              ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || echo greenbay-admin-2026)"
+              curl -s -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+                "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true
+            fi
+
             echo ""
             echo "=== Deploy successful ==="
             sudo docker ps --format '{{.Names}} {{.Status}}'

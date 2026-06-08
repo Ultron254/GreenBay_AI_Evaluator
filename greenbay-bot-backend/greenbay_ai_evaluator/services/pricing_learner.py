@@ -33,6 +33,25 @@ _accuracy_metrics: dict[str, Any] = {}
 # Recency half-life: prices older than this lose weight exponentially
 RECENCY_HALF_LIFE_DAYS = 90
 
+# Affirmative tokens that mark a closed/accepted deal.
+_ACCEPTED_TOKENS = {"accepted", "accept", "yes", "closed", "done", "completed"}
+# Negation fragments that must veto a match (so "Not Accepted" is NOT accepted).
+_NEGATION_FRAGMENTS = ("not ", "non", "un", "reject", "decline", "no ")
+
+
+def _is_accepted_status(status: str) -> bool:
+    """True only when *status* clearly marks an accepted/closed deal.
+
+    Guards against the classic substring bug where ``"accept" in status`` also
+    matches "Not Accepted" / "Unaccepted" / "Rejected".
+    """
+    s = (status or "").strip().lower()
+    if not s:
+        return False
+    if any(frag in s for frag in _NEGATION_FRAGMENTS):
+        return False
+    return s.startswith("accept") or s in _ACCEPTED_TOKENS
+
 
 def _parse_date(text: str) -> datetime | None:
     """Parse date from sheet (DD/MM/YY or YYYY-MM-DD).
@@ -106,14 +125,9 @@ async def refresh_from_sheet() -> int:
                 or row.get("Status")
                 or ""
             ).strip().lower()
-            # Precise match: a status like "Not Accepted" / "Unaccepted" / "Rejected"
-            # must NOT count as a closed deal. Treat as accepted only on explicit
-            # affirmative tokens, and never when a negation is present.
-            _neg = any(n in status for n in ("not ", "non", "un", "reject", "decline", "no "))
-            is_accepted = (not _neg) and (
-                status.startswith("accept")
-                or status in {"accepted", "accept", "yes", "closed", "done", "completed"}
-            )
+            # Precise match: "Not Accepted" / "Unaccepted" / "Rejected" must NOT
+            # count as a closed deal (see _is_accepted_status).
+            is_accepted = _is_accepted_status(status)
             final_price_str = (
                 row.get("Final Price Offered") or row.get("Final Price") or ""
             ).strip()
