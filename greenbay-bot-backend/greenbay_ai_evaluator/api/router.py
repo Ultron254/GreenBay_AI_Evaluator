@@ -487,6 +487,7 @@ def airtable_debug(n: int = 3, _: bool = Depends(verify_admin_key)):
                 "asking_price": (r.get("fields", {}) or {}).get("Customer Asking Price (KES)"),
                 "vertex_price": (r.get("fields", {}) or {}).get("Vertex AI Price (KES)"),
                 "justification": (r.get("fields", {}) or {}).get("AI Pricing Justification"),
+                "notes": (r.get("fields", {}) or {}).get("Notes"),
                 "fields_present": sorted((r.get("fields", {}) or {}).keys()),
             }
             for r in recs_sorted
