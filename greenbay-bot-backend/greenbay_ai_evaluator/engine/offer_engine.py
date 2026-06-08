@@ -20,6 +20,7 @@ from __future__ import annotations
 
 ENGINE_VERSION = "6.0.0-data-driven-2026-05-24"
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -76,6 +77,35 @@ CONDITION_FACTORS: dict[str, float] = {
 # Floor/ceiling guardrails: prevent wild outliers relative to team history.
 PRICE_FLOOR_RATIO: float = 0.60
 PRICE_CEILING_RATIO: float = 1.50
+
+# Hard consistency ceiling: a used trade-in offer may never approach the price
+# of a brand-new unit. This is the strongest sanity net — it catches both
+# over-valuation (offer too high) AND a wrongly-low sourced new price (which
+# would otherwise let the offer exceed "new"). Per-category because electronics
+# and small appliances depreciate faster and carry thinner resale margins.
+DEFAULT_MAX_TRADEIN_TO_NEW: float = 0.55
+MAX_TRADEIN_TO_NEW: dict[str, float] = {
+    "tv": 0.45, "tv_monitor": 0.45,
+    "refrigerator": 0.50, "fridge": 0.50, "freezer": 0.50, "chiller": 0.50,
+    "washing_machine": 0.50, "dishwasher": 0.50,
+    "cooker": 0.50, "cooker_oven": 0.50, "oven": 0.50,
+    "microwave": 0.40, "water_dispenser": 0.40, "air_fryer": 0.40,
+    "soundbar": 0.35, "woofer": 0.35, "speaker": 0.35, "home_theatre": 0.35,
+    "fan": 0.35, "iron_box": 0.30, "kettle": 0.30, "blender": 0.30,
+}
+
+
+def _max_tradein_to_new(category: str) -> float:
+    """Resolve the max offer-to-new ratio for a category (separator-insensitive)."""
+    if not category:
+        return DEFAULT_MAX_TRADEIN_TO_NEW
+    key = re.sub(r"[\s\-/]+", "_", category.lower().strip())
+    if key in MAX_TRADEIN_TO_NEW:
+        return MAX_TRADEIN_TO_NEW[key]
+    for k, v in MAX_TRADEIN_TO_NEW.items():
+        if k in key or key in k:
+            return v
+    return DEFAULT_MAX_TRADEIN_TO_NEW
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +664,44 @@ def compute_valuation(
             acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
             walkaway_limit = _round_price(opening_offer * 0.7, round_step)
             ceiling_applied = True
+
+    # -- STEP 11b: New-price consistency ceiling -----------------------------
+    # The offer must never approach the price of a brand-new unit. Anchor on the
+    # reconciled (market-verified) new price, falling back to the supplied retail
+    # price. If the offer breaches the per-category ceiling it means either the
+    # offer is too high OR the sourced new price is too low — both are wrong, so
+    # we cap the offer AND route to human review (confidence forced below 80).
+    new_price_ceiling_applied = False
+    new_price_anchor = 0.0
+    if price_verification and price_verification.get("reconciled_price"):
+        try:
+            new_price_anchor = float(price_verification["reconciled_price"] or 0)
+        except (TypeError, ValueError):
+            new_price_anchor = 0.0
+    if new_price_anchor <= 0:
+        try:
+            new_price_anchor = float(retail_price or 0)
+        except (TypeError, ValueError):
+            new_price_anchor = 0.0
+
+    if new_price_anchor > 0:
+        max_ratio = _max_tradein_to_new(category)
+        new_price_cap = _round_price(new_price_anchor * max_ratio, round_step)
+        if new_price_cap > 0 and opening_offer > new_price_cap:
+            guardrail_note = (
+                f"New-price ceiling: offer KES {opening_offer:,.0f} exceeded "
+                f"{max_ratio:.0%} of the new price (KES {new_price_anchor:,.0f}). "
+                f"Capped to KES {new_price_cap:,.0f} and flagged for review "
+                f"(either the offer was too high or the sourced new price too low)."
+            )
+            logger.warning(guardrail_note)
+            trace_lines.append(f"GUARDRAIL: {guardrail_note}")
+            opening_offer = new_price_cap
+            acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
+            walkaway_limit = _round_price(opening_offer * 0.7, round_step)
+            new_price_ceiling_applied = True
+            # A breach signals an unreliable input — never ship it as "verified".
+            confidence_score = min(confidence_score, 75.0)
 
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
     trace_lines.append(f"Confidence: {confidence_score:.0f}%")

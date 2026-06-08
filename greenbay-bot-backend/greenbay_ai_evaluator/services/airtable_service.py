@@ -53,7 +53,7 @@ RATE_LIMIT_DELAY = 0.25              # 5 req/sec max → 250ms spacing
 # Prevents 422 UNKNOWN_FIELD_NAME from silently killing every write when a
 # column we send doesn't exist on the base (root cause of the May-22 stop).
 _schema_lock = threading.Lock()
-_known_fields_cache: dict[str, Any] = {"fields": None, "fetched_at": 0.0}
+_known_fields_cache: dict[str, Any] = {"fields": None, "types": None, "fetched_at": 0.0}
 _SCHEMA_TTL = 600  # seconds
 
 import re as _re
@@ -93,10 +93,24 @@ def _get_known_fields(cfg: dict[str, str], force: bool = False) -> Optional[set[
     if not target:
         return None
     names = {f.get("name") for f in target.get("fields", []) if f.get("name")}
+    types = {f.get("name"): f.get("type") for f in target.get("fields", []) if f.get("name")}
     with _schema_lock:
         _known_fields_cache["fields"] = names
+        _known_fields_cache["types"] = types
         _known_fields_cache["fetched_at"] = now
     return names
+
+
+# Airtable field types that can store free text. Writing text to any other type
+# (e.g. currency/number) is silently coerced to null by typecast=True.
+_TEXT_FIELD_TYPES = {"singleLineText", "multilineText", "richText"}
+
+
+def _field_type(name: str) -> Optional[str]:
+    """Return the cached Airtable field type for *name*, or None if unknown."""
+    with _schema_lock:
+        types = _known_fields_cache.get("types") or {}
+    return types.get(name)
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +521,27 @@ def write_evaluation(data: dict) -> bool:
     # readable). This avoids 422s entirely; _post_record's self-healing handles
     # the case where the schema can't be read.
     known = _get_known_fields(cfg)
+
+    # Safety net: if 'AI Pricing Justification' is mapped to a non-text Airtable
+    # column (it is currently a `currency` field, which silently drops text), fold
+    # a compact version into 'Notes' so the evidence is never lost — and keep the
+    # dedicated column write too, so it starts working the moment the field type
+    # is changed to Long text.
+    just = fields.get("AI Pricing Justification")
+    if just and isinstance(just, str):
+        jt = _field_type("AI Pricing Justification")
+        if jt is not None and jt not in _TEXT_FIELD_TYPES:
+            compact = just.strip().replace("\n", " | ")[:900]
+            existing_notes = str(fields.get("Notes", "") or "")
+            merged = (existing_notes + " || JUSTIFICATION: " + compact).strip(" |")
+            if "Notes" in (known or {"Notes"}):
+                fields["Notes"] = merged[:2000]
+            fields.pop("AI Pricing Justification", None)
+            logger.warning(
+                "Airtable: 'AI Pricing Justification' is a non-text field "
+                f"({jt}); routed justification into Notes. Change the column type "
+                "to 'Long text' to capture it in its own column."
+            )
     if known:
         missing = [k for k in fields if k not in known]
         if missing:

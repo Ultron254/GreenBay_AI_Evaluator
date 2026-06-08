@@ -53,6 +53,20 @@ _DEFAULT_SANITY = (1_000, 500_000)
 _COUNTRY_NAMES = {"KE": "Kenya", "UG": "Uganda", "NG": "Nigeria"}
 _COUNTRY_CURRENCIES = {"KE": "KES", "UG": "UGX", "NG": "NGN"}
 
+# Approx KES per 1 unit of local currency. Used ONLY to scale the KES-denominated
+# sanity bands into the target currency so a legitimate local-currency price is
+# not falsely rejected. (Not used for customer-facing conversion.)
+_KES_PER_LOCAL = {"KES": 1.0, "UGX": 0.0357, "NGN": 0.085}
+
+
+def _sanity_band_for(cat_key: str, currency: str) -> tuple[float, float]:
+    """KES sanity band scaled into the evaluation's local currency."""
+    lo, hi = _PRICE_SANITY.get(cat_key, _DEFAULT_SANITY)
+    rate = _KES_PER_LOCAL.get(currency, 1.0)
+    if rate and rate != 1.0:
+        return lo / rate, hi / rate
+    return lo, hi
+
 
 # ---------------------------------------------------------------------------
 # Gemini Google Search grounding (v6 primary)
@@ -273,7 +287,7 @@ def gemini_price_research(
                 continue
 
             cat_key = category.lower().strip()
-            lo, hi = _PRICE_SANITY.get(cat_key, _DEFAULT_SANITY)
+            lo, hi = _sanity_band_for(cat_key, currency)
             if lo <= price <= hi:
                 result.launch_price = price
                 result.current_resale_low = price * 0.7
