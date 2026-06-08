@@ -345,6 +345,102 @@ def _at_empty(v) -> bool:
     return v is None or v == 0 or (isinstance(v, str) and not v.strip())
 
 
+@evaluator_router.get("/admin/tracker-analysis")
+def tracker_analysis(_: bool = Depends(verify_admin_key)):
+    """Read-only dump of the 'Customer Initiated Evaluation' tracker rows so the
+    AI vs internal/new-price accuracy can be analysed off the real numbers."""
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+    gc = rds._get_gspread_client()
+    if gc is None:
+        raise HTTPException(status_code=400, detail="no gspread client")
+    try:
+        ss = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID)
+        try:
+            ws = ss.worksheet(rds.EVAL_TRACKER_TAB)
+        except Exception:
+            ws = ss.sheet1
+        values = ws.get_all_values()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"sheet read failed: {e}")
+
+    hidx, cmap = rds._find_header_index(values)
+    if hidx < 0:
+        return {"error": "header not found", "first_rows": values[:6]}
+
+    def cell(row, key):
+        i = cmap.get(key)
+        return row[i] if i is not None and i < len(row) else ""
+
+    rows = []
+    for row in values[hidx + 1:]:
+        if not any(str(c).strip() for c in row):
+            continue
+        rows.append({
+            "item": cell(row, "item"),
+            "model": cell(row, "model"),
+            "condition": cell(row, "condition"),
+            "age": cell(row, "age"),
+            "new_price": cell(row, "new_price"),
+            "ai_price": cell(row, "ai_price"),
+            "confidence": cell(row, "ai_confidence"),
+            "customer_price": cell(row, "customer_price"),
+            "internal_price": cell(row, "internal_price"),
+            "final_price": cell(row, "final_price"),
+            "accepted": cell(row, "accepted"),
+        })
+    return {"count": len(rows), "rows": rows}
+
+
+@evaluator_router.post("/admin/fix-justification-field")
+def fix_justification_field(_: bool = Depends(verify_admin_key)):
+    """Convert the Airtable 'AI Pricing Justification' column from currency to
+    long-text via the Meta API (it silently rejects text while a currency type).
+    Renames the old field then creates a fresh multilineText field of the same
+    name; rolls the rename back if creation fails. No-op if already text."""
+    import requests
+    from greenbay_ai_evaluator.services.airtable_service import _get_config, _auth_headers
+    from greenbay_ai_evaluator.services import airtable_service as _at
+    cfg = _get_config()
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Airtable not configured")
+    base = cfg["base_id"]
+    hdr = _auth_headers(cfg)
+    FIELD = "AI Pricing Justification"
+
+    murl = f"https://api.airtable.com/v0/meta/bases/{base}/tables"
+    mr = requests.get(murl, headers=hdr, timeout=20)
+    if mr.status_code != 200:
+        return {"ok": False, "step": "meta", "status": mr.status_code, "body": mr.text[:300]}
+    table = next((t for t in mr.json().get("tables", []) if t.get("name") == cfg["table"]), None)
+    if not table:
+        return {"ok": False, "error": "table not found"}
+    tid = table["id"]
+    fld = next((f for f in table.get("fields", []) if f.get("name") == FIELD), None)
+    if not fld:
+        return {"ok": False, "error": f"field {FIELD!r} not found"}
+    if fld.get("type") == "multilineText":
+        return {"ok": True, "already_text": True}
+    fid = fld["id"]
+
+    purl = f"https://api.airtable.com/v0/meta/bases/{base}/tables/{tid}/fields/{fid}"
+    legacy = f"{FIELD} (legacy currency)"
+    pr = requests.patch(purl, headers=hdr, json={"name": legacy}, timeout=20)
+    if pr.status_code != 200:
+        return {
+            "ok": False, "step": "rename", "status": pr.status_code, "body": pr.text[:300],
+            "hint": "Token lacks schema.bases:write — change the field type to 'Long text' "
+                    "manually in the Airtable UI instead.",
+        }
+    curl_ = f"https://api.airtable.com/v0/meta/bases/{base}/tables/{tid}/fields"
+    cr = requests.post(curl_, headers=hdr, json={"name": FIELD, "type": "multilineText"}, timeout=20)
+    if cr.status_code not in (200, 201):
+        requests.patch(purl, headers=hdr, json={"name": FIELD}, timeout=20)  # rollback
+        return {"ok": False, "step": "create", "status": cr.status_code, "body": cr.text[:300]}
+
+    _at._known_fields_cache["fields"] = None  # bust schema cache so writer sees new field
+    return {"ok": True, "renamed_old_to": legacy, "created": f"{FIELD} (multilineText)"}
+
+
 @evaluator_router.get("/admin/airtable-debug")
 def airtable_debug(n: int = 3, _: bool = Depends(verify_admin_key)):
     """Ground truth: the EXACT schema column names the writer sees, plus which
