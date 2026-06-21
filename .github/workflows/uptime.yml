@@ -1,0 +1,79 @@
+name: Uptime Monitor
+
+# External heartbeat for the production site. Runs on GitHub's runners (so it
+# still fires even if the EC2 box is unreachable) and checks the public HTTPS
+# health endpoint. On a confirmed outage it opens a GitHub issue (which emails
+# repo watchers/assignees); on recovery it auto-closes that issue. This is the
+# "warn me before I find out by accident" safety net.
+#
+# NOTE: this is a backstop. For SMS/phone alerts and TLS-expiry warnings, also
+# set up an external monitor like UptimeRobot (free) — see the chat notes.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'  # every ~10 minutes (GitHub may delay under load)
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Probe production health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      URL: https://evaluate.greenbay.market/health
+      GH_TOKEN: ${{ github.token }}
+      LABEL: outage
+    steps:
+      - name: Ensure outage label exists
+        run: gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --color B60205 --description "Production outage detected by uptime monitor" --force || true
+
+      - name: Probe /health (3 tries to avoid flapping)
+        id: probe
+        run: |
+          ok=0
+          for n in 1 2 3; do
+            body="$(curl -sS --max-time 25 "$URL" || true)"
+            if echo "$body" | grep -q '"status":"healthy"'; then ok=1; break; fi
+            echo "attempt $n failed: ${body:0:200}"
+            sleep 10
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Open outage issue if down
+        if: steps.probe.outputs.ok == '0'
+        run: |
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number -q '.[0].number' || true)"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "🔴 evaluate.greenbay.market is DOWN" \
+              --label "$LABEL" \
+              --body "Automated uptime check could not reach ${URL} (3 consecutive failures) at $(date -u '+%Y-%m-%d %H:%M UTC'). Investigate the EC2 host / nginx / app container. This issue will auto-close when the site recovers."
+            echo "Opened outage issue."
+          else
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "Still down as of $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo "Outage issue #$existing already open."
+          fi
+
+      - name: Close outage issue on recovery
+        if: steps.probe.outputs.ok == '1'
+        run: |
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number -q '.[0].number' || true)"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "✅ Recovered — health check passing as of $(date -u '+%Y-%m-%d %H:%M UTC'). Auto-closing."
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY"
+            echo "Closed recovered outage issue #$existing."
+          else
+            echo "Healthy; no open outage issue."
+          fi
+
+      - name: Fail the run if down (for the Actions status badge / email)
+        if: steps.probe.outputs.ok == '0'
+        run: |
+          echo "::error::Production health check FAILED for $URL"
+          exit 1

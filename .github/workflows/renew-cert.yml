@@ -19,6 +19,13 @@ on:
 permissions:
   contents: read
 
+# Shares the deploy workflow's concurrency group so a renewal never runs Docker
+# commands on the EC2 host at the same time as a deploy (that race took the site
+# offline once). Runs queue instead of overlapping.
+concurrency:
+  group: greenbay-ec2-server
+  cancel-in-progress: false
+
 jobs:
   renew:
     name: Renew Let's Encrypt certificate

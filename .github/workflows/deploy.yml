@@ -8,6 +8,15 @@ on:
 permissions:
   contents: read  # lets the job's GITHUB_TOKEN pull the repo on the server
 
+# Serialize anything that touches the EC2 host. The renew-cert workflow shares
+# this same group, so a deploy and a cert renewal can NEVER run Docker commands
+# on the server at the same time. (A concurrent deploy + renew once collided on
+# `docker compose` container removal and took the site offline.) New runs queue
+# behind the in-flight one instead of cancelling it.
+concurrency:
+  group: greenbay-ec2-server
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Run tests (gate)

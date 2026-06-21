@@ -1,5 +1,14 @@
 
 
+# Cap container stdout/stderr logs so they can't silently fill the root disk.
+# Without this Docker keeps json log files forever (a known cause of "no space
+# left on device" on this host). Each service keeps at most 3 x 10MB = 30MB.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # Main GreenBay Bot application
   app:
@@ -41,6 +50,7 @@ services:
       - ./airtable_fallback:/app/airtable_fallback
       - ./notification_fallback:/app/notification_fallback
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - greenbay-network
     healthcheck:
@@ -69,6 +79,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - greenbay-network
 
@@ -87,6 +98,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - greenbay-network
 
@@ -107,6 +119,7 @@ services:
       - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN:-CHANGE_ME}
       - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2025-07}
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - greenbay-network
 
@@ -130,6 +143,7 @@ services:
       app:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - greenbay-network
 
