@@ -38,7 +38,7 @@ jobs:
           script_stop: true
           envs: EVENT,GH_TOKEN
           script: |
-            set -e
+            set +e  # we capture and report errors explicitly below
             DOMAIN="evaluate.greenbay.market"
             EMAIL="allanmatano@greenbay.market"
             REPO="https://x-access-token:${GH_TOKEN}@github.com/Ultron254/GreenBay_AI_Evaluator.git"
@@ -46,30 +46,50 @@ jobs:
             echo "=== Ensure webroot exists on host ==="
             sudo mkdir -p /var/www/certbot
 
-            echo "=== Pull latest (compose now mounts /var/www/certbot into nginx) ==="
-            cd /opt/greenbay
-            sudo git pull "$REPO" main
-            cd greenbay-bot-backend
+            echo "=== Pull latest (compose mounts /var/www/certbot into nginx) ==="
+            cd /opt/greenbay || exit 1
+            sudo git pull "$REPO" main || { echo "::error::git pull failed"; exit 1; }
+            cd greenbay-bot-backend || exit 1
 
             echo "=== Recreate nginx so the webroot mount is live ==="
             sudo docker compose up -d nginx
             sleep 5
 
+            echo "=== Locate certbot ==="
+            CB="$(sudo bash -lc 'command -v certbot' 2>/dev/null)"
+            if [ -z "$CB" ]; then
+              if [ -x /snap/bin/certbot ]; then CB=/snap/bin/certbot
+              elif [ -x /usr/bin/certbot ]; then CB=/usr/bin/certbot
+              fi
+            fi
+            if [ -z "$CB" ]; then
+              echo "certbot not found — installing via snap"
+              sudo snap install --classic certbot && sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+              CB=/snap/bin/certbot
+            fi
+            echo "Using certbot: ${CB:-NONE}"
+            sudo "$CB" --version 2>&1 || true
+
+            HOOK="docker exec greenbay-nginx nginx -s reload"
             if [ "$EVENT" = "schedule" ]; then
               echo "=== Scheduled backstop: renew only if near expiry ==="
-              sudo certbot renew --webroot -w /var/www/certbot \
-                --deploy-hook "docker exec greenbay-nginx nginx -s reload" || true
+              sudo "$CB" renew --webroot -w /var/www/certbot --deploy-hook "$HOOK" 2>&1
+              RC=$?
             else
               echo "=== Manual run: force a fresh certificate via webroot ==="
-              sudo certbot certonly --webroot -w /var/www/certbot \
+              sudo "$CB" certonly --webroot -w /var/www/certbot \
                 -d "$DOMAIN" \
                 --non-interactive --agree-tos -m "$EMAIL" \
                 --force-renewal \
-                --deploy-hook "docker exec greenbay-nginx nginx -s reload"
+                --deploy-hook "$HOOK" 2>&1
+              RC=$?
             fi
+            echo "certbot exit code: $RC"
 
             echo "=== Reload nginx to pick up the new cert ==="
-            sudo docker exec greenbay-nginx nginx -s reload || sudo docker restart greenbay-nginx
+            sudo docker exec greenbay-nginx nginx -s reload 2>&1 || sudo docker restart greenbay-nginx
 
-            echo "=== New certificate validity ==="
-            sudo certbot certificates 2>/dev/null | grep -E "Certificate Name|Expiry Date" || true
+            echo "=== Certificate status ==="
+            sudo "$CB" certificates 2>&1 | grep -E "Certificate Name|Expiry Date|Domains" || true
+
+            exit $RC
