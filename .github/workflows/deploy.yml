@@ -77,6 +77,18 @@ jobs:
             sudo chmod -R 777 logs temp_images receipts airtable_fallback
             sudo chmod 755 credentials
 
+            # Reclaim disk before building. A full disk previously broke the
+            # image build ("no space left on device"). Prune build cache and
+            # unused/dangling images + stopped containers. NEVER prune volumes —
+            # that would delete the postgres/redis data.
+            echo "=== Disk usage before cleanup ==="
+            df -h / || true
+            sudo docker builder prune -af || true
+            sudo docker image prune -af || true
+            sudo docker container prune -f || true
+            echo "=== Disk usage after cleanup ==="
+            df -h / || true
+
             sudo docker compose build
 
             # Stop and remove the two containers we always rebuild. Previous
