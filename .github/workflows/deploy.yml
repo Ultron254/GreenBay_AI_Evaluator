@@ -56,11 +56,15 @@ jobs:
           envs: GH_TOKEN
           script: |
             set -e
-            echo "=== Pulling latest code ==="
+            echo "=== Syncing code to origin/main ==="
             cd /opt/greenbay
-            # Authenticate the pull with the short-lived Actions token so we don't
-            # depend on a stored PAT on the server (which expired and broke deploys).
-            sudo git pull "https://x-access-token:${GH_TOKEN}@github.com/Ultron254/GreenBay_AI_Evaluator.git" main
+            # Authenticate with the short-lived Actions token (no stored PAT needed,
+            # the old one expired). Force the checkout to mirror origin/main: plain
+            # `git pull` breaks on divergent local history, so fetch + hard reset is
+            # deterministic. Only tracked files are touched — runtime data dirs are
+            # bind-mounted and gitignored.
+            sudo git fetch "https://x-access-token:${GH_TOKEN}@github.com/Ultron254/GreenBay_AI_Evaluator.git" main
+            sudo git reset --hard FETCH_HEAD
 
             echo "=== Rebuilding containers ==="
             cd greenbay-bot-backend

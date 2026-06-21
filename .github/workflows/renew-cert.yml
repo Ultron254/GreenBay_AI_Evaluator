@@ -46,9 +46,10 @@ jobs:
             echo "=== Ensure webroot exists on host ==="
             sudo mkdir -p /var/www/certbot
 
-            echo "=== Pull latest (compose mounts /var/www/certbot into nginx) ==="
+            echo "=== Sync code to origin/main (compose mounts /var/www/certbot) ==="
             cd /opt/greenbay || exit 1
-            sudo git pull "$REPO" main || { echo "::error::git pull failed"; exit 1; }
+            # fetch + hard reset (plain pull breaks on divergent local history).
+            sudo git fetch "$REPO" main && sudo git reset --hard FETCH_HEAD || { echo "::error::git sync failed"; exit 1; }
             cd greenbay-bot-backend || exit 1
 
             echo "=== Recreate nginx so the webroot mount is live ==="
