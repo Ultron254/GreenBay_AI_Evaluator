@@ -45,6 +45,9 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Webroot for Let's Encrypt http-01 challenges (see nginx.conf). Required
+      # so certbot renewals can be validated and the cert never silently expires.
+      - /var/www/certbot:/var/www/certbot:ro
     restart: always
     deploy:
       resources:

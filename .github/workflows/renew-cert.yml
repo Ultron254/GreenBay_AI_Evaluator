@@ -1,0 +1,69 @@
+name: Renew TLS Certificate
+
+# Renews the Let's Encrypt certificate for evaluate.greenbay.market.
+#  - Manual run (workflow_dispatch): forces a fresh certificate immediately and
+#    (re)points the renewal config at the webroot + an nginx-reload deploy hook.
+#  - Weekly schedule: a non-forcing backstop in case the host's own
+#    certbot.timer ever fails again (only renews when within 30 days of expiry).
+#
+# The actual fix for the silent-expiry bug is the /var/www/certbot mount added
+# to the nginx service in docker-compose.yml; this workflow drives the renewal
+# over the existing deploy SSH key.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'  # Mondays 03:17 UTC
+
+jobs:
+  renew:
+    name: Renew Let's Encrypt certificate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Renew certificate over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          EVENT: ${{ github.event_name }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 8m
+          script_stop: true
+          envs: EVENT
+          script: |
+            set -e
+            DOMAIN="evaluate.greenbay.market"
+            EMAIL="allanmatano@greenbay.market"
+
+            echo "=== Ensure webroot exists on host ==="
+            sudo mkdir -p /var/www/certbot
+
+            echo "=== Pull latest (compose now mounts /var/www/certbot into nginx) ==="
+            cd /opt/greenbay
+            sudo git pull origin main
+            cd greenbay-bot-backend
+
+            echo "=== Recreate nginx so the webroot mount is live ==="
+            sudo docker compose up -d nginx
+            sleep 5
+
+            if [ "$EVENT" = "schedule" ]; then
+              echo "=== Scheduled backstop: renew only if near expiry ==="
+              sudo certbot renew --webroot -w /var/www/certbot \
+                --deploy-hook "docker exec greenbay-nginx nginx -s reload" || true
+            else
+              echo "=== Manual run: force a fresh certificate via webroot ==="
+              sudo certbot certonly --webroot -w /var/www/certbot \
+                -d "$DOMAIN" \
+                --non-interactive --agree-tos -m "$EMAIL" \
+                --force-renewal \
+                --deploy-hook "docker exec greenbay-nginx nginx -s reload"
+            fi
+
+            echo "=== Reload nginx to pick up the new cert ==="
+            sudo docker exec greenbay-nginx nginx -s reload || sudo docker restart greenbay-nginx
+
+            echo "=== New certificate validity ==="
+            sudo certbot certificates 2>/dev/null | grep -E "Certificate Name|Expiry Date" || true

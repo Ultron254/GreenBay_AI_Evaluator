@@ -121,6 +121,11 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Webroot for Let's Encrypt http-01 challenges. nginx serves
+      # /.well-known/acme-challenge/ from here (see nginx.conf), and certbot on
+      # the host writes the challenge files here. Without this mount the renewal
+      # challenge 404s and the cert silently expires.
+      - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       app:
         condition: service_healthy
