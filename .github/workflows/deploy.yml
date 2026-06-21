@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
+permissions:
+  contents: read  # lets the job's GITHUB_TOKEN pull the repo on the server
+
 jobs:
   test:
     name: Run tests (gate)
@@ -42,17 +45,22 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
+          envs: GH_TOKEN
           script: |
             set -e
             echo "=== Pulling latest code ==="
             cd /opt/greenbay
-            sudo git pull origin main
+            # Authenticate the pull with the short-lived Actions token so we don't
+            # depend on a stored PAT on the server (which expired and broke deploys).
+            sudo git pull "https://x-access-token:${GH_TOKEN}@github.com/Ultron254/GreenBay_AI_Evaluator.git" main
 
             echo "=== Rebuilding containers ==="
             cd greenbay-bot-backend

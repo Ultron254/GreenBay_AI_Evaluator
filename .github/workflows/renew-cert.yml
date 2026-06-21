@@ -6,14 +6,18 @@ name: Renew TLS Certificate
 #  - Weekly schedule: a non-forcing backstop in case the host's own
 #    certbot.timer ever fails again (only renews when within 30 days of expiry).
 #
-# The actual fix for the silent-expiry bug is the /var/www/certbot mount added
-# to the nginx service in docker-compose.yml; this workflow drives the renewal
-# over the existing deploy SSH key.
+# Renewal uses the webroot method (no nginx downtime). The real fix for the
+# silent-expiry bug is the /var/www/certbot mount added to the nginx service in
+# docker-compose.yml. The server-side `git pull` is authenticated with the
+# short-lived Actions token so it doesn't depend on a stored PAT on the server.
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * 1'  # Mondays 03:17 UTC
+
+permissions:
+  contents: read
 
 jobs:
   renew:
@@ -25,24 +29,26 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 8m
           script_stop: true
-          envs: EVENT
+          envs: EVENT,GH_TOKEN
           script: |
             set -e
             DOMAIN="evaluate.greenbay.market"
             EMAIL="allanmatano@greenbay.market"
+            REPO="https://x-access-token:${GH_TOKEN}@github.com/Ultron254/GreenBay_AI_Evaluator.git"
 
             echo "=== Ensure webroot exists on host ==="
             sudo mkdir -p /var/www/certbot
 
             echo "=== Pull latest (compose now mounts /var/www/certbot into nginx) ==="
             cd /opt/greenbay
-            sudo git pull origin main
+            sudo git pull "$REPO" main
             cd greenbay-bot-backend
 
             echo "=== Recreate nginx so the webroot mount is live ==="
