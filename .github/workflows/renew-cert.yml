@@ -35,7 +35,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 8m
-          script_stop: true
+          script_stop: false
           envs: EVENT,GH_TOKEN
           script: |
             set +e  # we capture and report errors explicitly below
@@ -71,19 +71,17 @@ jobs:
             sudo "$CB" --version 2>&1 || true
 
             HOOK="docker exec greenbay-nginx nginx -s reload"
-            if [ "$EVENT" = "schedule" ]; then
-              echo "=== Scheduled backstop: renew only if near expiry ==="
-              sudo "$CB" renew --webroot -w /var/www/certbot --deploy-hook "$HOOK" 2>&1
-              RC=$?
-            else
-              echo "=== Manual run: force a fresh certificate via webroot ==="
-              sudo "$CB" certonly --webroot -w /var/www/certbot \
-                -d "$DOMAIN" \
-                --non-interactive --agree-tos -m "$EMAIL" \
-                --force-renewal \
-                --deploy-hook "$HOOK" 2>&1
-              RC=$?
-            fi
+            # Manual runs force a fresh cert; the weekly schedule only renews when
+            # within 30 days of expiry (avoids Let's Encrypt rate limits).
+            FLAGS="--force-renewal"
+            if [ "$EVENT" = "schedule" ]; then FLAGS="--keep-until-expiring"; fi
+            echo "=== Renewing via webroot (flags='${FLAGS}') ==="
+            sudo "$CB" certonly --webroot -w /var/www/certbot \
+              -d "$DOMAIN" \
+              --non-interactive --agree-tos -m "$EMAIL" \
+              $FLAGS \
+              --deploy-hook "$HOOK" 2>&1
+            RC=$?
             echo "certbot exit code: $RC"
 
             echo "=== Reload nginx to pick up the new cert ==="
