@@ -392,6 +392,48 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
     return {"count": len(rows), "rows": rows}
 
 
+@evaluator_router.post("/admin/tracker-selftest")
+def tracker_selftest(cleanup: bool = True, _: bool = Depends(verify_admin_key)):
+    """Write-path health check for the tracker sheet.
+
+    The normal append runs in a background thread and swallows its exception, so
+    a broken write (e.g. the service account was downgraded to view-only, or a
+    quota/API error) is invisible. This endpoint attempts a REAL append and
+    returns the raw exception + the stage it failed at, then removes the probe
+    row (unless cleanup=false)."""
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+    gc = rds._get_gspread_client()
+    if gc is None:
+        return {"ok": False, "stage": "client", "error": "no gspread client"}
+    try:
+        ss = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "stage": "open", "error": repr(e)}
+    try:
+        ws = ss.worksheet(rds.EVAL_TRACKER_TAB)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "stage": "worksheet", "error": repr(e)}
+    marker = "ZZSELFTEST"
+    try:
+        ncols = len(ws.row_values(1)) or 5
+        row = [marker] + [""] * (max(ncols - 1, 1))
+        ws.append_row(row, value_input_option="USER_ENTERED")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "stage": "append", "error": repr(e)}
+    deleted = 0
+    if cleanup:
+        try:
+            vals = ws.get_all_values()
+            for idx in range(len(vals), 0, -1):
+                cells = vals[idx - 1]
+                if cells and str(cells[0]).strip() == marker:
+                    ws.delete_rows(idx)
+                    deleted += 1
+        except Exception as e:  # noqa: BLE001
+            return {"ok": True, "stage": "append", "cleanup_error": repr(e)}
+    return {"ok": True, "stage": "append", "probe_rows_deleted": deleted}
+
+
 @evaluator_router.post("/admin/fix-justification-field")
 def fix_justification_field(_: bool = Depends(verify_admin_key)):
     """Convert the Airtable 'AI Pricing Justification' column from currency to
