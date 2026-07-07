@@ -901,7 +901,11 @@ def append_tracker_row(
         ws.append_row(row, value_input_option="USER_ENTERED")
         return True
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"Tracker append failed: {e}")
+        # ERROR (not warning): a failing tracker write means evaluations silently
+        # stop mirroring to the sheet. A 403 here = the service account lost
+        # Editor access on the sheet (re-share it as Editor). Surfaced loudly so
+        # it shows up in logs/alerts instead of vanishing in a daemon thread.
+        logger.error(f"Tracker append FAILED (evaluations not mirroring to sheet): {e}")
         return False
 
 

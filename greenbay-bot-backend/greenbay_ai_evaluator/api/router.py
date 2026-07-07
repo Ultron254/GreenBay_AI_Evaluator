@@ -402,24 +402,50 @@ def tracker_selftest(cleanup: bool = True, _: bool = Depends(verify_admin_key)):
     returns the raw exception + the stage it failed at, then removes the probe
     row (unless cleanup=false)."""
     from greenbay_ai_evaluator.services import reference_data_service as rds
+
+    # Surface the service-account email so the operator knows exactly which
+    # account must be granted Editor on the sheet.
+    sa_email = ""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        from app.config import get_settings as _gs
+        _s = _gs()
+        _f = (getattr(_s, "google_sheets_credentials_file", "") or
+              getattr(_s, "google_vertex_credentials_file", "") or "")
+        if _f and _Path(_f).exists():
+            sa_email = _json.loads(_Path(_f).read_text(encoding="utf-8")).get("client_email", "")
+    except Exception:  # noqa: BLE001
+        pass
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{rds.EVAL_TRACKER_SHEET_ID}/edit"
+
     gc = rds._get_gspread_client()
     if gc is None:
-        return {"ok": False, "stage": "client", "error": "no gspread client"}
+        return {"ok": False, "stage": "client", "error": "no gspread client",
+                "service_account": sa_email, "sheet_url": sheet_url}
     try:
         ss = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "stage": "open", "error": repr(e)}
+        return {"ok": False, "stage": "open", "error": repr(e),
+                "service_account": sa_email, "sheet_url": sheet_url}
     try:
         ws = ss.worksheet(rds.EVAL_TRACKER_TAB)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "stage": "worksheet", "error": repr(e)}
+        return {"ok": False, "stage": "worksheet", "error": repr(e),
+                "service_account": sa_email, "sheet_url": sheet_url}
     marker = "ZZSELFTEST"
     try:
         ncols = len(ws.row_values(1)) or 5
         row = [marker] + [""] * (max(ncols - 1, 1))
         ws.append_row(row, value_input_option="USER_ENTERED")
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "stage": "append", "error": repr(e)}
+        hint = ""
+        if "403" in repr(e) or "permission" in repr(e).lower():
+            hint = (f"Grant EDITOR access on the sheet to the service account "
+                    f"'{sa_email}'. Open {sheet_url} -> Share -> add/upgrade "
+                    f"that account to Editor.")
+        return {"ok": False, "stage": "append", "error": repr(e),
+                "service_account": sa_email, "sheet_url": sheet_url, "hint": hint}
     deleted = 0
     if cleanup:
         try:
@@ -430,8 +456,10 @@ def tracker_selftest(cleanup: bool = True, _: bool = Depends(verify_admin_key)):
                     ws.delete_rows(idx)
                     deleted += 1
         except Exception as e:  # noqa: BLE001
-            return {"ok": True, "stage": "append", "cleanup_error": repr(e)}
-    return {"ok": True, "stage": "append", "probe_rows_deleted": deleted}
+            return {"ok": True, "stage": "append", "cleanup_error": repr(e),
+                    "service_account": sa_email}
+    return {"ok": True, "stage": "append", "probe_rows_deleted": deleted,
+            "service_account": sa_email, "sheet_url": sheet_url}
 
 
 @evaluator_router.post("/admin/fix-justification-field")
