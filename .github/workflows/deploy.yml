@@ -56,13 +56,17 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           GH_TOKEN: ${{ github.token }}
+          # Runtime API keys delivered via GitHub secrets — the server has no
+          # Session Manager access, so the deploy pipeline is the secure path
+          # for getting secrets into the server's .env.
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
-          envs: GH_TOKEN
+          envs: GH_TOKEN,PERPLEXITY_API_KEY
           script: |
             set -e
             echo "=== Syncing code to origin/main ==="
@@ -77,6 +81,15 @@ jobs:
 
             echo "=== Rebuilding containers ==="
             cd greenbay-bot-backend
+
+            # Upsert runtime secrets from GitHub Actions into the server .env.
+            # Idempotent: replaces any existing line, appends if missing, and is
+            # skipped entirely when the repo secret is not set.
+            if [ -n "${PERPLEXITY_API_KEY}" ]; then
+              echo "=== Writing PERPLEXITY_API_KEY into .env ==="
+              sudo sed -i '/^PERPLEXITY_API_KEY=/d' .env
+              echo "PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}" | sudo tee -a .env > /dev/null
+            fi
 
             # Ensure bind-mounted host directories exist and are writable by
             # the non-root appuser inside the container. The Dockerfile chmods
