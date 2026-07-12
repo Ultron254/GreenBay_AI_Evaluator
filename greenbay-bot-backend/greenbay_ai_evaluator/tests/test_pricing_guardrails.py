@@ -13,10 +13,12 @@ import pytest
 
 from greenbay_ai_evaluator.engine.offer_engine import (
     DEFAULT_MAX_TRADEIN_TO_NEW,
+    NEW_PRICE_FLOOR_SAFETY,
     PricingPolicyData,
     _max_tradein_to_new,
     compute_valuation,
     reconcile_retail_price,
+    select_new_price_estimate,
 )
 from greenbay_ai_evaluator.services.reference_data_service import (
     DEFAULT_ACQUISITION_RATIO,
@@ -146,6 +148,161 @@ class TestReconcileEstimateExclusion:
         )
         assert pv["num_real_sources"] == 1
         assert pv["reconciled_price"] == pytest.approx(50_000, abs=500)
+
+
+# ---------------------------------------------------------------------------
+# New-price consistency floor (STEP 11c) — Jul 2026
+# The offer must not collapse to a token amount when a VERIFIED new price
+# exists (the "microwave priced at 1,000 vs new 17,000" class of bug).
+# ---------------------------------------------------------------------------
+class TestNewPriceFloor:
+    def _inputs(self, policy, **over):
+        base = dict(
+            category="microwave",
+            brand="Samsung",
+            model="ME731K-B",
+            age_years=2.0,
+            condition_grade="B",
+            condition_score=70.0,
+            defects=[],
+            seller_asking_price=None,
+            image_quality_score=85.0,
+            risk_score=20.0,
+            comparables=[],
+            pricing_policy=policy,
+            # Base value catastrophically under-sourced (a used listing was
+            # mistaken for new) -> raw offer collapses to a token amount.
+            retail_price=2_000.0,
+            price_verification={
+                # Verified new price says the unit retails at 17,000 new.
+                "reconciled_price": 2_000,
+                "num_real_sources": 2,
+                "num_sources": 2,
+                "sources": [{"source": "internet_lookup", "price": 17_000}],
+            },
+        )
+        base.update(over)
+        return base
+
+    def test_collapsed_offer_raised_to_floor(self, policy):
+        result = compute_valuation(**self._inputs(policy))
+        # Expected-from-new for a 2y grade-B microwave is thousands, not
+        # hundreds; the floor must lift the offer well above the collapse.
+        assert result.new_price_floor_applied is True
+        assert result.opening_offer >= 2_000
+        assert "New-price floor" in result.guardrail_note
+
+    def test_floor_forces_human_review(self, policy):
+        result = compute_valuation(**self._inputs(policy))
+        assert result.confidence_score <= 75.0
+        assert result.decision == "review"
+
+    def test_floor_never_exceeds_new_price_ceiling(self, policy):
+        result = compute_valuation(**self._inputs(policy))
+        # Microwave MAX_TRADEIN_TO_NEW is 0.40 of the 17k anchor = 6,800.
+        assert result.opening_offer <= 6_800
+
+    def test_healthy_offer_untouched(self, policy):
+        # A well-sourced valuation must NOT trigger the floor.
+        inputs = self._inputs(
+            policy,
+            retail_price=17_000.0,
+            price_verification={
+                "reconciled_price": 17_000,
+                "num_real_sources": 3,
+                "num_sources": 3,
+                "sources": [{"source": "internet_lookup", "price": 17_000}],
+            },
+        )
+        result = compute_valuation(**inputs)
+        assert result.new_price_floor_applied is False
+
+    def test_unverified_anchor_never_inflates(self, policy):
+        # A frontend category-default guess must NOT raise the offer: with no
+        # price_verification the anchor is unverified, so no floor.
+        inputs = self._inputs(policy, price_verification=None, retail_price=50_000.0)
+        result = compute_valuation(**inputs)
+        assert result.new_price_floor_applied is False
+
+    def test_safety_margin_is_conservative(self):
+        assert 0.4 <= NEW_PRICE_FLOOR_SAFETY <= 0.8
+
+
+# ---------------------------------------------------------------------------
+# New-price estimate selection + Gemini/matrix cross-check — Jul 2026
+# (the "136,999 for an 8kg washer" class of bug)
+# ---------------------------------------------------------------------------
+class TestSelectNewPriceEstimate:
+    def test_gemini_preferred_when_sane(self):
+        price, src = select_new_price_estimate(50_000, 48_000, 30_000, 35_000)
+        assert price == 50_000
+        assert src == "gemini"
+
+    def test_gemini_outlier_high_rejected_for_matrix(self):
+        # Gemini returns a premium washer-dryer (136,999) for an 8kg washer the
+        # matrix knows retails at ~50k -> matrix must win.
+        price, src = select_new_price_estimate(136_999, 50_000, 30_000, 35_000)
+        assert price == 50_000
+        assert "outlier" in src
+
+    def test_gemini_outlier_low_rejected_for_matrix(self):
+        price, src = select_new_price_estimate(9_000, 50_000, 30_000, 35_000)
+        assert price == 50_000
+        assert "outlier" in src
+
+    def test_matrix_when_no_gemini(self):
+        price, src = select_new_price_estimate(0, 48_000, 30_000, 35_000)
+        assert price == 48_000
+        assert src == "matrix"
+
+    def test_reconciled_then_frontend_fallbacks(self):
+        assert select_new_price_estimate(0, 0, 30_000, 35_000)[0] == 30_000
+        assert select_new_price_estimate(0, 0, 0, 35_000)[0] == 35_000
+
+    def test_no_matrix_keeps_gemini(self):
+        # Without a matrix reference there is nothing to cross-check against.
+        price, src = select_new_price_estimate(136_999, 0, 30_000, 35_000)
+        assert price == 136_999
+        assert src == "gemini"
+
+    def test_garbage_inputs_are_safe(self):
+        price, src = select_new_price_estimate("abc", None, 0, "", 0)
+        assert price == 0.0
+        assert src == "last_resort"
+
+
+# ---------------------------------------------------------------------------
+# Tracker header detection — write path must not depend on the human-managed
+# "Internal Team Price" column (renaming it silently killed appends before).
+# ---------------------------------------------------------------------------
+class TestTrackerHeaderDetection:
+    HEADER_FULL = ["Date", "Item", "Model", "Condition", "Age",
+                   "New Price", "AI Price", "Confidence",
+                   "Customer Selling Price", "Internal Team Price",
+                   "Final Price Offered", "Accepted", "Notes"]
+    HEADER_NO_INTERNAL = ["Date", "Item", "Model", "Condition", "Age",
+                          "New Price", "AI Price", "Confidence",
+                          "Customer Selling Price", "Accepted", "Notes"]
+
+    def test_read_requires_internal_column(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            _find_header_index,
+        )
+        hidx, cmap = _find_header_index([self.HEADER_FULL])
+        assert hidx == 0 and "internal_price" in cmap
+        hidx, _ = _find_header_index([self.HEADER_NO_INTERNAL])
+        assert hidx == -1  # strict read contract unchanged
+
+    def test_write_tolerates_missing_internal_column(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            _find_header_index,
+        )
+        hidx, cmap = _find_header_index(
+            [self.HEADER_NO_INTERNAL], require_internal=False
+        )
+        assert hidx == 0
+        assert cmap["item"] == 1
+        assert cmap["ai_price"] == 6
 
 
 # ---------------------------------------------------------------------------

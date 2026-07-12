@@ -22,6 +22,7 @@ import asyncio
 import json
 import re
 import statistics
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -452,11 +453,18 @@ def _infer_brand_from_text(item: str) -> str:
     return tokens[0].strip().title() if tokens else ""
 
 
-def _find_header_index(values: list[list[str]]) -> tuple[int, dict[str, int]]:
+def _find_header_index(
+    values: list[list[str]], *, require_internal: bool = True
+) -> tuple[int, dict[str, int]]:
     """Locate the header row + map our target columns to indices, by name.
 
     The sheet's columns are fixed even though casual rows look ragged, so we map
     by header text (separator/case-insensitive contains) rather than position.
+
+    ``require_internal``: reads that pair AI vs internal prices need the
+    human-managed "Internal Team Price" column. The WRITE path must NOT depend
+    on it — renaming/removing that one column would silently stop all appends —
+    so writers pass require_internal=False and only need "AI Price" + "Item".
     """
     targets = {
         "date": ["date"],
@@ -476,7 +484,10 @@ def _find_header_index(values: list[list[str]]) -> tuple[int, dict[str, int]]:
     }
     for ridx, row in enumerate(values[:10]):
         norm = [_RE_SEP.sub(" ", str(c or "").lower()).strip() for c in row]
-        if any("ai price" in c for c in norm) and any("internal team price" in c for c in norm):
+        has_ai = any("ai price" in c for c in norm)
+        has_internal = any("internal team price" in c for c in norm)
+        has_item = any("item" in c for c in norm)
+        if has_ai and (has_internal if require_internal else (has_internal or has_item)):
             col_map: dict[str, int] = {}
             for key, needles in targets.items():
                 for cidx, cell in enumerate(norm):
@@ -851,6 +862,34 @@ def delete_tracker_rows_by_ref(ref8: str) -> int:
         return 0
 
 
+# Tracker write health — surfaced in get_refresh_status() so the ops dashboard
+# and health checks can see a broken mirror instead of it hiding in a thread.
+_tracker_status: dict = {
+    "last_write_ok": None,       # ISO timestamp of last successful append
+    "last_write_error": None,    # ISO timestamp of last failed append
+    "last_error": None,          # str(exception) of last failure
+    "consecutive_failures": 0,
+}
+
+# Failed rows are preserved here (one JSON object per line) so they can be
+# replayed after the cause (permissions/quota) is fixed. logs/ is bind-mounted.
+_TRACKER_FALLBACK_FILE = "logs/tracker_failed_rows.jsonl"
+
+
+def _tracker_dump_fallback(payload: dict) -> None:
+    """Persist a failed tracker row to disk. Never raises."""
+    try:
+        import json as _json
+        from datetime import datetime as _dt
+        p = Path(_TRACKER_FALLBACK_FILE)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"failed_at": _dt.now().isoformat(), **payload}
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(payload, default=str) + "\n")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Tracker fallback dump failed: {e}")
+
+
 def append_tracker_row(
     *, item: str, model: str = "", new_price: float | None = None,
     ai_price: float | None = None, ai_confidence: float | None = None,
@@ -858,55 +897,98 @@ def append_tracker_row(
     status: str = "", notes: str = "", date_str: str | None = None,
 ) -> bool:
     """Append one evaluation to the tracker sheet, placing each value in the
-    column that actually carries that header (robust to layout). Best-effort."""
+    column that actually carries that header (robust to layout).
+
+    Hardened (Jul 2026): retries once with a fresh header layout (handles
+    columns being reordered mid-process), records success/failure in
+    ``_tracker_status`` for the dashboard, and dumps failed rows to a JSONL
+    fallback file so no evaluation is lost if the sheet becomes unwritable
+    (as happened when the service account was downgraded to Viewer)."""
     global _tracker_write_layout
+    from datetime import datetime as _dt
+
+    payload = {
+        "item": item, "model": model, "new_price": new_price,
+        "ai_price": ai_price, "ai_confidence": ai_confidence,
+        "customer_price": customer_price, "condition": condition, "age": age,
+        "status": status, "notes": notes, "date_str": date_str,
+    }
+
     gc = _get_gspread_client()
     if gc is None:
+        _tracker_status["last_write_error"] = _dt.now().isoformat()
+        _tracker_status["last_error"] = "no gspread client"
+        _tracker_status["consecutive_failures"] += 1
+        _tracker_dump_fallback(payload)
         return False
-    try:
-        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
-        ws = ss.worksheet(EVAL_TRACKER_TAB)
-        if _tracker_write_layout is None:
-            hidx, cmap = _find_header_index(ws.get_all_values())
-            if hidx < 0 or not cmap:
-                logger.warning("Tracker append: header not found")
-                return False
-            _tracker_write_layout = {"cmap": cmap, "ncols": max(cmap.values()) + 1}
-        cmap = _tracker_write_layout["cmap"]
-        ncols = _tracker_write_layout["ncols"]
-        row = [""] * ncols
 
-        def setc(key, val):
-            i = cmap.get(key)
-            if i is not None and i < ncols and val not in (None, ""):
-                row[i] = val
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+            ws = ss.worksheet(EVAL_TRACKER_TAB)
+            if _tracker_write_layout is None:
+                # Write-tolerant detection: must not depend on the human-managed
+                # "Internal Team Price" column (renaming it would kill appends).
+                hidx, cmap = _find_header_index(
+                    ws.get_all_values(), require_internal=False
+                )
+                if hidx < 0 or not cmap:
+                    raise RuntimeError(
+                        f"header row not found in tab '{EVAL_TRACKER_TAB}'"
+                    )
+                _tracker_write_layout = {"cmap": cmap, "ncols": max(cmap.values()) + 1}
+            cmap = _tracker_write_layout["cmap"]
+            ncols = _tracker_write_layout["ncols"]
+            row = [""] * ncols
 
-        from datetime import datetime as _dt
-        setc("date", date_str or _dt.now().strftime("%d/%m/%Y"))
-        setc("item", item)
-        setc("model", model)
-        setc("condition", condition)
-        setc("age", age)
-        if new_price:
-            setc("new_price", round(float(new_price)))
-        if ai_price:
-            setc("ai_price", round(float(ai_price)))
-        if ai_confidence:
-            setc("ai_confidence", f"{float(ai_confidence):.0f}%")
-        if customer_price:
-            setc("customer_price", round(float(customer_price)))
-        setc("accepted", status)
-        setc("notes", notes)
-        # NEVER touch internal_price / final_price (human-managed columns).
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        return True
-    except Exception as e:  # noqa: BLE001
-        # ERROR (not warning): a failing tracker write means evaluations silently
-        # stop mirroring to the sheet. A 403 here = the service account lost
-        # Editor access on the sheet (re-share it as Editor). Surfaced loudly so
-        # it shows up in logs/alerts instead of vanishing in a daemon thread.
-        logger.error(f"Tracker append FAILED (evaluations not mirroring to sheet): {e}")
-        return False
+            def setc(key, val):
+                i = cmap.get(key)
+                if i is not None and i < ncols and val not in (None, ""):
+                    row[i] = val
+
+            setc("date", date_str or _dt.now().strftime("%d/%m/%Y"))
+            setc("item", item)
+            setc("model", model)
+            setc("condition", condition)
+            setc("age", age)
+            if new_price:
+                setc("new_price", round(float(new_price)))
+            if ai_price:
+                setc("ai_price", round(float(ai_price)))
+            if ai_confidence:
+                setc("ai_confidence", f"{float(ai_confidence):.0f}%")
+            if customer_price:
+                setc("customer_price", round(float(customer_price)))
+            setc("accepted", status)
+            setc("notes", notes)
+            # NEVER touch internal_price / final_price (human-managed columns).
+            ws.append_row(row, value_input_option="USER_ENTERED")
+            _tracker_status["last_write_ok"] = _dt.now().isoformat()
+            _tracker_status["last_error"] = None
+            _tracker_status["consecutive_failures"] = 0
+            return True
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            # A stale cached layout (columns reordered) or a transient API blip
+            # can fail once; drop the cache and retry a single time.
+            _tracker_write_layout = None
+            if attempt == 1:
+                time.sleep(1.5)
+
+    # ERROR (not warning): a failing tracker write means evaluations silently
+    # stop mirroring to the sheet. A 403 here = the service account lost
+    # Editor access on the sheet (re-share it as Editor). Surfaced loudly and
+    # recorded in status + fallback file so nothing is lost.
+    _tracker_status["last_write_error"] = _dt.now().isoformat()
+    _tracker_status["last_error"] = f"{type(last_exc).__name__}: {last_exc}"
+    _tracker_status["consecutive_failures"] += 1
+    _tracker_dump_fallback(payload)
+    logger.error(
+        f"Tracker append FAILED after retry (evaluations not mirroring to "
+        f"sheet; row saved to {_TRACKER_FALLBACK_FILE}): {last_exc}"
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1093,4 +1175,10 @@ def get_refresh_status() -> dict[str, Any]:
         "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
         "matrix_rows_cached": len(_matrix_cache),
         "sales_rows_cached": len(_sales_cache),
+        # Tracker-sheet mirror health: a broken write (e.g. service account
+        # downgraded to Viewer) is visible here instead of hiding in a thread.
+        "tracker_last_write_ok": _tracker_status["last_write_ok"],
+        "tracker_last_write_error": _tracker_status["last_write_error"],
+        "tracker_last_error": _tracker_status["last_error"],
+        "tracker_consecutive_failures": _tracker_status["consecutive_failures"],
     }

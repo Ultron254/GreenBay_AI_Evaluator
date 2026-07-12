@@ -108,6 +108,55 @@ def _max_tradein_to_new(category: str) -> float:
     return DEFAULT_MAX_TRADEIN_TO_NEW
 
 
+# Lower consistency floor (STEP 11c): when a VERIFIED new-price signal exists,
+# the offer must not collapse to a token amount (e.g. KES 1,000 for a microwave
+# that retails at 17,000 new). The floor is the engine's own math re-derived
+# straight from the new price — new_price x depreciation x condition − defects,
+# then x acquisition ratio — scaled by a safety margin so legitimately cheap
+# outcomes (very old / battered units) still pass. A breach means the base
+# value was under-sourced (e.g. a used listing mistaken for new), so the offer
+# is raised to the floor AND routed to human review.
+NEW_PRICE_FLOOR_SAFETY: float = 0.60
+
+
+def select_new_price_estimate(
+    gemini_new: float,
+    matrix_new: float,
+    reconciled: float,
+    frontend_new: float,
+    last_resort: float = 0.0,
+) -> tuple[float, str]:
+    """Choose the "New Price (Estimate)" from the available signals.
+
+    Priority: Gemini grounded launch price -> pricing-matrix new price ->
+    reconciled blend -> frontend guess. BUT Gemini grounding can occasionally
+    return the wrong variant/bundle (e.g. a premium washer-dryer priced at
+    136,999 for a plain 8kg washer). When the curated matrix also has a new
+    price and Gemini deviates by more than 2x in either direction, the matrix
+    wins — its rows are size/spec-specific and human-curated.
+
+    Returns (price, source_label). Pure function so it is unit-testable.
+    """
+    def _pos(v) -> float:
+        try:
+            return float(v) if v and float(v) > 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    g, m, r, f = _pos(gemini_new), _pos(matrix_new), _pos(reconciled), _pos(frontend_new)
+    if g and m and (g > m * 2.0 or g < m * 0.5):
+        return m, "matrix (gemini outlier rejected)"
+    if g:
+        return g, "gemini"
+    if m:
+        return m, "matrix"
+    if r:
+        return r, "reconciled"
+    if f:
+        return f, "frontend"
+    return _pos(last_resort), "last_resort"
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -174,6 +223,8 @@ class ValuationResult:
     floor_applied: bool = False
     ceiling_applied: bool = False
     guardrail_note: str = ""
+    new_price_ceiling_applied: bool = False
+    new_price_floor_applied: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -689,12 +740,14 @@ def compute_valuation(
     # would make this ceiling fire spuriously. Prefer the grounded internet
     # (Gemini) new-price source when present, then the blend, ignoring the
     # frontend category-default estimate (used only as a last resort).
+    anchor_verified = False  # True only when the anchor came from real sources
     if price_verification:
         internet_new = 0.0
         for s in (price_verification.get("sources") or []):
             if s.get("source") == "internet_lookup" and not s.get("discarded"):
                 internet_new = max(internet_new, _f(s.get("price")))
         new_price_anchor = max(internet_new, _f(price_verification.get("reconciled_price")))
+        anchor_verified = new_price_anchor > 0
     if new_price_anchor <= 0:
         new_price_anchor = _f(retail_price)
 
@@ -715,6 +768,49 @@ def compute_valuation(
             walkaway_limit = _round_price(opening_offer * 0.7, round_step)
             new_price_ceiling_applied = True
             # A breach signals an unreliable input — never ship it as "verified".
+            confidence_score = min(confidence_score, 75.0)
+
+    # -- STEP 11c: New-price consistency floor --------------------------------
+    # Symmetric counterpart to 11b. Every other guardrail is an UPPER bound, so
+    # an under-sourced base value (e.g. a used/resale listing mistaken for new)
+    # could collapse the offer to a token amount with nothing to catch it.
+    # Re-derive the expected offer straight from the verified new price using
+    # the engine's own factors; if the computed offer is far below that, raise
+    # it to the floor and force human review. Only fires on a VERIFIED anchor —
+    # a frontend category-default guess must never inflate an offer.
+    new_price_floor_applied = False
+    if anchor_verified and new_price_anchor > 0 and opening_offer > 0:
+        depr = depreciation_factor(age_years, category)
+        cond_f = CONDITION_FACTORS.get(grade_upper, 0.70)
+        expected_from_new = max(
+            0.0, new_price_anchor * depr * cond_f - defect_total
+        ) * acq_ratio
+        min_offer = _round_price(
+            expected_from_new * NEW_PRICE_FLOOR_SAFETY, round_step
+        )
+        # Never let the floor push the offer above the 11b ceiling.
+        max_cap = _round_price(
+            new_price_anchor * _max_tradein_to_new(category), round_step
+        )
+        if max_cap > 0:
+            min_offer = min(min_offer, max_cap)
+        if min_offer > 0 and opening_offer < min_offer:
+            guardrail_note = (
+                f"New-price floor: offer KES {opening_offer:,.0f} fell far below "
+                f"the expected value derived from the verified new price "
+                f"(KES {new_price_anchor:,.0f} x depreciation {depr:.2f} x "
+                f"condition {cond_f:.2f} - defects, x acquisition {acq_ratio:.2f} "
+                f"= KES {expected_from_new:,.0f}). Raised to KES {min_offer:,.0f} "
+                f"({NEW_PRICE_FLOOR_SAFETY:.0%} safety floor) and flagged for "
+                f"review (the base value was likely under-sourced)."
+            )
+            logger.warning(guardrail_note)
+            trace_lines.append(f"GUARDRAIL: {guardrail_note}")
+            opening_offer = min_offer
+            acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
+            walkaway_limit = _round_price(opening_offer * 0.7, round_step)
+            new_price_floor_applied = True
+            # An under-sourced base is unreliable — route to human review.
             confidence_score = min(confidence_score, 75.0)
 
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
@@ -790,6 +886,8 @@ def compute_valuation(
         floor_applied=floor_applied,
         ceiling_applied=ceiling_applied,
         guardrail_note=guardrail_note,
+        new_price_ceiling_applied=new_price_ceiling_applied,
+        new_price_floor_applied=new_price_floor_applied,
     )
 
 

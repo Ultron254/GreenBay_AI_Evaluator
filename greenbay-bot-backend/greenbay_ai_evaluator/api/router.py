@@ -1224,6 +1224,142 @@ def reprice_historical_status(_: bool = Depends(verify_admin_key)):
 
 
 # ---------------------------------------------------------------------------
+# Backfill tracker-sheet rows that are missing entirely (Airtable -> sheet).
+# Needed after the Jun-8 -> Jul-12 window where the service account had lost
+# Editor access: every evaluation landed in Airtable but none reached the sheet.
+# ---------------------------------------------------------------------------
+_sheet_missing_state: dict = {"running": False, "started_at": None, "progress": {}}
+
+
+def _backfill_sheet_missing(dry_run: bool) -> dict:
+    """Mirror Airtable evaluations that never made it into the tracker sheet.
+
+    Dedupe key: the 'Ref: <id8>' marker that both the Airtable Notes and the
+    sheet Notes column carry. Records without a parsable ref are skipped
+    (cannot be de-duplicated safely). Idempotent."""
+    import re as _re2
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated,
+    )
+
+    prog = {"sheet_refs": 0, "airtable_rows": 0, "missing": 0,
+            "appended": 0, "no_ref": 0, "errors": 0, "dry_run": dry_run}
+    _sheet_missing_state["progress"] = prog
+
+    ref_re = _re2.compile(r"Ref:\s*([0-9a-fA-F]{8})")
+
+    # 1. Refs already present in the sheet.
+    gc = rds._get_gspread_client()
+    if gc is None:
+        prog["error"] = "no gspread client"
+        return prog
+    ws = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID).worksheet(rds.EVAL_TRACKER_TAB)
+    sheet_refs: set[str] = set()
+    for row in ws.get_all_values():
+        for cell in row:
+            m = ref_re.search(str(cell))
+            if m:
+                sheet_refs.add(m.group(1).lower())
+    prog["sheet_refs"] = len(sheet_refs)
+
+    # 2. All Airtable evaluations.
+    cfg = _get_config()
+    if cfg is None:
+        prog["error"] = "Airtable not configured"
+        return prog
+    fields = ["Product Name", "Model Number", "Condition", "Age (Years)",
+              "New Price (Estimate)", "AI Evaluated Price (KES)",
+              "Customer Asking Price (KES)", "Evaluation Status", "Notes",
+              "Date Submitted"]
+    records = list_records_paginated(cfg, fields=fields)
+    prog["airtable_rows"] = len(records)
+
+    # 3. Append the ones the sheet is missing (oldest first, matching sheet order).
+    def _sub_date(rec):
+        return str(rec.get("fields", {}).get("Date Submitted", ""))
+
+    for rec in sorted(records, key=_sub_date):
+        f = rec.get("fields", {})
+        m = ref_re.search(str(f.get("Notes", "")))
+        if not m:
+            prog["no_ref"] += 1
+            continue
+        ref8 = m.group(1).lower()
+        if ref8 in sheet_refs:
+            continue
+        prog["missing"] += 1
+        if dry_run:
+            continue
+        date_str = None
+        raw_date = str(f.get("Date Submitted", ""))[:10]
+        if raw_date:
+            try:
+                from datetime import datetime as _dt
+                date_str = _dt.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+        ok = rds.append_tracker_row(
+            item=str(f.get("Product Name", "") or ""),
+            model=str(f.get("Model Number", "") or ""),
+            new_price=f.get("New Price (Estimate)"),
+            ai_price=f.get("AI Evaluated Price (KES)"),
+            customer_price=f.get("Customer Asking Price (KES)"),
+            condition=str(f.get("Condition", "") or ""),
+            age=str(f.get("Age (Years)", "") or ""),
+            status=str(f.get("Evaluation Status", "") or "Pending"),
+            notes=f"Ref: {ref8} (backfilled from Airtable)",
+            date_str=date_str,
+        )
+        if ok:
+            prog["appended"] += 1
+            sheet_refs.add(ref8)
+        else:
+            prog["errors"] += 1
+        time.sleep(1.2)  # Sheets write quota: 60 req/min
+    return prog
+
+
+@evaluator_router.post("/admin/backfill-sheet-missing")
+def backfill_sheet_missing(
+    dry_run: bool = True, _: bool = Depends(verify_admin_key),
+):
+    """Backfill whole tracker-sheet rows from Airtable (see _backfill_sheet_missing).
+
+    dry_run=true  -> counts only. dry_run=false -> background append job."""
+    if dry_run:
+        return _backfill_sheet_missing(dry_run=True)
+    if _sheet_missing_state.get("running"):
+        return {"started": False, "reason": "already running",
+                "progress": _sheet_missing_state.get("progress", {})}
+    import threading
+    from datetime import datetime as _dt
+    _sheet_missing_state["running"] = True
+    _sheet_missing_state["started_at"] = _dt.utcnow().isoformat()
+
+    def _job():
+        try:
+            _backfill_sheet_missing(dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            _sheet_missing_state.setdefault("progress", {})["error"] = str(e)
+            logger.error(f"backfill-sheet-missing job failed: {e}")
+        finally:
+            _sheet_missing_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+@evaluator_router.get("/admin/backfill-sheet-missing")
+def backfill_sheet_missing_status(_: bool = Depends(verify_admin_key)):
+    return {
+        "running": _sheet_missing_state.get("running"),
+        "started_at": _sheet_missing_state.get("started_at"),
+        "progress": _sheet_missing_state.get("progress", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Size resolution (v6.1) — drives accurate per-size pricing
 # ---------------------------------------------------------------------------
 import re as _re
@@ -2337,28 +2473,27 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         # New Price (Estimate): this column must reflect the genuine NEW-retail
         # price, NOT the blended reconciled figure (which mixes resale/acquisition
-        # signals and reads low). Source priority:
-        #   1. Gemini grounded launch price (real, current new price)
-        #   2. Pricing-matrix new price (curated new-retail signal)
-        #   3. Reconciled blend (fallback when no clean new-price signal exists)
-        #   4. Frontend guess (last resort)
-        def _pos(v) -> float:
-            try:
-                return float(v) if v and float(v) > 0 else 0.0
-            except (TypeError, ValueError):
-                return 0.0
-
-        _gemini_new = _pos(internet_price)
-        _matrix_new = _pos(v6_matrix_new_price)
-        _reconciled = _pos((price_verification or {}).get("reconciled_price"))
-        _frontend_new = _pos(req.retail_price)
-        new_price_estimate = (
-            _gemini_new or _matrix_new or _reconciled or _frontend_new or req.retail_price
+        # signals and reads low). Priority: Gemini -> matrix -> reconciled ->
+        # frontend, with a matrix cross-check that rejects Gemini outliers
+        # (wrong variant/bundle, e.g. 136,999 for an 8kg washer) when it
+        # deviates >2x from the curated size/spec-specific matrix price.
+        from greenbay_ai_evaluator.engine.offer_engine import select_new_price_estimate
+        new_price_estimate, _np_source = select_new_price_estimate(
+            gemini_new=internet_price or 0,
+            matrix_new=v6_matrix_new_price or 0,
+            reconciled=(price_verification or {}).get("reconciled_price") or 0,
+            frontend_new=req.retail_price or 0,
+            last_resort=req.retail_price or 0,
         )
+        if "outlier" in _np_source:
+            logger.warning(
+                f"New-price cross-check: Gemini {internet_price} rejected as an "
+                f"outlier vs matrix {v6_matrix_new_price} for {req.brand} "
+                f"{req.model} ({req.category}) — using matrix price."
+            )
         logger.info(
-            f"New Price (Estimate) source: gemini={_gemini_new or '-'} "
-            f"matrix={_matrix_new or '-'} reconciled={_reconciled or '-'} "
-            f"-> {new_price_estimate}"
+            f"New Price (Estimate) source [{_np_source}]: gemini={internet_price or '-'} "
+            f"matrix={v6_matrix_new_price or '-'} -> {new_price_estimate}"
         )
 
         vs = ValuationSession(
@@ -2669,16 +2804,16 @@ def accept_offer(
         logger.warning(f"Accept notification failed: {e}")
 
     # Issue #13: email the GreenBay team that the price was accepted.
-    # TEMPORARILY DISABLED (per request): the SES sender is not yet verified, so
-    # sending would fail. Commented out so it never runs / logs noise. Re-enable
-    # by uncommenting once SMTP_* or a verified SES sender is configured.
-    # try:
-    #     from greenbay_ai_evaluator.services.email_service import (
-    #         snapshot_session, send_evaluation_accepted_email,
-    #     )
-    #     send_evaluation_accepted_email(snapshot_session(vs))
-    # except Exception as e:
-    #     logger.warning(f"Accept email failed: {e}")
+    # Re-enabled (Jul 2026). Fail-safe by design: prefers SMTP when SMTP_HOST is
+    # configured, falls back to SES; if neither is usable it logs one warning
+    # and returns without raising — it can never break the accept flow.
+    try:
+        from greenbay_ai_evaluator.services.email_service import (
+            snapshot_session, send_evaluation_accepted_email,
+        )
+        send_evaluation_accepted_email(snapshot_session(vs))
+    except Exception as e:
+        logger.warning(f"Accept email failed: {e}")
 
     return AcceptOfferResponse(
         session_id=session_id,
