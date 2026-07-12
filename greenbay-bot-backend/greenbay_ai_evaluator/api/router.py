@@ -392,6 +392,92 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
     return {"count": len(rows), "rows": rows}
 
 
+@evaluator_router.get("/admin/accuracy-report")
+def accuracy_report(_: bool = Depends(verify_admin_key)):
+    """Measured pricing accuracy vs the internal team, plus the calibrated
+    acquisition ratios currently in force. This is THE weekly number to watch:
+    'within_15pct' should trend up as the calibration loop learns."""
+    import statistics as _st
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+
+    gc = rds._get_gspread_client()
+    if gc is None:
+        raise HTTPException(status_code=400, detail="no gspread client")
+    try:
+        ws = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID).worksheet(rds.EVAL_TRACKER_TAB)
+        values = ws.get_all_values()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"sheet read failed: {e}")
+
+    hidx, cmap = rds._find_header_index(values)
+    if hidx < 0:
+        return {"error": "header not found"}
+
+    def cell(row, key):
+        i = cmap.get(key)
+        return row[i] if i is not None and i < len(row) else ""
+
+    def _num(s):
+        s = str(s or "").replace(",", "").replace("%", "").strip()
+        try:
+            v = float(s)
+            return v if v > 0 else None
+        except ValueError:
+            return None
+
+    pairs = []  # (category, ai, internal, err)
+    for row in values[hidx + 1:]:
+        ai = _num(cell(row, "ai_price"))
+        internal = _num(cell(row, "internal_price")) or _num(cell(row, "final_price"))
+        if not ai or not internal or internal < 500:
+            continue
+        cat = rds._infer_category_from_text(cell(row, "item"))
+        pairs.append((cat, ai, internal, (ai - internal) / internal))
+
+    def _stats(errs):
+        if not errs:
+            return None
+        a = [abs(e) for e in errs]
+        return {
+            "n": len(a),
+            "median_abs_error_pct": round(_st.median(a) * 100, 1),
+            "median_bias_pct": round(_st.median(errs) * 100, 1),
+            "within_15pct": round(100 * sum(1 for e in a if e <= 0.15) / len(a), 1),
+            "within_25pct": round(100 * sum(1 for e in a if e <= 0.25) / len(a), 1),
+        }
+
+    by_cat: dict[str, list] = {}
+    for cat, _ai, _int, err in pairs:
+        by_cat.setdefault(cat, []).append(err)
+
+    # Recent half vs older half so the learning trend is visible.
+    half = len(pairs) // 2
+    return {
+        "overall": _stats([p[3] for p in pairs]),
+        "older_half": _stats([p[3] for p in pairs[:half]]),
+        "recent_half": _stats([p[3] for p in pairs[half:]]),
+        "by_category": {
+            c: _stats(errs) for c, errs in
+            sorted(by_cat.items(), key=lambda kv: -len(kv[1]))
+        },
+        "calibrated_ratios_in_force": rds.get_calibrated_ratios(),
+        "note": (
+            "Errors are AI price vs the internal team's price on the same item. "
+            "within_15pct is the headline accuracy number."
+        ),
+    }
+
+
+@evaluator_router.post("/admin/recalibrate-ratios")
+def recalibrate_ratios(_: bool = Depends(verify_admin_key)):
+    """Recompute the learned acquisition ratios from the tracker on demand
+    (they also refresh automatically every 6h with the reference data)."""
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        compute_calibrated_ratios,
+    )
+    return compute_calibrated_ratios()
+
+
 @evaluator_router.post("/admin/tracker-selftest")
 def tracker_selftest(cleanup: bool = True, _: bool = Depends(verify_admin_key)):
     """Write-path health check for the tracker sheet.

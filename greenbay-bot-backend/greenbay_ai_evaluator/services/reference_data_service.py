@@ -1018,6 +1018,13 @@ async def refresh_reference_data() -> tuple[int, int]:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Internal price sync skipped: {e}")
 
+    # Learn: recompute calibrated acquisition ratios from the team's own
+    # evaluations so pricing continuously tracks the internal trend.
+    try:
+        await asyncio.to_thread(compute_calibrated_ratios)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Ratio calibration skipped: {e}")
+
     return len(matrix_rows), len(sales_rows)
 
 
@@ -1152,12 +1159,26 @@ def _collapse(s: str) -> str:
     return _RE_SEP.sub("", (s or "").lower())
 
 
-def get_category_acquisition_ratio(category: str) -> float:
-    """Return the acquisition ratio for a category from the real-data table.
+# ---------------------------------------------------------------------------
+# Calibrated acquisition ratios (Jul 2026) — learned from the team's OWN
+# evaluations so every offer tracks what GreenBay would actually pay.
+#
+# For each tracker row where the internal team recorded a price, we compute the
+# residual the static engine cannot explain:
+#     r = internal_price / (new_price * depreciation(age, cat) * condition)
+# and set the category's calibrated ratio to a shrunken median of those r's
+# (shrunk toward the static prior so a handful of noisy rows can't swing it).
+# This works for EVERY evaluation — items with no internal price still get the
+# category-level learned ratio; internal prices are only the training signal,
+# never a per-item dependency. Refreshed automatically with the 6h data cycle.
+# ---------------------------------------------------------------------------
+_calibrated_ratios: dict[str, dict[str, Any]] = {}
+_CALIB_SHRINK_K = 5          # pseudo-samples of the static prior
+_CALIB_MIN_N = 4             # below this, stay fully on the static prior
+_CALIB_CLAMP = (0.30, 0.90)  # sane bounds for any learned ratio
 
-    Separator-insensitive: the live engine passes slugs like 'washing_machine'
-    while the sales sheet stores 'washing machine'; both must resolve to 0.74.
-    """
+
+def _static_acquisition_ratio(category: str) -> float:
     cat_c = _collapse(category)
     if not cat_c:
         return DEFAULT_ACQUISITION_RATIO
@@ -1166,6 +1187,104 @@ def get_category_acquisition_ratio(category: str) -> float:
         if key_c in cat_c or cat_c in key_c:
             return ratio
     return DEFAULT_ACQUISITION_RATIO
+
+
+def compute_calibrated_ratios() -> dict[str, Any]:
+    """Recompute per-category calibrated acquisition ratios from the tracker.
+
+    Reads the Customer Initiated Evaluation sheet, pairs internal team prices
+    with the recorded new price + age + condition, and updates
+    ``_calibrated_ratios``. Never raises; returns a status summary."""
+    from greenbay_ai_evaluator.engine.offer_engine import (
+        CONDITION_FACTORS, depreciation_factor,
+    )
+
+    gc = _get_gspread_client()
+    if gc is None:
+        return {"ok": False, "reason": "no gspread client"}
+    try:
+        ws = gc.open_by_key(EVAL_TRACKER_SHEET_ID).worksheet(EVAL_TRACKER_TAB)
+        values = ws.get_all_values()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Calibration: tracker read failed: {e}")
+        return {"ok": False, "reason": str(e)}
+
+    hidx, cmap = _find_header_index(values)
+    if hidx < 0:
+        return {"ok": False, "reason": "header not found"}
+
+    def cell(row, key):
+        i = cmap.get(key)
+        return row[i] if i is not None and i < len(row) else ""
+
+    samples: dict[str, list[float]] = {}
+    for row in values[hidx + 1:]:
+        internal = _safe_float(cell(row, "internal_price")) or _safe_float(cell(row, "final_price"))
+        new = _safe_float(cell(row, "new_price"))
+        if not internal or not new or internal < 500 or new < 1000:
+            continue
+        cat = _infer_category_from_text(cell(row, "item"))
+        if cat == "other":
+            continue
+        age = _safe_float(cell(row, "age")) or 2.0
+        grade = (str(cell(row, "condition")).strip().upper()[:1]) or "B"
+        cond = CONDITION_FACTORS.get(grade, 0.70)
+        depr = depreciation_factor(age, cat)
+        denom = new * depr * cond
+        if denom <= 0:
+            continue
+        r = internal / denom
+        if 0.05 <= r <= 3.0:  # discard absurd rows (typos, wrong columns)
+            samples.setdefault(cat, []).append(r)
+
+    updated: dict[str, dict[str, Any]] = {}
+    for cat, rs in samples.items():
+        n = len(rs)
+        if n < _CALIB_MIN_N:
+            continue
+        raw = statistics.median(rs)
+        prior = _static_acquisition_ratio(cat)
+        # Shrunken estimate: with few samples stay near the prior; with many,
+        # converge to the team's observed median.
+        blended = (n * raw + _CALIB_SHRINK_K * prior) / (n + _CALIB_SHRINK_K)
+        lo, hi = _CALIB_CLAMP
+        updated[cat] = {
+            "ratio": round(min(hi, max(lo, blended)), 3),
+            "raw_median": round(raw, 3),
+            "static_prior": prior,
+            "n": n,
+        }
+
+    _calibrated_ratios.clear()
+    _calibrated_ratios.update(updated)
+    logger.info(
+        "Calibration: learned acquisition ratios updated: "
+        + ", ".join(f"{c}={v['ratio']}(n={v['n']})" for c, v in updated.items())
+    )
+    return {"ok": True, "categories": updated}
+
+
+def get_calibrated_ratios() -> dict[str, dict[str, Any]]:
+    """Snapshot of the learned ratios (for the accuracy report / dashboard)."""
+    return dict(_calibrated_ratios)
+
+
+def get_category_acquisition_ratio(category: str) -> float:
+    """Return the acquisition ratio for a category.
+
+    Prefers the CALIBRATED ratio learned from the internal team's own closed
+    evaluations (refreshed every 6h); falls back to the static real-data table
+    when a category has too little training data. Separator-insensitive:
+    'washing machine', 'washing_machine' and 'washing-machine' all match.
+    """
+    cat_c = _collapse(category)
+    if not cat_c:
+        return DEFAULT_ACQUISITION_RATIO
+    for key, info in _calibrated_ratios.items():
+        key_c = _collapse(key)
+        if key_c in cat_c or cat_c in key_c:
+            return info["ratio"]
+    return _static_acquisition_ratio(category)
 
 
 def get_refresh_status() -> dict[str, Any]:
@@ -1181,4 +1300,5 @@ def get_refresh_status() -> dict[str, Any]:
         "tracker_last_write_error": _tracker_status["last_write_error"],
         "tracker_last_error": _tracker_status["last_error"],
         "tracker_consecutive_failures": _tracker_status["consecutive_failures"],
+        "calibrated_ratio_categories": len(_calibrated_ratios),
     }

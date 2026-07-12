@@ -329,7 +329,124 @@ def gemini_price_research(
 
 
 # ---------------------------------------------------------------------------
-# Public entry point (v6 — Gemini primary)
+# Perplexity Sonar (v6.3) — second independent grounded new-price source
+# ---------------------------------------------------------------------------
+def sonar_price_research(
+    *,
+    brand: str,
+    model: str,
+    category: str,
+    country: str = "KE",
+    size_value: float | None = None,
+    size_unit: str | None = None,
+) -> InternetPriceResult:
+    """Look up the NEW retail price via the Perplexity Sonar API (live web
+    search with citations). Used as an independent cross-check on Gemini —
+    single-source lookups were the main cause of new-price noise (same model
+    priced 35,500 one day and 63,999 the next).
+
+    Requires PERPLEXITY_API_KEY; silently returns an empty result when it is
+    not configured, so the system degrades to Gemini-only."""
+    result = InternetPriceResult()
+    country_name = _COUNTRY_NAMES.get(country, "Kenya")
+    currency = _COUNTRY_CURRENCIES.get(country, "KES")
+    result.currency = currency
+
+    try:
+        from app.config import get_settings
+        api_key = getattr(get_settings(), "perplexity_api_key", None) or ""
+    except Exception:  # noqa: BLE001
+        api_key = ""
+    if not api_key:
+        return result
+
+    size_hint = _format_size_hint(size_value, size_unit)
+    prompt = (
+        f"Find the current NEW retail price in {country_name} of this exact "
+        f"appliance: Brand: {brand or 'unknown'}; Model: {model or 'unknown'}; "
+        f"Size/capacity: {size_hint or 'unknown'}; Category: {category}. "
+        f"Check mainstream {country_name} retailers (Jumia, Kilimall, brand "
+        f"stores, electronics shops). The size/capacity MUST match exactly. "
+        f"Respond with ONLY a JSON object: "
+        f'{{"new_price": <number in {currency}>, "currency": "{currency}", '
+        f'"matched_product": "<exact product you priced>"}}. '
+        f'If no price for this specific model/size exists, return {{"new_price": null}}.'
+    )
+
+    try:
+        import requests as _req
+        resp = _req.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "sonar",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 500,
+            },
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Sonar price research: HTTP {resp.status_code}: {resp.text[:200]}")
+            return result
+        data = resp.json()
+        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        parsed = _extract_json_from_text(text) or {}
+        price = parsed.get("new_price")
+        if price is None:
+            return result
+        price = float(str(price).replace(",", ""))
+        lo, hi = _sanity_band_for(category.lower().strip(), currency)
+        if not (lo <= price <= hi):
+            logger.warning(
+                f"Sonar price research: {price} {currency} outside sanity band "
+                f"[{lo:,.0f}, {hi:,.0f}] for {category} — discarded"
+            )
+            return result
+        result.launch_price = price
+        result.confidence = 60.0
+        for url in (data.get("citations") or [])[:6]:
+            result.sources.append({"title": "sonar_citation", "url": str(url), "price": str(price)})
+        if parsed.get("matched_product"):
+            result.raw_snippets.append(f"sonar_matched: {parsed['matched_product']}")
+        logger.info(f"Sonar price research: {price} {currency} for {brand} {model}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Sonar price research failed: {e}")
+    return result
+
+
+def combine_new_price_signals(
+    gemini_price: float | None, sonar_price: float | None
+) -> tuple[float | None, str]:
+    """Merge two independent grounded new-price lookups into one estimate.
+
+    - Both agree (within 40%): average them — two independent confirmations.
+    - Both present but conflicting: take the LOWER one. Wrong-variant errors
+      are almost always inflations (premium bundle/washer-dryer priced instead
+      of the base model), and the matrix cross-check downstream still corrects
+      a too-low pick when curated data exists.
+    - One present: use it. Neither: None.
+
+    Pure function — unit-testable.
+    """
+    g = float(gemini_price) if gemini_price and gemini_price > 0 else None
+    s = float(sonar_price) if sonar_price and sonar_price > 0 else None
+    if g and s:
+        if max(g, s) / min(g, s) <= 1.4:
+            return round((g + s) / 2.0, 2), "gemini+sonar agree"
+        return min(g, s), "gemini/sonar conflict -> lower"
+    if g:
+        return g, "gemini only"
+    if s:
+        return s, "sonar only"
+    return None, "none"
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (v6.3 — Gemini primary + Sonar cross-check)
 # ---------------------------------------------------------------------------
 def search_internet_price(
     *,
@@ -341,11 +458,33 @@ def search_internet_price(
     size_value: float | None = None,
     size_unit: str | None = None,
 ) -> InternetPriceResult:
-    """Search for retail and resale prices using Gemini with Google Search grounding."""
-    return gemini_price_research(
+    """Search for the NEW retail price using two independent grounded sources
+    (Gemini Google-Search grounding + Perplexity Sonar) and merge them."""
+    gemini = gemini_price_research(
         brand=brand, model=model, category=category, country=country,
         size_value=size_value, size_unit=size_unit,
     )
+    sonar = sonar_price_research(
+        brand=brand, model=model, category=category, country=country,
+        size_value=size_value, size_unit=size_unit,
+    )
+
+    combined, how = combine_new_price_signals(gemini.launch_price, sonar.launch_price)
+    if combined is None:
+        return gemini  # preserves gemini's currency/snippets even when empty
+
+    # Base the result on the richer Gemini payload, overridden with the merged
+    # price + the union of sources for full transparency.
+    result = gemini if gemini.launch_price else sonar
+    result.launch_price = combined
+    result.sources = (gemini.sources or []) + (sonar.sources or [])
+    if gemini.launch_price and sonar.launch_price:
+        result.confidence = min(95.0, max(gemini.confidence, sonar.confidence) + 15.0)
+        result.raw_snippets.append(
+            f"dual_source: gemini={gemini.launch_price} sonar={sonar.launch_price} -> {combined} ({how})"
+        )
+    logger.info(f"New-price lookup [{how}]: {combined} for {brand} {model}")
+    return result
 
 
 # ---------------------------------------------------------------------------

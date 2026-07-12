@@ -81,16 +81,24 @@ PRICE_CEILING_RATIO: float = 1.50
 # Hard consistency ceiling: a used trade-in offer may never approach the price
 # of a brand-new unit. This is the strongest sanity net — it catches both
 # over-valuation (offer too high) AND a wrongly-low sourced new price (which
-# would otherwise let the offer exceed "new"). Per-category because electronics
-# and small appliances depreciate faster and carry thinner resale margins.
-DEFAULT_MAX_TRADEIN_TO_NEW: float = 0.55
+# would otherwise let the offer exceed "new").
+#
+# Calibrated Jul 2026 against the internal team's own closed evaluations
+# (n=114 pairs). The team's median pay-ratio vs new: TV 0.59 (IQR 0.47-0.77),
+# fridge 0.50 (0.40-0.93), washer 0.52 (0.42-1.04), microwave 0.26, cooker
+# 0.33. The previous caps (TV 0.45, fridge/washer 0.50) sat AT or BELOW the
+# team's median — mathematically forbidding the engine from matching the team
+# on half of all good units. Caps now sit near the team's ~P80 so they catch
+# absurdity without clipping normal deals; the *targeting* is done by the
+# calibrated acquisition ratios, not by this ceiling.
+DEFAULT_MAX_TRADEIN_TO_NEW: float = 0.60
 MAX_TRADEIN_TO_NEW: dict[str, float] = {
-    "tv": 0.45, "tv_monitor": 0.45,
-    "refrigerator": 0.50, "fridge": 0.50, "freezer": 0.50, "chiller": 0.50,
-    "washing_machine": 0.50, "dishwasher": 0.50,
-    "cooker": 0.50, "cooker_oven": 0.50, "oven": 0.50,
-    "microwave": 0.40, "water_dispenser": 0.40, "air_fryer": 0.40,
-    "soundbar": 0.35, "woofer": 0.35, "speaker": 0.35, "home_theatre": 0.35,
+    "tv": 0.70, "tv_monitor": 0.70,
+    "refrigerator": 0.70, "fridge": 0.70, "freezer": 0.70, "chiller": 0.70,
+    "washing_machine": 0.70, "dishwasher": 0.70,
+    "cooker": 0.60, "cooker_oven": 0.60, "oven": 0.60,
+    "microwave": 0.45, "water_dispenser": 0.45, "air_fryer": 0.45,
+    "soundbar": 0.40, "woofer": 0.40, "speaker": 0.40, "home_theatre": 0.40,
     "fan": 0.35, "iron_box": 0.30, "kettle": 0.30, "blender": 0.30,
 }
 
@@ -401,86 +409,89 @@ def reconcile_retail_price(
     that price is NOT counted as a real verification source — so a fabricated
     guess can never masquerade as a verified market price, and confidence does
     not get inflated by it.
+
+    CRITICAL CONTRACT (Jul 2026 rewrite): ``reconciled_price`` is the NEW-retail
+    price. Only genuine new-price signals may enter the blend:
+      - internet_lookup (Gemini/Sonar grounded launch price)
+      - frontend, when it is a real user/db-sourced retail price
+
+    Trade-in-level signals — historical closed-deal prices, expert trade-in
+    feedback, past resale comparables — are recorded for transparency and still
+    count toward corroboration (num_real_sources), but are EXCLUDED from the
+    blend. Mixing them in was the root cause of systematic under-pricing: a
+    team trade-in price (~50% of new) dragged the "new price" down to trade-in
+    level, the genuine Gemini new price was then discarded as a >2x "outlier",
+    and the trade-in-to-new ceiling squashed the offer to ~25% of fair value
+    (e.g. Roch RCF-300-G offered at 5,000 vs a 38,000 new price). Trade-in
+    history keeps its proper channel: the historical floor/ceiling guardrail
+    (STEP 11) anchored on ``historical_team_avg``.
     """
     sources: list[dict[str, Any]] = []
     _frontend_is_estimate = frontend_source.lower().strip() in (
         "category_default", "whatsapp_category_estimate", "default", "",
     )
 
-    human_specs: list[tuple[str, float | None, float]] = [
-        ("historical_sheet", historical_avg, 8.0),
-        ("expert_feedback", expert_avg, 7.0),
-        ("database_comparables", comparables_avg, 5.0),
+    # Trade-in / resale-level intel: listed + counted for corroboration, never
+    # blended into the NEW price.
+    tradein_specs: list[tuple[str, float | None, float, str]] = [
+        ("historical_sheet", historical_avg, 8.0,
+         "closed-deal trade-in price, not a new-price signal"),
+        ("expert_feedback", expert_avg, 7.0,
+         "expert trade-in feedback, not a new-price signal"),
+        ("database_comparables", comparables_avg, 5.0,
+         "past resale comparables, not a new-price signal"),
+        ("marketplace_jiji_jumia", marketplace_avg, 2.5,
+         "used-listing price, not a new-price signal"),
+        ("shopify_inventory", shopify_avg, 2.0,
+         "refurbished inventory price, not a new-price signal"),
     ]
-    human_entries: list[tuple[float, float]] = []
-    for key, price, w in human_specs:
+    tradein_entries: list[tuple[float, float]] = []
+    for key, price, w, reason in tradein_specs:
         if price is not None and price > 0:
-            human_entries.append((price, w))
+            tradein_entries.append((price, w))
             sources.append({
                 "source": key, "price": price, "weight": w,
-                "tier": "human_intelligence",
+                "tier": "tradein_intelligence",
+                "excluded_from_blend": True,
+                "exclusion_reason": reason,
             })
 
-    ai_specs: list[tuple[str, float | None, float]] = [
+    # Genuine NEW-price signals — the only inputs to the blend.
+    new_specs: list[tuple[str, float | None, float]] = [
         ("internet_lookup", internet_price, 3.0),
-        ("marketplace_jiji_jumia", marketplace_avg, 2.5),
-        ("shopify_inventory", shopify_avg, 2.0),
         ("frontend", frontend_price if frontend_price > 0 else None, 1.0),
     ]
-    ai_entries: list[tuple[float, float]] = []
-    for key, price, w in ai_specs:
+    new_entries: list[tuple[float, float]] = []
+    for key, price, w in new_specs:
         if price is not None and price > 0:
-            # The frontend category-default guess must never move the price — it
-            # is an un-sourced estimate. Record it for transparency but keep it
-            # OUT of the weighted blend (was previously pulling ai_avg).
             is_estimate = key == "frontend" and _frontend_is_estimate
             if not is_estimate:
-                ai_entries.append((price, w))
+                new_entries.append((price, w))
             src_entry = {
                 "source": key, "price": price, "weight": w,
-                "tier": "ai_market_research",
+                "tier": "new_price_signal",
             }
             if is_estimate:
                 src_entry["is_estimate"] = True
                 src_entry["excluded_from_blend"] = True
             sources.append(src_entry)
 
-    human_avg_val = _tier_weighted_average(human_entries)
-    ai_avg = _tier_weighted_average(ai_entries)
+    tradein_avg = _tier_weighted_average(tradein_entries)
+    new_avg = _tier_weighted_average(new_entries)
 
-    web_probe: float | None = None
-    if marketplace_avg and marketplace_avg > 0:
-        web_probe = marketplace_avg
-    elif internet_price and internet_price > 0:
-        web_probe = internet_price
-
-    discard_ai_tier = False
-    if human_avg_val is not None and web_probe is not None and human_avg_val > 0:
-        probe_ratio = web_probe / human_avg_val
-        if probe_ratio > 2.0 or probe_ratio < 0.3:
-            discard_ai_tier = True
-            for s in sources:
-                if s.get("tier") == "ai_market_research":
-                    s["discarded"] = True
-                    s["discard_reason"] = (
-                        f"Outlier vs human-intelligence tier: web probe {probe_ratio:.2f}x"
-                    )
-
-    if discard_ai_tier and human_avg_val is not None:
-        reconciled = human_avg_val
-    elif human_avg_val is not None and ai_avg is not None:
-        reconciled = 0.6 * human_avg_val + 0.4 * ai_avg
-    elif human_avg_val is not None:
-        reconciled = human_avg_val
-    elif ai_avg is not None:
-        reconciled = ai_avg
+    if new_avg is not None:
+        reconciled = new_avg
     else:
+        # No genuine new-price signal: fall back to the frontend estimate so
+        # downstream always has *something*, but new_price_verified stays False.
         reconciled = frontend_price if frontend_price > 0 else 0.0
 
     num_sources = len(sources)
-    # Real sources exclude the frontend category-default estimate.
+    # Real sources exclude the frontend category-default estimate. Trade-in
+    # intel still corroborates that the item/valuation is grounded in data.
     num_real_sources = sum(1 for s in sources if not s.get("is_estimate"))
-    new_price_verified = num_real_sources > 0
+    # Verified only when a genuine NEW-price signal drove the blend.
+    new_price_verified = new_avg is not None
 
     return {
         "reconciled_price": _round_kes_500(reconciled),
@@ -488,8 +499,8 @@ def reconcile_retail_price(
         "num_sources": num_sources,
         "num_real_sources": num_real_sources,
         "new_price_verified": new_price_verified,
-        "human_intelligence_avg": round(human_avg_val, 2) if human_avg_val is not None else None,
-        "ai_market_research_avg": round(ai_avg, 2) if ai_avg is not None else None,
+        "human_intelligence_avg": round(tradein_avg, 2) if tradein_avg is not None else None,
+        "ai_market_research_avg": round(new_avg, 2) if new_avg is not None else None,
         "confidence": min(100.0, num_real_sources * 20.0 + 10.0),
         "frontend_price": frontend_price,
     }
@@ -747,7 +758,12 @@ def compute_valuation(
             if s.get("source") == "internet_lookup" and not s.get("discarded"):
                 internet_new = max(internet_new, _f(s.get("price")))
         new_price_anchor = max(internet_new, _f(price_verification.get("reconciled_price")))
-        anchor_verified = new_price_anchor > 0
+        # Verified only when a genuine new-price signal exists — the reconciled
+        # value can be a frontend-estimate fallback, which must never arm the
+        # floor (11c) as if it were market-verified.
+        anchor_verified = internet_new > 0 or bool(
+            price_verification.get("new_price_verified")
+        )
     if new_price_anchor <= 0:
         new_price_anchor = _f(retail_price)
 

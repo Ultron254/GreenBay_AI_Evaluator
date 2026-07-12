@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     
     # Tavily Web Search (for internet price verification)
     tavily_api_key: Optional[str] = Field(default=None, env="TAVILY_API_KEY", repr=False)
+
+    # Perplexity Sonar (second grounded new-price source, cross-checks Gemini)
+    perplexity_api_key: Optional[str] = Field(default=None, env="PERPLEXITY_API_KEY", repr=False)
     
     # Google Cloud Vision API (for Google Lens product identification)
     google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY", repr=False)
