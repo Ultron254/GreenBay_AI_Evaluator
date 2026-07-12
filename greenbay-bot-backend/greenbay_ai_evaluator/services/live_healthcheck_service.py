@@ -103,6 +103,32 @@ def _probe_gemini_search_grounding() -> tuple[bool, str]:
     return False, "Gemini search grounding returned NO price (would silently fall back to a guess)"
 
 
+def _probe_perplexity_sonar() -> tuple[bool, str]:
+    """Probe the second grounded new-price source (Perplexity Sonar).
+
+    Optional dependency: when PERPLEXITY_API_KEY is not set the system runs
+    Gemini-only by design, so 'not configured' reports ok=True and simply says
+    so. When the key IS set, run a real product lookup end to end (auth, JSON
+    parsing, sanity band) — a wrong/expired key must show up here loudly."""
+    from app.config import get_settings
+    api_key = getattr(get_settings(), "perplexity_api_key", None) or ""
+    if not api_key:
+        return True, "PERPLEXITY_API_KEY not set — running Gemini-only (optional)"
+    from greenbay_ai_evaluator.services.market_price_service import sonar_price_research
+    res = sonar_price_research(
+        brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
+    )
+    if res.launch_price and res.launch_price > 0:
+        return True, (
+            f"OK — Sonar grounded price KES {res.launch_price:,.0f} "
+            f"({len(res.sources)} citations); dual-source cross-check ACTIVE"
+        )
+    return False, (
+        "Sonar returned NO price — check the key/credits "
+        "(evaluations still work Gemini-only)"
+    )
+
+
 def _probe_google_sheets() -> tuple[bool, str]:
     try:
         import gspread  # noqa: F401
@@ -239,6 +265,7 @@ _PROBES: dict[str, Callable[[], tuple[bool, str]]] = {
     "anthropic_vision": _probe_anthropic,
     "vertex_gemini": _probe_vertex_gemini,
     "gemini_search_newprice": _probe_gemini_search_grounding,
+    "perplexity_sonar": _probe_perplexity_sonar,
     "google_sheets": _probe_google_sheets,
     "reference_cache": _probe_reference_cache,
     "airtable_reachable": _probe_airtable,
