@@ -775,11 +775,24 @@ def compute_valuation(
         max_ratio = _max_tradein_to_new(category)
         new_price_cap = _round_price(new_price_anchor * max_ratio, round_step)
         if new_price_cap > 0 and opening_offer > new_price_cap:
+            # Graduated response (Jul 2026): a near-new grade-A item can
+            # structurally overshoot the cap by a few percent (depr 0.90 x
+            # cond 1.0 x calibrated acq 0.81+ > 0.70) — that is the math
+            # working, not an unreliable input, so clip silently. Only a
+            # MEANINGFUL overshoot (>15%) signals a genuinely suspect offer
+            # or new price and forces human review.
+            overshoot = opening_offer / new_price_cap
+            big_breach = overshoot > 1.15
             guardrail_note = (
                 f"New-price ceiling: offer KES {opening_offer:,.0f} exceeded "
                 f"{max_ratio:.0%} of the new price (KES {new_price_anchor:,.0f}). "
-                f"Capped to KES {new_price_cap:,.0f} and flagged for review "
-                f"(either the offer was too high or the sourced new price too low)."
+                f"Capped to KES {new_price_cap:,.0f}"
+                + (
+                    " and flagged for review (either the offer was too high "
+                    "or the sourced new price too low)."
+                    if big_breach else
+                    " (small structural overshoot; inputs consistent)."
+                )
             )
             logger.warning(guardrail_note)
             trace_lines.append(f"GUARDRAIL: {guardrail_note}")
@@ -787,8 +800,10 @@ def compute_valuation(
             acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
             walkaway_limit = _round_price(opening_offer * 0.7, round_step)
             new_price_ceiling_applied = True
-            # A breach signals an unreliable input — never ship it as "verified".
-            confidence_score = min(confidence_score, 75.0)
+            if big_breach:
+                # A large breach signals an unreliable input — never ship it
+                # as "verified".
+                confidence_score = min(confidence_score, 75.0)
 
     # -- STEP 11c: New-price consistency floor --------------------------------
     # Symmetric counterpart to 11b. Every other guardrail is an UPPER bound, so

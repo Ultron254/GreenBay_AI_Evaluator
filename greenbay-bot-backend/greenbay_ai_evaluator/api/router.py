@@ -1454,8 +1454,10 @@ def backfill_sheet_missing_status(_: bool = Depends(verify_admin_key)):
 #   POST /admin/sheet-repair       — fix missing dates + glance summaries
 # ---------------------------------------------------------------------------
 def _test_row_pattern():
-    import re as _rx
-    return _rx.compile(r"ZZ\s?-?(SMOKE|DIAG|TEST|PROBE)", _rx.IGNORECASE)
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        TEST_ROW_PATTERN,
+    )
+    return TEST_ROW_PATTERN
 
 
 @evaluator_router.post("/admin/purge-test-records")
@@ -1621,22 +1623,25 @@ def _sheet_repair(dry_run: bool) -> dict:
                         if not dry_run:
                             updates.append(Cell(i + 1, di + 1, d))
 
-            # 2. Notes without SUMMARY -> summary | Src | Ref (marker preserved)
+            # 2. Notes without SUMMARY -> summary | Ref | Src. Ref precedes the
+            # (potentially very long) source URL so truncation can never cut
+            # off the dedupe/cleanup marker. Machine notes only: a cell that
+            # already has content but no Ref would have been skipped above.
             if ni is not None:
                 cur_note = str(row[ni] if ni < len(row) else "")
                 if "SUMMARY:" not in cur_note:
-                    parts = [summary]
+                    parts = [summary, f"Ref: {ref}"]
                     if best:
                         parts.append(f"Src: {best}")
-                    parts.append(f"Ref: {ref}")
                     prog["notes_summarized"] += 1
                     if not dry_run:
                         updates.append(Cell(i + 1, ni + 1, " | ".join(parts)[:900]))
 
-            # 3. Dedicated Rationale column, if present and empty
+            # 3. Dedicated Rationale column — fill ONLY when empty. Anything
+            # already there may be human-written and must never be replaced.
             if ri is not None and ri != ni:
                 cur_rat = str(row[ri] if ri < len(row) else "")
-                if not cur_rat.strip() or "SUMMARY:" not in cur_rat:
+                if not cur_rat.strip():
                     parts = [summary]
                     if best:
                         parts.append(f"Src: {best}")
@@ -2124,6 +2129,7 @@ def _enrich_justification(
     confidence: float | None = None,
     decision: str = "",
     currency: str = "KES",
+    new_price_estimate: float | None = None,
 ) -> str:
     """Build the 'AI Pricing Justification' text (issue #8).
 
@@ -2140,7 +2146,10 @@ def _enrich_justification(
                 _urls.append(u)
     header = _glance_summary(
         offer=opening_offer,
-        new_price=pv0.get("reconciled_price"),
+        # Use the SAME figure that lands in the "New Price (Estimate)" column
+        # (post matrix cross-check) — the summary must never contradict the
+        # column sitting next to it.
+        new_price=new_price_estimate or pv0.get("reconciled_price"),
         new_verified=bool(pv0.get("new_price_verified")),
         confidence=confidence,
         decision=decision,
@@ -3064,6 +3073,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             confidence=result.confidence_score,
             decision=result.decision,
             currency=req_currency,
+            new_price_estimate=new_price_estimate,
         )
 
         # Airtable: backup data repository (async, non-blocking, write-only)
@@ -3115,15 +3125,19 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             # Sheet rationale: the same at-a-glance summary + best link that
             # tops the Airtable justification, then the Ref marker (used by
             # dedupe/cleanup — must stay present).
+            # Ref precedes the (potentially very long) source URL so the [:900]
+            # truncation can never cut off the dedupe/cleanup marker.
             _sheet_note_parts = [
                 _glance_summary(
                     offer=result.opening_offer,
-                    new_price=(price_verification or {}).get("reconciled_price"),
+                    # Same figure as the sheet's own new_price column.
+                    new_price=new_price_estimate,
                     new_verified=bool((price_verification or {}).get("new_price_verified")),
                     confidence=result.confidence_score,
                     decision=result.decision,
                     currency=req_currency,
-                )
+                ),
+                f"Ref: {str(vs.id)[:8]}",
             ]
             _best_link = _best_source_url(
                 [s.get("url") for s in (getattr(internet_result, "sources", None) or [])
@@ -3131,7 +3145,6 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             )
             if _best_link:
                 _sheet_note_parts.append(f"Src: {_best_link}")
-            _sheet_note_parts.append(f"Ref: {str(vs.id)[:8]}")
             _sheet_notes = " | ".join(_sheet_note_parts)[:900]
 
             def _append_sheet():

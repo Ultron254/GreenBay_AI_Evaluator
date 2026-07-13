@@ -1161,6 +1161,14 @@ def lookup_sales_stock(
 
 _RE_SEP = re.compile(r"[\s_\-/]+")
 
+# Matches CI smoke/diagnostic probe rows (ZZSMOKE-CI, ZZDIAG-JUL7, ZZTEST,
+# ZZ PROBE, ZZSELFTEST). The left boundary (?<![A-Za-z]) is critical: without
+# it "Buzz Test" or "Jazz Probe" in a real customer's name would match and the
+# automatic post-deploy purge would DELETE their record.
+TEST_ROW_PATTERN = re.compile(
+    r"(?<![A-Za-z])ZZ\s?-?(SMOKE|DIAG|SELFTEST|TEST|PROBE)", re.IGNORECASE
+)
+
 
 def _collapse(s: str) -> str:
     """Lower-case and strip ALL separators so 'washing machine', 'washing_machine'

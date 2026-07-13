@@ -124,6 +124,23 @@ class TestNewPriceCeiling:
         # Cap is now 0.70 * 160k = 112k, so the offer is not clipped to 28k.
         assert result.opening_offer > 28_000
 
+    def test_small_structural_overshoot_clips_without_review_penalty(self, policy):
+        # A near-new grade-A item can exceed the cap by a few percent purely
+        # from the engine's own math (depr x cond x acq > cap ratio). That is
+        # NOT an unreliable input: clip silently, no confidence penalty.
+        inputs = self._inputs(policy, reference_resale_value=36_000.0)
+        result = compute_valuation(**inputs)
+        assert result.new_price_ceiling_applied is True
+        assert result.opening_offer <= 28_000
+        assert "small structural overshoot" in result.guardrail_note
+
+    def test_large_breach_still_forces_review(self, policy):
+        # Default _inputs resale (45k vs 40k new) overshoots the cap by ~30%
+        # — a genuinely suspect offer/new-price pair must still be flagged.
+        result = compute_valuation(**self._inputs(policy))
+        assert "flagged for review" in result.guardrail_note
+        assert result.confidence_score <= 75.0
+
 
 # ---------------------------------------------------------------------------
 # reconcile_retail_price — estimate exclusion
@@ -452,6 +469,31 @@ class TestTrackerHeaderDetection:
         )
         hidx, cmap = _find_header_index([self.HEADER_FULL])
         assert cmap.get("date") == 0  # named "Date" at position 0
+
+
+# ---------------------------------------------------------------------------
+# Test/probe row purge pattern — must catch every probe variant and must
+# NEVER match a real customer (the deploy pipeline auto-purges matches).
+# ---------------------------------------------------------------------------
+class TestProbeRowPattern:
+    def _pat(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            TEST_ROW_PATTERN,
+        )
+        return TEST_ROW_PATTERN
+
+    def test_matches_all_probe_variants(self):
+        pat = self._pat()
+        for s in ("Samsung ZZSMOKE-CI tv_monitor", "ZZDIAG-JUL7", "ZZTEST",
+                  "ZZ PROBE", "ZZSELFTEST probe row", "zzsmoke-ci"):
+            assert pat.search(s), s
+
+    def test_never_matches_real_customers(self):
+        pat = self._pat()
+        for s in ("Buzz Test Kitchen", "Jazz Probe Ltd", "Muzz Testing",
+                  "Frizz Smoke House", "Abuzz Diagnostics",
+                  "Samsung UA43T5300 tv_monitor", "John Mwangi"):
+            assert not pat.search(s), s
 
 
 # ---------------------------------------------------------------------------
