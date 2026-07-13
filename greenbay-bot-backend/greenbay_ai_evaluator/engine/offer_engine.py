@@ -31,8 +31,6 @@ from greenbay_ai_evaluator.config import (
     DEFAULT_DEFECT_DEDUCTION,
 )
 from greenbay_ai_evaluator.services.reference_data_service import (
-    ACQUISITION_RATIOS,
-    DEFAULT_ACQUISITION_RATIO,
     get_category_acquisition_ratio,
 )
 
@@ -499,6 +497,12 @@ def reconcile_retail_price(
         "num_sources": num_sources,
         "num_real_sources": num_real_sources,
         "new_price_verified": new_price_verified,
+        # Canonical names post-rewrite; the legacy keys are kept as aliases so
+        # anything reading the raw dict keeps working, but note their meaning:
+        # "human_intelligence_avg" is the TRADE-IN-level average (excluded from
+        # the blend) and "ai_market_research_avg" is the NEW-price signal avg.
+        "tradein_intelligence_avg": round(tradein_avg, 2) if tradein_avg is not None else None,
+        "new_price_signal_avg": round(new_avg, 2) if new_avg is not None else None,
         "human_intelligence_avg": round(tradein_avg, 2) if tradein_avg is not None else None,
         "ai_market_research_avg": round(new_avg, 2) if new_avg is not None else None,
         "confidence": min(100.0, num_real_sources * 20.0 + 10.0),

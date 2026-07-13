@@ -408,8 +408,21 @@ def sonar_price_research(
             return result
         result.launch_price = price
         result.confidence = 60.0
-        for url in (data.get("citations") or [])[:6]:
-            result.sources.append({"title": "sonar_citation", "url": str(url), "price": str(price)})
+        # Perplexity has been migrating from top-level "citations" (list of
+        # URLs) to "search_results" (list of {title,url,...}) — accept both so
+        # evidence URLs don't silently vanish from the audit trail.
+        cite_urls: list[str] = [str(u) for u in (data.get("citations") or [])]
+        for sr in (data.get("search_results") or []):
+            if isinstance(sr, dict) and sr.get("url"):
+                cite_urls.append(str(sr["url"]))
+        seen: set[str] = set()
+        for url in cite_urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            result.sources.append({"title": "sonar_citation", "url": url, "price": str(price)})
+            if len(seen) >= 6:
+                break
         if parsed.get("matched_product"):
             result.raw_snippets.append(f"sonar_matched: {parsed['matched_product']}")
         logger.info(f"Sonar price research: {price} {currency} for {brand} {model}")
@@ -479,7 +492,13 @@ def search_internet_price(
     result.launch_price = combined
     result.sources = (gemini.sources or []) + (sonar.sources or [])
     if gemini.launch_price and sonar.launch_price:
-        result.confidence = min(95.0, max(gemini.confidence, sonar.confidence) + 15.0)
+        if "agree" in how:
+            # Two independent confirmations — boost confidence.
+            result.confidence = min(95.0, max(gemini.confidence, sonar.confidence) + 15.0)
+        else:
+            # Conflict resolved conservatively — disagreement is a reason for
+            # LESS certainty, never more.
+            result.confidence = min(gemini.confidence, sonar.confidence)
         result.raw_snippets.append(
             f"dual_source: gemini={gemini.launch_price} sonar={sonar.launch_price} -> {combined} ({how})"
         )

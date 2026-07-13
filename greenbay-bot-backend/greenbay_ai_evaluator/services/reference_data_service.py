@@ -1255,8 +1255,11 @@ def compute_calibrated_ratios() -> dict[str, Any]:
             "n": n,
         }
 
-    _calibrated_ratios.clear()
-    _calibrated_ratios.update(updated)
+    # Atomic swap: rebind instead of clear()+update() so concurrent evaluation
+    # threads iterating the dict never see it mid-mutation (RuntimeError) or
+    # momentarily empty (silent fallback to the static ratio).
+    global _calibrated_ratios
+    _calibrated_ratios = updated
     logger.info(
         "Calibration: learned acquisition ratios updated: "
         + ", ".join(f"{c}={v['ratio']}(n={v['n']})" for c, v in updated.items())
