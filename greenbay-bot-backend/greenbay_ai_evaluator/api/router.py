@@ -388,9 +388,6 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
             "internal_price": cell(row, "internal_price"),
             "final_price": cell(row, "final_price"),
             "accepted": cell(row, "accepted"),
-            # Notes carries the "Ref: <session>" marker — needed to correlate
-            # tracker rows with Airtable/DB records during ops verification.
-            "notes": cell(row, "notes"),
         })
     return {"count": len(rows), "rows": rows}
 
@@ -1449,6 +1446,272 @@ def backfill_sheet_missing_status(_: bool = Depends(verify_admin_key)):
 
 
 # ---------------------------------------------------------------------------
+# Data hygiene (Jul 2026):
+#   POST /admin/purge-test-records — remove ZZ smoke/diag probe rows everywhere
+#   POST /admin/sheet-repair       — fix missing dates + glance summaries
+# ---------------------------------------------------------------------------
+def _test_row_pattern():
+    import re as _rx
+    return _rx.compile(r"ZZ\s?-?(SMOKE|DIAG|TEST|PROBE)", _rx.IGNORECASE)
+
+
+@evaluator_router.post("/admin/purge-test-records")
+def purge_test_records(dry_run: bool = True, _: bool = Depends(verify_admin_key)):
+    """Remove CI smoke/diagnostic probe rows (ZZSMOKE / ZZDIAG / ZZTEST /
+    ZZ PROBE) from BOTH Airtable and the tracker sheet.
+
+    These rows are created by the post-deploy smoke test and admin self-tests;
+    cleanup normally deletes them immediately, but a failed cleanup (transient
+    network error mid-deploy) leaves them behind — they show up as repeated
+    entries with no images. Idempotent."""
+    pat = _test_row_pattern()
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated, delete_record_by_id,
+    )
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+
+    out: dict[str, Any] = {"dry_run": dry_run, "airtable_matched": 0,
+                           "airtable_deleted": 0, "sheet_matched": 0,
+                           "sheet_deleted": 0, "errors": []}
+
+    cfg = _get_config()
+    if cfg:
+        recs = list_records_paginated(
+            cfg, fields=["Product Name", "Model Number", "Customer Name"],
+        )
+        for r in recs:
+            f = r.get("fields", {}) or {}
+            blob = " ".join(
+                str(f.get(k, "")) for k in
+                ("Product Name", "Model Number", "Customer Name")
+            )
+            if pat.search(blob):
+                out["airtable_matched"] += 1
+                if not dry_run:
+                    if delete_record_by_id(r["id"]):
+                        out["airtable_deleted"] += 1
+                    time.sleep(0.25)
+
+    gc = rds._get_gspread_client()
+    if gc:
+        try:
+            ws = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID).worksheet(rds.EVAL_TRACKER_TAB)
+            values = ws.get_all_values()
+            hidx, _cmap = rds._find_header_index(values, require_internal=False)
+            to_delete = [
+                i + 1 for i, row in enumerate(values)
+                if i > hidx and pat.search(" ".join(str(c) for c in row))
+            ]
+            out["sheet_matched"] = len(to_delete)
+            if not dry_run:
+                # Bottom-up so earlier deletions don't shift later row numbers.
+                for rownum in sorted(to_delete, reverse=True):
+                    try:
+                        ws.delete_rows(rownum)
+                        out["sheet_deleted"] += 1
+                        time.sleep(1.1)  # Sheets write quota
+                    except Exception as e:  # noqa: BLE001
+                        out["errors"].append(f"sheet row {rownum}: {e}")
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append(f"sheet: {e}")
+    return out
+
+
+_sheet_repair_state: dict = {"running": False, "started_at": None, "progress": {}}
+
+
+def _sheet_repair(dry_run: bool) -> dict:
+    """Repair the tracker sheet using Airtable as the source of truth:
+
+    1. Rows backfilled without a date get their date from 'Date Submitted'.
+    2. Notes/Rationale cells that lack the at-a-glance SUMMARY get one composed
+       from the Airtable record (offer, new price, status) + best source link
+       extracted from the stored justification. The 'Ref:' marker is preserved.
+    3. Airtable justifications that don't start with SUMMARY get the summary +
+       best link prepended, so the cell is readable at a glance.
+    """
+    import re as _rx
+    from gspread import Cell
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+    from greenbay_ai_evaluator.services.airtable_service import (
+        _get_config, list_records_paginated, patch_record_by_id,
+    )
+
+    prog: dict[str, Any] = {
+        "dry_run": dry_run, "dates_fixed": 0, "notes_summarized": 0,
+        "rationale_filled": 0, "airtable_justif_summarized": 0,
+        "skipped_no_ref": 0, "errors": [], "diag": {},
+    }
+    _sheet_repair_state["progress"] = prog
+    ref_re = _rx.compile(r"Ref:\s*([0-9a-fA-F]{8})")
+
+    cfg = _get_config()
+    gc = rds._get_gspread_client()
+    if cfg is None or gc is None:
+        prog["errors"].append("Airtable or gspread not configured")
+        return prog
+
+    fields = ["Product Name", "Model Number", "Notes", "Date Submitted",
+              "AI Evaluated Price (KES)", "New Price (Estimate)",
+              "Evaluation Status", "Currency", "AI Pricing Justification"]
+    records = list_records_paginated(cfg, fields=fields)
+    by_ref: dict[str, dict] = {}
+    for r in records:
+        m = ref_re.search(str((r.get("fields") or {}).get("Notes", "")))
+        if m:
+            by_ref[m.group(1).lower()] = r
+
+    def _summary_for(f: dict) -> tuple[str, str]:
+        """(one-line summary, best source url) from an Airtable record."""
+        cur = str(f.get("Currency") or "KES")
+        summary = _glance_summary(
+            offer=f.get("AI Evaluated Price (KES)"),
+            new_price=f.get("New Price (Estimate)"),
+            new_verified=None,
+            confidence=None,
+            decision=str(f.get("Evaluation Status") or ""),
+            currency=cur,
+        )
+        best = _best_source_url(_extract_urls(str(f.get("AI Pricing Justification") or "")))
+        return summary, best
+
+    # ---- Sheet pass -------------------------------------------------------
+    try:
+        ws = gc.open_by_key(rds.EVAL_TRACKER_SHEET_ID).worksheet(rds.EVAL_TRACKER_TAB)
+        values = ws.get_all_values()
+        hidx, cmap = rds._find_header_index(values, require_internal=False)
+        prog["diag"] = {"header_row": hidx, "cmap": cmap,
+                        "header": values[hidx] if hidx >= 0 else []}
+        if hidx < 0:
+            prog["errors"].append("sheet header not found")
+            return prog
+
+        di, ni, ri = cmap.get("date"), cmap.get("notes"), cmap.get("rationale")
+        updates: list[Cell] = []
+        for i, row in enumerate(values):
+            if i <= hidx:
+                continue
+            ref = None
+            for c in row:
+                m = ref_re.search(str(c))
+                if m:
+                    ref = m.group(1).lower()
+                    break
+            if not ref or ref not in by_ref:
+                if any(str(c).strip() for c in row):
+                    prog["skipped_no_ref"] += 1
+                continue
+            f = by_ref[ref].get("fields", {}) or {}
+            summary, best = _summary_for(f)
+
+            # 1. Missing date -> from Date Submitted
+            if di is not None:
+                cur_date = row[di] if di < len(row) else ""
+                if not str(cur_date).strip():
+                    raw = str(f.get("Date Submitted", ""))[:10]
+                    try:
+                        d = datetime.strptime(raw, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    except ValueError:
+                        d = ""
+                    if d:
+                        prog["dates_fixed"] += 1
+                        if not dry_run:
+                            updates.append(Cell(i + 1, di + 1, d))
+
+            # 2. Notes without SUMMARY -> summary | Src | Ref (marker preserved)
+            if ni is not None:
+                cur_note = str(row[ni] if ni < len(row) else "")
+                if "SUMMARY:" not in cur_note:
+                    parts = [summary]
+                    if best:
+                        parts.append(f"Src: {best}")
+                    parts.append(f"Ref: {ref}")
+                    prog["notes_summarized"] += 1
+                    if not dry_run:
+                        updates.append(Cell(i + 1, ni + 1, " | ".join(parts)[:900]))
+
+            # 3. Dedicated Rationale column, if present and empty
+            if ri is not None and ri != ni:
+                cur_rat = str(row[ri] if ri < len(row) else "")
+                if not cur_rat.strip() or "SUMMARY:" not in cur_rat:
+                    parts = [summary]
+                    if best:
+                        parts.append(f"Src: {best}")
+                    prog["rationale_filled"] += 1
+                    if not dry_run:
+                        updates.append(Cell(i + 1, ri + 1, " | ".join(parts)[:900]))
+
+        if not dry_run and updates:
+            for chunk_start in range(0, len(updates), 200):
+                ws.update_cells(
+                    updates[chunk_start:chunk_start + 200],
+                    value_input_option="USER_ENTERED",
+                )
+                time.sleep(1.2)
+    except Exception as e:  # noqa: BLE001
+        prog["errors"].append(f"sheet pass: {e}")
+
+    # ---- Airtable pass: summary-first justifications ----------------------
+    pat_test = _test_row_pattern()
+    for r in records:
+        f = r.get("fields", {}) or {}
+        if pat_test.search(str(f.get("Model Number", "")) + str(f.get("Product Name", ""))):
+            continue  # probe rows get purged, not summarized
+        justif = str(f.get("AI Pricing Justification") or "").strip()
+        if not justif or justif.startswith("SUMMARY:"):
+            continue
+        summary, best = _summary_for(f)
+        header_lines = [summary]
+        if best:
+            header_lines.append(f"Best source: {best}")
+        new_justif = "\n".join(header_lines) + "\n\n" + justif
+        prog["airtable_justif_summarized"] += 1
+        if not dry_run:
+            if not patch_record_by_id(r["id"], {"AI Pricing Justification": new_justif[:10000]}):
+                prog["errors"].append(f"airtable patch failed: {r['id']}")
+            time.sleep(0.25)
+
+    return prog
+
+
+@evaluator_router.post("/admin/sheet-repair")
+def sheet_repair(dry_run: bool = True, _: bool = Depends(verify_admin_key)):
+    """Repair tracker-sheet dates + write at-a-glance summaries (see _sheet_repair).
+
+    dry_run=true -> counts + header diagnostics only. dry_run=false -> background job."""
+    if dry_run:
+        return _sheet_repair(dry_run=True)
+    if _sheet_repair_state.get("running"):
+        return {"started": False, "reason": "already running",
+                "progress": _sheet_repair_state.get("progress", {})}
+    import threading
+    from datetime import datetime as _dt
+    _sheet_repair_state["running"] = True
+    _sheet_repair_state["started_at"] = _dt.utcnow().isoformat()
+
+    def _job():
+        try:
+            _sheet_repair(dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            _sheet_repair_state.setdefault("progress", {})["error"] = str(e)
+            logger.error(f"sheet-repair job failed: {e}")
+        finally:
+            _sheet_repair_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+@evaluator_router.get("/admin/sheet-repair")
+def sheet_repair_status(_: bool = Depends(verify_admin_key)):
+    return {
+        "running": _sheet_repair_state.get("running"),
+        "started_at": _sheet_repair_state.get("started_at"),
+        "progress": _sheet_repair_state.get("progress", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Size resolution (v6.1) — drives accurate per-size pricing
 # ---------------------------------------------------------------------------
 import re as _re
@@ -1800,6 +2063,51 @@ def _build_airtable_payload_from_session(vs: ValuationSession) -> dict:
     return payload
 
 
+_RETAIL_DOMAINS = (
+    "jumia", "kilimall", "hotpoint", "jiji", "carrefour", "naivas",
+    "electrohub", "avechi", "phoneplace", "samsung", "lg.com", "hisense",
+    "ramtons", "vonhome", "mika", "roch",
+)
+
+
+def _best_source_url(urls: list[str]) -> str:
+    """Pick the most credible retail link from grounded source URLs: prefer a
+    known retailer domain, else the first URL."""
+    for u in urls:
+        if any(d in u.lower() for d in _RETAIL_DOMAINS):
+            return u
+    return urls[0] if urls else ""
+
+
+def _extract_urls(text: str) -> list[str]:
+    return _re.findall(r"https?://[^\s)\]>\"']+", text or "")
+
+
+def _glance_summary(
+    *,
+    offer: float | None,
+    new_price: float | None,
+    new_verified: bool,
+    confidence: float | None,
+    decision: str,
+    currency: str = "KES",
+) -> str:
+    """One-line, at-a-glance summary for the top of the justification cell."""
+    parts = []
+    if offer:
+        parts.append(f"OFFER {currency} {float(offer):,.0f}")
+    if new_price:
+        tag = ""
+        if new_verified is not None:
+            tag = " (verified)" if new_verified else " (estimate)"
+        parts.append(f"new ~{currency} {float(new_price):,.0f}{tag}")
+    if confidence is not None:
+        parts.append(f"confidence {float(confidence):.0f}%")
+    if decision:
+        parts.append(f"decision: {str(decision).upper()}")
+    return "SUMMARY: " + " | ".join(parts)
+
+
 def _enrich_justification(
     *,
     base_trace: str,
@@ -1809,14 +2117,37 @@ def _enrich_justification(
     size_unit: str | None,
     size_source: str | None,
     reference_source: str,
+    opening_offer: float | None = None,
+    confidence: float | None = None,
+    decision: str = "",
+    currency: str = "KES",
 ) -> str:
-    """Append real, auditable evidence to the engine's math trace (issue #8).
+    """Build the 'AI Pricing Justification' text (issue #8).
 
-    Captures: the new-price source (verified vs estimate), Gemini/Google search
-    source URLs, the size used and how it was obtained, and which reference data
-    drove the base value. This is what gets stored in 'AI Pricing Justification'.
+    Jul 2026: starts with a one-line SUMMARY + the most credible source link so
+    the Airtable cell is readable at a glance; the full math trace and evidence
+    follow below for anyone who wants the details.
     """
-    lines: list[str] = [base_trace or "", "", "EVIDENCE & SOURCES", "-" * 50]
+    pv0 = price_verification or {}
+    _urls: list[str] = []
+    if internet_result is not None:
+        for s in (getattr(internet_result, "sources", None) or []):
+            u = s.get("url") if isinstance(s, dict) else None
+            if u:
+                _urls.append(u)
+    header = _glance_summary(
+        offer=opening_offer,
+        new_price=pv0.get("reconciled_price"),
+        new_verified=bool(pv0.get("new_price_verified")),
+        confidence=confidence,
+        decision=decision,
+        currency=currency,
+    )
+    best = _best_source_url(_urls)
+    lines: list[str] = [header]
+    if best:
+        lines.append(f"Best source: {best}")
+    lines.extend(["", "-" * 50, base_trace or "", "", "EVIDENCE & SOURCES", "-" * 50])
 
     # Size
     if size_value and size_unit:
@@ -1833,25 +2164,17 @@ def _enrich_justification(
     # New-price verification + Gemini sources
     pv = price_verification or {}
     verified = pv.get("new_price_verified")
+    num_real = pv.get("num_real_sources", 0)
     reconciled = pv.get("reconciled_price")
-    # Count only genuine NEW-price signals — trade-in intel (historical deals,
-    # expert feedback, used listings) corroborates the item but does not verify
-    # what a NEW unit costs, and must not be counted as doing so.
-    num_new_signals = sum(
-        1 for s in (pv.get("sources") or [])
-        if s.get("tier") == "new_price_signal" and not s.get("is_estimate")
-    )
     if verified:
         lines.append(
-            f"New price: VERIFIED from {max(num_new_signals, 1)} live market source(s); "
+            f"New price: VERIFIED from {num_real} real source(s); "
             f"reconciled retail = KES {float(reconciled or 0):,.0f}"
         )
     else:
-        # Do NOT claim review routing here — that decision belongs to the
-        # engine and is stated in the trace; this line only reports sourcing.
         lines.append(
             "New price: NOT VERIFIED — no live market source returned a price; "
-            "value is a category estimate."
+            "value is a category estimate and this evaluation was routed for review."
         )
 
     # List the actual source URLs Gemini grounded on (real evidence)
@@ -2306,19 +2629,21 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "confidence": 80.0,
                 }
 
-            # Airtable-derived human/AI ratio — DIAGNOSTIC ONLY (Jul 2026).
-            # It used to multiply reconciled_price, which was defensible when
-            # the blend sat near trade-in level, but reconciled is now a genuine
-            # NEW-retail price: scaling it by an offer-level ratio distorts it,
-            # and the calibrated acquisition ratios already learn the team
-            # trend at the correct (offer) layer. Applying both would
-            # double-correct. Recorded for observability, no longer applied.
+            # Learning loop: Airtable-derived human/AI ratio (never mixed inside reconcile).
             try:
                 learn_ratio = get_historical_accuracy_ratio(req.brand, req.category)
-                if learn_ratio is not None:
-                    price_verification["airtable_accuracy_ratio_observed"] = learn_ratio
+                if (
+                    learn_ratio is not None
+                    and price_verification.get("reconciled_price")
+                ):
+                    pre_airtable = float(price_verification["reconciled_price"])
+                    adjusted = _round_kes_500(pre_airtable * learn_ratio)
+                    price_verification["reconciled_price_pre_airtable_learning"] = pre_airtable
+                    price_verification["airtable_accuracy_ratio_applied"] = learn_ratio
+                    price_verification["reconciled_price"] = adjusted
                     logger.info(
-                        f"Airtable accuracy ratio (observed, not applied): {learn_ratio}"
+                        f"Airtable accuracy learning: ratio={learn_ratio} "
+                        f"reconciled KES {pre_airtable:,.0f} -> {adjusted:,.0f}"
                     )
             except Exception as ae:
                 logger.warning(f"Airtable accuracy learning skipped: {ae}")
@@ -2726,6 +3051,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             size_unit=size_unit,
             size_source=size_source,
             reference_source=reference_source,
+            opening_offer=result.opening_offer,
+            confidence=result.confidence_score,
+            decision=result.decision,
+            currency=req_currency,
         )
 
         # Airtable: backup data repository (async, non-blocking, write-only)
@@ -2774,6 +3103,28 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 "review": "Under Review",
             }
 
+            # Sheet rationale: the same at-a-glance summary + best link that
+            # tops the Airtable justification, then the Ref marker (used by
+            # dedupe/cleanup — must stay present).
+            _sheet_note_parts = [
+                _glance_summary(
+                    offer=result.opening_offer,
+                    new_price=(price_verification or {}).get("reconciled_price"),
+                    new_verified=bool((price_verification or {}).get("new_price_verified")),
+                    confidence=result.confidence_score,
+                    decision=result.decision,
+                    currency=req_currency,
+                )
+            ]
+            _best_link = _best_source_url(
+                [s.get("url") for s in (getattr(internet_result, "sources", None) or [])
+                 if isinstance(s, dict) and s.get("url")]
+            )
+            if _best_link:
+                _sheet_note_parts.append(f"Src: {_best_link}")
+            _sheet_note_parts.append(f"Ref: {str(vs.id)[:8]}")
+            _sheet_notes = " | ".join(_sheet_note_parts)[:900]
+
             def _append_sheet():
                 from greenbay_ai_evaluator.services.reference_data_service import (
                     append_tracker_row,
@@ -2786,11 +3137,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     ai_confidence=result.confidence_score,
                     customer_price=req.seller_asking_price,
                     condition=grade,
-                    # Age is TRAINING DATA for the ratio calibration — omitting
-                    # it made every live row train as the 2.0y default.
-                    age=str(req.age_years) if req.age_years is not None else "",
                     status=_status_map.get(result.decision, "Pending"),
-                    notes=f"Ref: {str(vs.id)[:8]}",
+                    notes=_sheet_notes,
                 )
 
             threading.Thread(target=_append_sheet, daemon=True).start()

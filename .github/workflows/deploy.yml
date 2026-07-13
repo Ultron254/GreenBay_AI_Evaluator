@@ -87,7 +87,6 @@ jobs:
             # skipped entirely when the repo secret is not set.
             if [ -n "${PERPLEXITY_API_KEY}" ]; then
               echo "=== Writing PERPLEXITY_API_KEY into .env ==="
-              sudo touch .env  # fresh-server safety: sed fails on a missing file
               sudo sed -i '/^PERPLEXITY_API_KEY=/d' .env
               echo "PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}" | sudo tee -a .env > /dev/null
             fi
@@ -224,6 +223,13 @@ jobs:
             else
               echo "::warning::Post-deploy smoke test did not return a priced result after 3 tries (likely transient Gemini/cold-start). Last response: $(echo "$SMOKE_RESP" | head -c 300)"
             fi
+
+            # Sweep ANY leftover ZZ probe rows (this run's or an earlier failed
+            # cleanup's) out of Airtable + the tracker sheet. Idempotent.
+            echo "=== Purging leftover test/probe rows ==="
+            ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || echo greenbay-admin-2026)"
+            curl -s --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+              "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true
 
             echo ""
             echo "=== Deploy successful ==="

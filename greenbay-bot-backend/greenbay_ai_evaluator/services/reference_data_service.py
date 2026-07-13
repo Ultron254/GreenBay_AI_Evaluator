@@ -962,6 +962,10 @@ def append_tracker_row(
                 setc("customer_price", round(float(customer_price)))
             setc("accepted", status)
             setc("notes", notes)
+            # If the sheet has a dedicated Rationale column, mirror the same
+            # at-a-glance summary there (that's where the team looks first).
+            if "rationale" in cmap and cmap.get("rationale") != cmap.get("notes"):
+                setc("rationale", notes)
             # NEVER touch internal_price / final_price (human-managed columns).
             ws.append_row(row, value_input_option="USER_ENTERED")
             _tracker_status["last_write_ok"] = _dt.now().isoformat()
@@ -1255,11 +1259,8 @@ def compute_calibrated_ratios() -> dict[str, Any]:
             "n": n,
         }
 
-    # Atomic swap: rebind instead of clear()+update() so concurrent evaluation
-    # threads iterating the dict never see it mid-mutation (RuntimeError) or
-    # momentarily empty (silent fallback to the static ratio).
-    global _calibrated_ratios
-    _calibrated_ratios = updated
+    _calibrated_ratios.clear()
+    _calibrated_ratios.update(updated)
     logger.info(
         "Calibration: learned acquisition ratios updated: "
         + ", ".join(f"{c}={v['ratio']}(n={v['n']})" for c, v in updated.items())
