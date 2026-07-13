@@ -494,6 +494,12 @@ def _find_header_index(
                     if any(n in cell for n in needles):
                         col_map[key] = cidx
                         break
+            # The live tracker's date column has a BLANK header cell, so it can
+            # never match by name — every machine-appended row was silently
+            # left dateless. If no "date" header exists but the first column is
+            # unlabeled and sits before Item, it is the date column.
+            if "date" not in col_map and col_map.get("item", 0) > 0 and not norm[0]:
+                col_map["date"] = 0
             return ridx, col_map
     return -1, {}
 

@@ -427,6 +427,32 @@ class TestTrackerHeaderDetection:
         assert cmap["item"] == 1
         assert cmap["ai_price"] == 6
 
+    def test_blank_date_header_maps_first_column(self):
+        # The LIVE tracker's date column header is a blank cell (" "), which
+        # can never match by name — this silently dropped dates from every
+        # machine-appended row. The unlabeled first column before Item must
+        # be treated as the date column.
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            _find_header_index,
+        )
+        live_header = [" ", "Item", "Model", "Condition (1-5)", "Age",
+                       "New price (estimate)", "Customer wants to trade in?",
+                       "AI Price", "Al Confidence Score",
+                       "Customer Selling Price", "Internal Team Price",
+                       "Final Price Offered", "Variance",
+                       "Accepted / Rejected", "Notes", "Rationale"]
+        hidx, cmap = _find_header_index([live_header])
+        assert hidx == 0
+        assert cmap.get("date") == 0
+        assert cmap["rationale"] == 15
+
+    def test_named_date_header_still_wins(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            _find_header_index,
+        )
+        hidx, cmap = _find_header_index([self.HEADER_FULL])
+        assert cmap.get("date") == 0  # named "Date" at position 0
+
 
 # ---------------------------------------------------------------------------
 # Acquisition ratios — tuned small/low-value appliances
