@@ -388,6 +388,9 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
             "internal_price": cell(row, "internal_price"),
             "final_price": cell(row, "final_price"),
             "accepted": cell(row, "accepted"),
+            # Notes carries the "Ref: <session>" marker — needed to correlate
+            # tracker rows with Airtable/DB records during ops verification.
+            "notes": cell(row, "notes"),
         })
     return {"count": len(rows), "rows": rows}
 
@@ -2164,17 +2167,25 @@ def _enrich_justification(
     # New-price verification + Gemini sources
     pv = price_verification or {}
     verified = pv.get("new_price_verified")
-    num_real = pv.get("num_real_sources", 0)
     reconciled = pv.get("reconciled_price")
+    # Count only genuine NEW-price signals — trade-in intel (historical deals,
+    # expert feedback, used listings) corroborates the item but does not verify
+    # what a NEW unit costs, and must not be counted as doing so.
+    num_new_signals = sum(
+        1 for s in (pv.get("sources") or [])
+        if s.get("tier") == "new_price_signal" and not s.get("is_estimate")
+    )
     if verified:
         lines.append(
-            f"New price: VERIFIED from {num_real} real source(s); "
+            f"New price: VERIFIED from {max(num_new_signals, 1)} live market source(s); "
             f"reconciled retail = KES {float(reconciled or 0):,.0f}"
         )
     else:
+        # Do NOT claim review routing here — that decision belongs to the
+        # engine and is stated in the trace; this line only reports sourcing.
         lines.append(
             "New price: NOT VERIFIED — no live market source returned a price; "
-            "value is a category estimate and this evaluation was routed for review."
+            "value is a category estimate."
         )
 
     # List the actual source URLs Gemini grounded on (real evidence)
@@ -2629,21 +2640,19 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "confidence": 80.0,
                 }
 
-            # Learning loop: Airtable-derived human/AI ratio (never mixed inside reconcile).
+            # Airtable-derived human/AI ratio — DIAGNOSTIC ONLY (Jul 2026).
+            # It used to multiply reconciled_price, which was defensible when
+            # the blend sat near trade-in level, but reconciled is now a genuine
+            # NEW-retail price: scaling it by an offer-level ratio distorts it,
+            # and the calibrated acquisition ratios already learn the team
+            # trend at the correct (offer) layer. Applying both would
+            # double-correct. Recorded for observability, no longer applied.
             try:
                 learn_ratio = get_historical_accuracy_ratio(req.brand, req.category)
-                if (
-                    learn_ratio is not None
-                    and price_verification.get("reconciled_price")
-                ):
-                    pre_airtable = float(price_verification["reconciled_price"])
-                    adjusted = _round_kes_500(pre_airtable * learn_ratio)
-                    price_verification["reconciled_price_pre_airtable_learning"] = pre_airtable
-                    price_verification["airtable_accuracy_ratio_applied"] = learn_ratio
-                    price_verification["reconciled_price"] = adjusted
+                if learn_ratio is not None:
+                    price_verification["airtable_accuracy_ratio_observed"] = learn_ratio
                     logger.info(
-                        f"Airtable accuracy learning: ratio={learn_ratio} "
-                        f"reconciled KES {pre_airtable:,.0f} -> {adjusted:,.0f}"
+                        f"Airtable accuracy ratio (observed, not applied): {learn_ratio}"
                     )
             except Exception as ae:
                 logger.warning(f"Airtable accuracy learning skipped: {ae}")
@@ -3137,6 +3146,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     ai_confidence=result.confidence_score,
                     customer_price=req.seller_asking_price,
                     condition=grade,
+                    # Age is TRAINING DATA for the ratio calibration — omitting
+                    # it made every live row train as the 2.0y default.
+                    age=str(req.age_years) if req.age_years is not None else "",
                     status=_status_map.get(result.decision, "Pending"),
                     notes=_sheet_notes,
                 )

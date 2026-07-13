@@ -87,6 +87,7 @@ jobs:
             # skipped entirely when the repo secret is not set.
             if [ -n "${PERPLEXITY_API_KEY}" ]; then
               echo "=== Writing PERPLEXITY_API_KEY into .env ==="
+              sudo touch .env  # fresh-server safety: sed fails on a missing file
               sudo sed -i '/^PERPLEXITY_API_KEY=/d' .env
               echo "PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}" | sudo tee -a .env > /dev/null
             fi
