@@ -45,6 +45,68 @@ const state = {
     chatHistory: [],
 };
 
+/* ============================================================
+ ANALYTICS (GA4, measurement id G-2REFLT805D, loaded in index.html)
+
+ Funnel events sent with gtag('event', name, params). Every event carries
+ the attribution captured on first load (utm_* from the query string,
+ document.referrer, location.href) so campaigns can be attributed. The
+ attribution lives in sessionStorage so it survives the whole wizard.
+
+ Never send names, phones or prices to GA4. The only per-event params are
+ step (integer), decision (accept | negotiate | review | reject) and
+ option (A | B | C).
+ ============================================================ */
+const GB_ATTRIBUTION_KEY = 'gb_attribution';
+const GB_ATTRIBUTION_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
+
+function captureAttribution() {
+    let stored = null;
+    try {
+        const raw = sessionStorage.getItem(GB_ATTRIBUTION_KEY);
+        if (raw) stored = JSON.parse(raw);
+    } catch (_) { stored = null; }
+
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch (_) { params = null; }
+    const hasUtm = !!params && GB_ATTRIBUTION_FIELDS.some(f => params.get(f));
+
+    // Keep the first-load capture for the whole session. Only a fresh
+    // campaign link (new utm_* in the query) replaces it.
+    if (stored && stored.landing_url && !hasUtm) return stored;
+
+    const fresh = {
+        utm_source: (params && params.get('utm_source')) || '',
+        utm_medium: (params && params.get('utm_medium')) || '',
+        utm_campaign: (params && params.get('utm_campaign')) || '',
+        utm_content: (params && params.get('utm_content')) || '',
+        referrer: (document.referrer || '').slice(0, 500),
+        landing_url: (window.location.href || '').slice(0, 2000),
+    };
+    try { sessionStorage.setItem(GB_ATTRIBUTION_KEY, JSON.stringify(fresh)); } catch (_) { /* ignore */ }
+    return fresh;
+}
+
+const attribution = captureAttribution();
+
+function trackEvent(name, params) {
+    try {
+        if (typeof window.gtag !== 'function') return;
+        const payload = Object.assign({}, attribution, params || {});
+        window.gtag('event', name, payload);
+    } catch (_) { /* analytics must never break the wizard */ }
+}
+
+/** Fire an event once per browser session (guarded by sessionStorage). */
+function trackOnce(name, params) {
+    const flag = 'gb_evt_' + name;
+    try {
+        if (sessionStorage.getItem(flag)) return;
+        sessionStorage.setItem(flag, '1');
+    } catch (_) { /* fall through and send anyway */ }
+    trackEvent(name, params);
+}
+
 // Restore from localStorage — auto-reset if previous evaluation was complete
 try {
     const saved = localStorage.getItem('gb_eval_state');
@@ -81,6 +143,8 @@ function saveState() {
  */
 function startNewEvaluation() {
     try { localStorage.removeItem('gb_eval_state'); } catch (_) { /* ignore */ }
+    // A fresh wizard run counts as a new wizard_start; attribution is kept.
+    try { sessionStorage.removeItem('gb_evt_wizard_start'); } catch (_) { /* ignore */ }
     // Preserve any access key or query params that should persist across reloads.
     window.location.href = window.location.pathname + window.location.hash;
 }
@@ -284,6 +348,7 @@ function nextStep() {
     mirrorStepToChat(state.currentStep);
 
     goToStep(next);
+    trackEvent('wizard_step', { step: next });
 
     // Chat prompt for new step
     promptNextStep(next);
@@ -333,6 +398,9 @@ function selectOption(el, field) {
     } else {
         state.answers[field] = value;
     }
+
+    // The first category choice is the start of the wizard.
+    if (field === 'category') trackOnce('wizard_start');
 
     // Enable next button
     document.getElementById('nextBtn').disabled = false;
@@ -427,6 +495,7 @@ function handlePriceInput(raw) {
 
 function selectCategoryFromLanding(cat) {
     state.answers.category = cat;
+    trackOnce('wizard_start');
     // Scroll to evaluation section
     document.getElementById('evaluate').scrollIntoView({ behavior: 'smooth' });
     setTimeout(() => {
@@ -976,6 +1045,8 @@ async function callEvaluationAPI() {
         size_unit: a.sizeUnit || null,
     };
 
+    trackEvent('evaluate_submit');
+
     try {
         const resp = await fetch(`${API_BASE}/tradein/evaluate`, {
             method: 'POST',
@@ -1054,6 +1125,19 @@ function showResults(data) {
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const gradeClass = `grade-${(data.condition_grade || 'b').toLowerCase()}`;
     const confidence = data.confidence_score || 0;
+
+    // GA4 offer_shown: report the screen the customer actually sees, which is
+    // decided below (reject screen, specialist routing, or the offer card).
+    // Demo results (backend unreachable) are not real evaluations; skip them.
+    const isDemo = String(data.session_id || '').startsWith('demo_');
+    if (!isDemo) {
+        let shownDecision = 'negotiate';
+        if (data.decision === 'reject') shownDecision = 'reject';
+        else if (confidence < 80 || data.decision === 'review') shownDecision = 'review';
+        else if (data.decision === 'accept') shownDecision = 'accept';
+        trackEvent('offer_shown', { decision: shownDecision });
+        if (shownDecision === 'review') trackEvent('human_review_routed');
+    }
 
     // HARD REJECT — product doesn't meet quality standards
     if (data.decision === 'reject') {
@@ -1429,6 +1513,7 @@ async function selectRejectionOption(option) {
 
     addChatMessage('user', `I'd like Option ${option}`);
     showTypingIndicator();
+    trackEvent('rejection_option', { option: option });
 
     try {
         if (state.sessionId) {
@@ -1610,6 +1695,7 @@ async function acceptOffer(amount) {
     addChatMessage('user', `I accept ${currency} ${formatKES(amount)}`);
 
     showTypingIndicator();
+    trackEvent('offer_accepted');
 
     // v6: Call backend accept-offer endpoint
     try {
