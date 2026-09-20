@@ -21,7 +21,10 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
-from greenbay_ai_evaluator.api.security import verify_admin_key
+from greenbay_ai_evaluator.api.security import (
+    verify_admin_key,
+    verify_readonly_or_admin_key,
+)
 from greenbay_ai_evaluator.api.schemas import (
     AcceptOfferResponse,
     CounterRequest,
@@ -99,11 +102,12 @@ evaluator_router = APIRouter()
 # GET /tradein/health/services?key=...
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/health/services")
-def health_services(_: bool = Depends(verify_admin_key)):
+def health_services(_: bool = Depends(verify_readonly_or_admin_key)):
     """Run live probes against every external dependency.
 
-    Gated by DASHBOARD_KEY (header X-Admin-Key or ?key=) so the report —
-    which can include error snippets — is not publicly exposed.
+    Gated by DASHBOARD_KEY or READONLY_DASHBOARD_KEY (header X-Admin-Key or
+    ?key=) so the report, which can include error snippets, is not
+    publicly exposed.
     """
     from greenbay_ai_evaluator.services.live_healthcheck_service import (
         run_live_healthcheck,
@@ -115,7 +119,7 @@ def health_services(_: bool = Depends(verify_admin_key)):
 def dashboard_metrics(
     days: int = 30,
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _: bool = Depends(verify_readonly_or_admin_key),
 ):
     """Pricing/performance metrics for the ops dashboard (gated)."""
     from greenbay_ai_evaluator.services.evaluator_metrics_service import (
@@ -127,7 +131,7 @@ def dashboard_metrics(
 @evaluator_router.get("/dashboard/calibration")
 def dashboard_calibration(
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _: bool = Depends(verify_readonly_or_admin_key),
 ):
     """Back-test the pricing policy against real sold prices (issue #12, gated)."""
     from greenbay_ai_evaluator.services.calibration_service import compute_calibration
@@ -347,7 +351,7 @@ def _at_empty(v) -> bool:
 
 
 @evaluator_router.get("/admin/tracker-analysis")
-def tracker_analysis(_: bool = Depends(verify_admin_key)):
+def tracker_analysis(_: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only dump of the 'Customer Initiated Evaluation' tracker rows so the
     AI vs internal/new-price accuracy can be analysed off the real numbers."""
     from greenbay_ai_evaluator.services import reference_data_service as rds
@@ -396,7 +400,7 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
 
 
 @evaluator_router.get("/admin/accuracy-report")
-def accuracy_report(_: bool = Depends(verify_admin_key)):
+def accuracy_report(_: bool = Depends(verify_readonly_or_admin_key)):
     """Measured pricing accuracy vs the internal team, plus the calibrated
     acquisition ratios currently in force. This is THE weekly number to watch:
     'within_15pct' should trend up as the calibration loop learns."""
@@ -676,7 +680,7 @@ def delete_eval_record(ref: str, _: bool = Depends(verify_admin_key)):
 
 
 @evaluator_router.get("/admin/contact-data-stats")
-def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only: do stored sessions actually carry seller name/phone? Confirms
     whether historical name/phone is recoverable for an Airtable backfill, and
     whether recent (post-wiring) evaluations are capturing it."""
@@ -708,7 +712,7 @@ def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_a
 
 
 @evaluator_router.get("/admin/airtable-audit")
-def airtable_audit(samples: int = 15, _: bool = Depends(verify_admin_key)):
+def airtable_audit(samples: int = 15, _: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only deep audit of the live Airtable base. Reports total rows, the
     empty-cell count per important column, and (the key one) the rows that HAVE a
     Model Number but are MISSING a New Price — so we can see exactly what's left."""
