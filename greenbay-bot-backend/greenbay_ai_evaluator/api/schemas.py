@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +56,51 @@ class DefectItem(BaseModel):
     @classmethod
     def sanitise_strings(cls, v: str | None) -> str | None:  # noqa: N805
         return _strip_tags(v)
+
+
+# Storage limits for the attribution fields; they match the column widths on
+# valuation_sessions (migration v630_attribution). Longer values are cut, not
+# rejected.
+ATTRIBUTION_MAX_LEN = {
+    "utm_source": 200,
+    "utm_medium": 200,
+    "utm_campaign": 200,
+    "utm_content": 200,
+    "referrer": 500,
+    "landing_url": 2000,
+}
+
+
+class EvaluationAttribution(BaseModel):
+    """Campaign attribution captured by the frontend on first load.
+
+    Every field is optional. Values are tag-stripped and truncated rather than
+    rejected: attribution is analytics metadata and must never make an
+    evaluation fail. Unknown keys are ignored for the same reason.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    utm_source: str | None = Field(None, description="utm_source from the landing query string")
+    utm_medium: str | None = Field(None, description="utm_medium from the landing query string")
+    utm_campaign: str | None = Field(None, description="utm_campaign from the landing query string")
+    utm_content: str | None = Field(None, description="utm_content from the landing query string")
+    referrer: str | None = Field(None, description="document.referrer on first load")
+    landing_url: str | None = Field(None, description="location.href on first load")
+
+    @field_validator(
+        "utm_source", "utm_medium", "utm_campaign", "utm_content", "referrer", "landing_url",
+        mode="before",
+    )
+    @classmethod
+    def sanitise(cls, v: Any, info: ValidationInfo) -> str | None:  # noqa: N805
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            v = str(v)
+        v = _strip_tags(v) or ""
+        v = v[:ATTRIBUTION_MAX_LEN.get(info.field_name or "", 200)]
+        return v or None
 
 
 class EvaluateRequest(BaseModel):
@@ -105,6 +150,11 @@ class EvaluateRequest(BaseModel):
     retail_price: float = Field(..., gt=0, le=50_000_000, description="Original retail price KES")
     retail_price_source: str = Field("", max_length=100, description="Where retail price came from")
     country: str = Field("KE", max_length=5, description="Country code: KE, UG, NG")
+    # Campaign attribution (utm_*, referrer, landing URL). Optional and additive:
+    # older clients that omit it are unaffected.
+    attribution: EvaluationAttribution | None = Field(
+        None, description="utm_* / referrer / landing_url captured by the frontend on first load",
+    )
 
     @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", "size_unit", mode="before")
     @classmethod

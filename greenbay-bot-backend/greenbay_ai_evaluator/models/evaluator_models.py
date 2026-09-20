@@ -138,6 +138,16 @@ class ValuationSession(Base):
     final_decision = Column(String(20), nullable=True)  # accept | decline
     final_offer = Column(Float, nullable=True)
 
+    # Campaign attribution captured by the web frontend on first load
+    # (v6.3, migration v630_attribution). All optional; WhatsApp-originated
+    # evaluations leave them empty.
+    utm_source = Column(String(200), nullable=True)
+    utm_medium = Column(String(200), nullable=True)
+    utm_campaign = Column(String(200), nullable=True)
+    utm_content = Column(String(200), nullable=True)
+    referrer = Column(String(500), nullable=True)
+    landing_url = Column(String(2000), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

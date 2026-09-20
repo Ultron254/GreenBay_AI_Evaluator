@@ -1929,6 +1929,54 @@ def _repressign_images_for_airtable(
     return fresh or raw_attachments
 
 
+# Airtable column names for the attribution fields, keyed by the
+# ValuationSession / EvaluationAttribution attribute that feeds them.
+_ATTRIBUTION_AIRTABLE_FIELDS = {
+    "utm_source": "UTM Source",
+    "utm_medium": "UTM Medium",
+    "utm_campaign": "UTM Campaign",
+    "utm_content": "UTM Content",
+    "referrer": "Referrer",
+    "landing_url": "Landing URL",
+}
+
+
+def _attribution_columns(req: EvaluateRequest) -> dict[str, Optional[str]]:
+    """ValuationSession column values from the request's attribution block."""
+    attr = getattr(req, "attribution", None)
+    if attr is None:
+        return {}
+    return {name: getattr(attr, name, None) or None for name in _ATTRIBUTION_AIRTABLE_FIELDS}
+
+
+def _pulse_airtable_fields(vs: ValuationSession) -> dict[str, Any]:
+    """Extra columns Pulse reads by name (EVALUATOR_CHANGES_REQUIRED.md E3).
+
+    Session ID is the same 8-character Ref that Notes carries and the tracker
+    sheet uses, so the three sources join on one token. Confidence and
+    Decision are the engine values at write time. The attribution columns come
+    from the stored session (one source for the live write and the backfill).
+    Only the two Airtable write paths that tolerate unknown columns consume
+    this dict (write_evaluation pre-filters by schema and _post_record
+    self-heals on 422), so a column missing from the base drops that value
+    and never the record.
+    """
+    out: dict[str, Any] = {
+        "Session ID": str(vs.id)[:8],
+        "Decision": vs.decision or "",
+    }
+    if vs.confidence_score is not None:
+        try:
+            out["Confidence"] = float(vs.confidence_score)
+        except (TypeError, ValueError):
+            pass
+    for attr_name, column in _ATTRIBUTION_AIRTABLE_FIELDS.items():
+        value = getattr(vs, attr_name, None)
+        if value:
+            out[column] = str(value)
+    return out
+
+
 def _build_airtable_payload(
     vs: ValuationSession,
     req: EvaluateRequest,
@@ -2016,6 +2064,10 @@ def _build_airtable_payload(
     _size_u = getattr(vs, "size_unit", None)
     if _size_v and _size_u:
         payload["Size"] = f"{_size_v:g} {_size_u}"
+    # Pulse fields (Session ID, Confidence, Decision, UTM/referrer/landing).
+    # The stored session already carries the attribution columns, so read
+    # them from vs rather than the request: one source for both writers.
+    payload.update(_pulse_airtable_fields(vs))
     return payload
 
 
@@ -2068,6 +2120,7 @@ def _build_airtable_payload_from_session(vs: ValuationSession) -> dict:
     su = getattr(vs, "size_unit", None)
     if sv and su:
         payload["Size"] = f"{sv:g} {su}"
+    payload.update(_pulse_airtable_fields(vs))
     return payload
 
 
@@ -2967,6 +3020,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 "weighted_average": comp_result.weighted_average,
                 "confidence": comp_result.confidence,
             },
+            **_attribution_columns(req),
         )
         db.add(vs)
         db.flush()  # Populate vs.id before creating ledger entries

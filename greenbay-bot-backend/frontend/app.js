@@ -1043,6 +1043,16 @@ async function callEvaluationAPI() {
         country: window.__gbCountry || 'KE',
         size_value: a.sizeValue || null,
         size_unit: a.sizeUnit || null,
+        // Campaign attribution captured on first load (see ANALYTICS above);
+        // stored on the evaluation record and mirrored to Airtable.
+        attribution: {
+            utm_source: attribution.utm_source || null,
+            utm_medium: attribution.utm_medium || null,
+            utm_campaign: attribution.utm_campaign || null,
+            utm_content: attribution.utm_content || null,
+            referrer: attribution.referrer || null,
+            landing_url: attribution.landing_url || null,
+        },
     };
 
     trackEvent('evaluate_submit');
