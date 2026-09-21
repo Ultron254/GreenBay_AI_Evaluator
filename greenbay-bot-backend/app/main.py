@@ -148,6 +148,13 @@ def _run_startup_health_check(settings) -> None:
     else:
         logger.warning("[WARN] Flowcart: webhook secret not configured")
 
+    # Admin / read-only keys (never logs a value)
+    try:
+        from greenbay_ai_evaluator.api.security import log_key_hygiene
+        log_key_hygiene()
+    except Exception as e:
+        logger.warning(f"[WARN] Admin key check: {e}")
+
     # Airtable fallback replay
     try:
         from greenbay_ai_evaluator.services.airtable_service import retry_failed_writes
@@ -472,15 +479,16 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------
     # Hidden Ops Dashboard (/app/dashboard.html?key=...)
     # -----------------------------------------------------------------
-    _DASHBOARD_KEY = os.environ.get("DASHBOARD_KEY", "greenbay-admin-2026")
-
-    def _require_dashboard_key(
-        key: str = Query("", alias="key", max_length=120),
-    ) -> str:
-        """Simple query-param gate. Not high security — prevents casual access."""
-        if not key or key != _DASHBOARD_KEY:
-            raise HTTPException(status_code=403, detail="forbidden")
-        return key
+    # The same gate as every /tradein/admin route (Sep 2026). This block used to
+    # keep its own copy of the committed default key, read once at import and
+    # compared with a plain !=, so /dashboard/recent (customer names and
+    # phones) stayed open to anyone who had read the repository. The shared
+    # gate takes ?key= or the X-Admin-Key header, compares in constant time,
+    # refuses the read-only key, and answers 503 while DASHBOARD_KEY is unset
+    # or a committed value.
+    from greenbay_ai_evaluator.api.security import (
+        verify_admin_key as _require_dashboard_key,
+    )
 
     @app.get("/dashboard/status")
     async def dashboard_status(_: str = Depends(_require_dashboard_key)):

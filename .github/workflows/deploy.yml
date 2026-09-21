@@ -68,13 +68,17 @@ jobs:
           # Session Manager access, so the deploy pipeline is the secure path
           # for getting secrets into the server's .env.
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          # Admin and read-only keys for the ops routes. Optional: when a
+          # secret is not set, the server's existing .env line is left alone.
+          DASHBOARD_KEY: ${{ secrets.DASHBOARD_KEY }}
+          READONLY_DASHBOARD_KEY: ${{ secrets.READONLY_DASHBOARD_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
-          envs: GH_TOKEN,PERPLEXITY_API_KEY
+          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY
           script: |
             set -e
             echo "=== Syncing code to origin/main ==="
@@ -98,6 +102,23 @@ jobs:
               sudo touch .env  # fresh-server safety: sed fails on a missing file
               sudo sed -i '/^PERPLEXITY_API_KEY=/d' .env
               echo "PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}" | sudo tee -a .env > /dev/null
+            fi
+            # Same upsert for the two ops keys. The app refuses every admin
+            # route (HTTP 503) while DASHBOARD_KEY is unset or a value committed
+            # to the repository, so one of these must be true before deploying:
+            # the DASHBOARD_KEY secret is set here, or the server .env already
+            # holds a private DASHBOARD_KEY. Values are never echoed.
+            if [ -n "${DASHBOARD_KEY}" ]; then
+              echo "=== Writing DASHBOARD_KEY into .env ==="
+              sudo touch .env
+              sudo sed -i '/^DASHBOARD_KEY=/d' .env
+              echo "DASHBOARD_KEY=${DASHBOARD_KEY}" | sudo tee -a .env > /dev/null
+            fi
+            if [ -n "${READONLY_DASHBOARD_KEY}" ]; then
+              echo "=== Writing READONLY_DASHBOARD_KEY into .env ==="
+              sudo touch .env
+              sudo sed -i '/^READONLY_DASHBOARD_KEY=/d' .env
+              echo "READONLY_DASHBOARD_KEY=${READONLY_DASHBOARD_KEY}" | sudo tee -a .env > /dev/null
             fi
 
             # Ensure bind-mounted host directories exist and are writable by
@@ -225,9 +246,13 @@ jobs:
               SID="$(echo "$SMOKE_RESP" | sed -n 's/.*"session_id"[: ]*"\([^"]*\)".*/\1/p' | cut -c1-8)"
               echo "Smoke OK (session ${SID}); cleaning up probe row..."
               if [ -n "$SID" ]; then
-                ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || echo greenbay-admin-2026)"
-                curl -s -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
-                  "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true
+                ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || true)"
+                if [ -z "${ADMIN_KEY}" ]; then
+                  echo "::warning::DASHBOARD_KEY is not set in the container, so the smoke-test row (ref ${SID}) was NOT deleted and admin routes answer 503. Set the DASHBOARD_KEY secret and redeploy."
+                else
+                  curl -s -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+                    "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true
+                fi
               fi
             else
               echo "::warning::Post-deploy smoke test did not return a priced result after 3 tries (likely transient Gemini/cold-start). Last response: $(echo "$SMOKE_RESP" | head -c 300)"
@@ -236,9 +261,13 @@ jobs:
             # Sweep ANY leftover ZZ probe rows (this run's or an earlier failed
             # cleanup's) out of Airtable + the tracker sheet. Idempotent.
             echo "=== Purging leftover test/probe rows ==="
-            ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || echo greenbay-admin-2026)"
-            curl -s --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
-              "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true
+            ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || true)"
+            if [ -n "${ADMIN_KEY}" ]; then
+              curl -s --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+                "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true
+            else
+              echo "::warning::DASHBOARD_KEY is not set in the container; skipped the probe-row purge."
+            fi
 
             echo ""
             echo "=== Deploy successful ==="
