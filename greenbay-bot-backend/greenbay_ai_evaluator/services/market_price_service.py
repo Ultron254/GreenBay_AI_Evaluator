@@ -29,6 +29,37 @@ class InternetPriceResult:
     confidence: float = 0.0
     raw_snippets: list[str] = field(default_factory=list)
     currency: str = "KES"
+    # WHY the lookup did or did not produce a price (Sep 2026). ``status`` is a
+    # short machine-readable token (see LOOKUP_* below), ``status_detail`` a
+    # one-line human explanation. Neither ever contains a credential.
+    status: str = ""
+    status_detail: str = ""
+    # Per-provider outcome of the dual-source lookup, filled in by
+    # search_internet_price: {"gemini": {"status", "detail"}, "sonar": {...}}.
+    providers: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Lookup outcome tokens (shared by the Gemini and Sonar lookups)
+# ---------------------------------------------------------------------------
+LOOKUP_OK = "ok"
+LOOKUP_NOT_CONFIGURED = "not_configured"   # no key / credentials: source is off
+LOOKUP_AUTH_FAILED = "auth_failed"         # could not obtain a token
+LOOKUP_HTTP_ERROR = "http_error"           # provider answered non-200
+LOOKUP_TIMEOUT = "timeout"                 # provider did not answer in time
+LOOKUP_REQUEST_FAILED = "request_failed"   # network / DNS / TLS error
+LOOKUP_BAD_RESPONSE = "bad_response"       # 200 but not the documented shape
+LOOKUP_EMPTY_ANSWER = "empty_answer"       # 200 with no text in the answer
+LOOKUP_PARSE_FAILURE = "parse_failure"     # text came back, no price readable
+LOOKUP_NULL_PRICE = "null_price"           # provider said: no price for this item
+LOOKUP_OUT_OF_BAND = "out_of_band"         # price outside the category sanity band
+
+# Outcomes that mean the PROVIDER was unreachable or broken, as opposed to the
+# provider answering "I found nothing". Only these count as an outage.
+LOOKUP_OUTAGE_STATUSES = frozenset({
+    LOOKUP_AUTH_FAILED, LOOKUP_HTTP_ERROR, LOOKUP_TIMEOUT,
+    LOOKUP_REQUEST_FAILED, LOOKUP_BAD_RESPONSE, LOOKUP_EMPTY_ANSWER,
+})
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +165,14 @@ def gemini_price_research(
         settings = get_settings()
     except Exception as e:
         logger.warning(f"Gemini price research: import/config failed: {e}")
+        result.status = LOOKUP_NOT_CONFIGURED
+        result.status_detail = f"import/config failed: {type(e).__name__}"
         return result
 
     if not settings.google_vertex_credentials_file:
         logger.warning("Gemini price research: no Vertex credentials")
+        result.status = LOOKUP_NOT_CONFIGURED
+        result.status_detail = "GOOGLE_VERTEX_CREDENTIALS_FILE not set"
         return result
 
     size_hint = _format_size_hint(size_value, size_unit)
@@ -168,6 +203,8 @@ def gemini_price_research(
         token = _get_access_token()
     except Exception as e:
         logger.warning(f"Gemini price research: auth failed: {e}")
+        result.status = LOOKUP_AUTH_FAILED
+        result.status_detail = f"could not obtain a Vertex token: {type(e).__name__}"
         return result
 
     # Build endpoint for the search-grounded model
@@ -201,6 +238,9 @@ def gemini_price_research(
 
     _GEMINI_BACKOFFS = (2, 6, 12)  # seconds; used for 429/transient retries
     _MAX_ATTEMPTS = 3
+    # Outcome of the LAST attempt, reported if no attempt yields a price.
+    result.status = LOOKUP_REQUEST_FAILED
+    result.status_detail = "no attempt completed"
     for attempt in range(_MAX_ATTEMPTS):
         try:
             import requests as _req
@@ -209,6 +249,7 @@ def gemini_price_research(
             resp = _req.post(endpoint, headers=headers, json=body, timeout=50)
         except Exception as e:
             logger.warning(f"Gemini price research: request failed (attempt {attempt+1}): {e}")
+            result.status, result.status_detail = _classify_request_exception(e)
             if attempt < _MAX_ATTEMPTS - 1:
                 time.sleep(_GEMINI_BACKOFFS[attempt])
             continue
@@ -218,6 +259,8 @@ def gemini_price_research(
                 f"Gemini price research: HTTP {resp.status_code} "
                 f"(attempt {attempt+1}): {resp.text[:200]}"
             )
+            result.status = LOOKUP_HTTP_ERROR
+            result.status_detail = f"HTTP {resp.status_code}"
             # Rate limited / quota exhausted — honor Retry-After then back off.
             if (resp.status_code == 429 or "RESOURCE_EXHAUSTED" in resp.text) and attempt < _MAX_ATTEMPTS - 1:
                 retry_after = resp.headers.get("Retry-After")
@@ -250,6 +293,8 @@ def gemini_price_research(
                 f"Gemini price research: empty text (attempt {attempt+1}, "
                 f"finishReason={finish_reason!r}) — raising token budget if MAX_TOKENS"
             )
+            result.status = LOOKUP_EMPTY_ANSWER
+            result.status_detail = f"no text in the answer (finishReason={finish_reason!r})"
         result.raw_snippets.append(text[:500])
 
         # Extract grounding sources. Vertex has shipped these under a few
@@ -298,6 +343,8 @@ def gemini_price_research(
                 price = float(parsed["new_price"])
             except (TypeError, ValueError):
                 logger.warning(f"Gemini price research: unparsable price: {parsed['new_price']}")
+                result.status = LOOKUP_PARSE_FAILURE
+                result.status_detail = "new_price was not a number"
                 continue
 
             cat_key = category.lower().strip()
@@ -307,6 +354,8 @@ def gemini_price_research(
                 result.current_resale_low = price * 0.7
                 result.current_resale_high = price * 0.95
                 result.confidence = min(75.0, 40.0 + len(result.sources) * 10.0)
+                result.status = LOOKUP_OK
+                result.status_detail = f"{len(result.sources)} sources"
                 logger.info(
                     f"Gemini price research: {product_desc} → "
                     f"{currency} {price:,.0f} (confidence {result.confidence})"
@@ -317,6 +366,8 @@ def gemini_price_research(
                     f"Gemini price research: price {price} outside sanity "
                     f"range [{lo}-{hi}] for {cat_key}, retrying..."
                 )
+                result.status = LOOKUP_OUT_OF_BAND
+                result.status_detail = f"price outside the sanity band for {cat_key}"
                 continue
         else:
             logger.warning(
@@ -324,13 +375,163 @@ def gemini_price_research(
                 f"(attempt {attempt+1}, finishReason={finish_reason!r}); "
                 f"text snippet: {text[:200]!r}"
             )
+            if text:
+                if isinstance(parsed, dict) and "new_price" in parsed:
+                    result.status = LOOKUP_NULL_PRICE
+                    result.status_detail = "the model found no price for this item"
+                else:
+                    result.status = LOOKUP_PARSE_FAILURE
+                    result.status_detail = "no JSON price in the answer"
 
     return result
 
 
 # ---------------------------------------------------------------------------
+# Shared helpers for reading a provider's answer (Sep 2026)
+# ---------------------------------------------------------------------------
+def _classify_request_exception(exc: Exception) -> tuple[str, str]:
+    """Map a transport exception to (status, detail). Only the exception TYPE
+    is reported: exception text can embed request headers or URLs."""
+    name = type(exc).__name__
+    if "timeout" in name.lower():
+        return LOOKUP_TIMEOUT, f"no answer in time ({name})"
+    return LOOKUP_REQUEST_FAILED, f"network error ({name})"
+
+
+def _redact(text: str, *secrets: str) -> str:
+    """Collapse whitespace and blank out any secret that a provider echoed."""
+    out = " ".join(str(text or "").split())
+    for secret in secrets:
+        if secret and len(secret) >= 6:
+            out = out.replace(secret, "***")
+    return out
+
+
+_SONAR_HTTP_HINTS: dict[int, str] = {
+    400: "request rejected: check PERPLEXITY_MODEL and the request parameters",
+    401: "key rejected: invalid or revoked key, or the prepaid credit balance is exhausted",
+    402: "payment required: the prepaid credit balance is exhausted",
+    403: "key not allowed to use this API or model",
+    404: "model or endpoint not found: check PERPLEXITY_MODEL",
+    429: "rate limited or quota exhausted",
+}
+
+
+def _sonar_http_detail(status_code: int, body: str, api_key: str) -> str:
+    """One line explaining a non-200 from Perplexity, safe to show in the
+    health report: status, the provider's own error message, and a hint."""
+    message = ""
+    try:
+        err = (json.loads(body) or {}).get("error")
+        if isinstance(err, dict):
+            message = str(err.get("message") or err.get("type") or "")
+        elif err:
+            message = str(err)
+    except (ValueError, AttributeError, TypeError):
+        # Not JSON (e.g. an HTML error page). Report its size, not its markup.
+        message = ""
+    hint = _SONAR_HTTP_HINTS.get(status_code) or (
+        "Perplexity server error, usually transient" if status_code >= 500 else ""
+    )
+    parts = [f"HTTP {status_code}"]
+    if message:
+        parts.append(_redact(message, api_key)[:140])
+    if hint:
+        parts.append(hint)
+    return " | ".join(parts)
+
+
+_CITATION_MARK_RE = re.compile(r"\[\d{1,3}\]")
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# A number with optional thousands separators and decimals: 42999, 42,999.00
+_AMOUNT = r"\d{1,3}(?:[, ]\d{3})+(?!\d)(?:\.\d+)?|\d+(?:\.\d+)?"
+_NEW_PRICE_FIELD_RE = re.compile(r'"new_price"\s*:\s*"?\s*(?:[A-Za-z₦/=.]{0,5}\s*)?(' + _AMOUNT + r')')
+_CURRENCY_WORDS: dict[str, str] = {
+    "KES": r"KES|KSHS?\.?|K\.?SH\.?",
+    "UGX": r"UGX|USHS?\.?",
+    "NGN": r"NGN|₦",
+}
+
+
+def _coerce_price(value: Any) -> float | None:
+    """Read a price the way providers actually write it: 42999, 42999.0,
+    "42,999", "KES 42,999", "KSh. 42,999.00", "42 999/=". None when the value
+    holds no single positive number."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    found = re.findall(_AMOUNT, str(value))
+    if len(found) != 1:
+        return None
+    try:
+        number = float(re.sub(r"[,\s]", "", found[0]))
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
+def _clean_answer_text(text: str) -> str:
+    """Drop reasoning blocks and [1]-style citation marks, which break JSON."""
+    return _CITATION_MARK_RE.sub("", _THINK_BLOCK_RE.sub("", text or "")).strip()
+
+
+def _price_from_loose_text(text: str, currency: str) -> float | None:
+    """Last-resort reader for an answer that is not valid JSON.
+
+    1. A ``"new_price": 42,999`` field whose thousands separator made the JSON
+       invalid.
+    2. Prose such as "retails at KES 42,999": accepted ONLY when every
+       currency-tagged amount in the answer is the same number. Two different
+       amounts ("was 60,000, now 45,000") are ambiguous, and an ambiguous
+       answer must never become a price.
+    """
+    m = _NEW_PRICE_FIELD_RE.search(text)
+    if m:
+        return _coerce_price(m.group(1))
+    words = _CURRENCY_WORDS.get(currency, re.escape(currency))
+    tagged = re.findall(
+        rf"(?:{words})\s*({_AMOUNT})|({_AMOUNT})\s*(?:{words})(?![A-Za-z])",
+        text, flags=re.IGNORECASE,
+    )
+    amounts = {_coerce_price(a or b) for a, b in tagged}
+    amounts.discard(None)
+    if len(amounts) == 1:
+        return amounts.pop()
+    return None
+
+
+def _read_price_answer(text: str, currency: str) -> tuple[float | None, str, str, dict]:
+    """Turn a provider's text answer into (price, status, detail, parsed_json).
+
+    Pure function (no network), so every answer shape seen in production can be
+    pinned by a unit test.
+    """
+    cleaned = _clean_answer_text(text)
+    if not cleaned:
+        return None, LOOKUP_EMPTY_ANSWER, "the answer contained no text", {}
+    parsed = _extract_json_from_text(cleaned)
+    if isinstance(parsed, dict) and "new_price" in parsed:
+        raw = parsed.get("new_price")
+        if raw is None or (isinstance(raw, str) and raw.strip().lower() in ("", "null", "none", "n/a")):
+            return None, LOOKUP_NULL_PRICE, "the model found no price for this item", parsed
+        price = _coerce_price(raw)
+        if price is None:
+            return None, LOOKUP_PARSE_FAILURE, "new_price was not a readable number", parsed
+        return price, LOOKUP_OK, "json", parsed
+    price = _price_from_loose_text(cleaned, currency)
+    if price is not None:
+        return price, LOOKUP_OK, "read from a non-JSON answer", {}
+    return None, LOOKUP_PARSE_FAILURE, "no price could be read from the answer", {}
+
+
+# ---------------------------------------------------------------------------
 # Perplexity Sonar (v6.3) — second independent grounded new-price source
 # ---------------------------------------------------------------------------
+_SONAR_ENDPOINT = "https://api.perplexity.ai/chat/completions"
+_SONAR_DEFAULT_MODEL = "sonar"
+
+
 def sonar_price_research(
     *,
     brand: str,
@@ -345,30 +546,47 @@ def sonar_price_research(
     single-source lookups were the main cause of new-price noise (same model
     priced 35,500 one day and 63,999 the next).
 
-    Requires PERPLEXITY_API_KEY; silently returns an empty result when it is
-    not configured, so the system degrades to Gemini-only."""
+    Requires PERPLEXITY_API_KEY; returns an empty result (status
+    ``not_configured``) when it is not set, so the system degrades to
+    Gemini-only. Every other way of returning no price sets ``status`` and
+    ``status_detail`` so the health probe can say WHY (Sep 2026: production
+    reported "Sonar returned NO price" for weeks with no way to tell a dead
+    key from a parse failure)."""
     result = InternetPriceResult()
     country_name = _COUNTRY_NAMES.get(country, "Kenya")
     currency = _COUNTRY_CURRENCIES.get(country, "KES")
     result.currency = currency
 
+    sonar_model = _SONAR_DEFAULT_MODEL
     try:
         from app.config import get_settings
-        api_key = getattr(get_settings(), "perplexity_api_key", None) or ""
+        _settings = get_settings()
+        api_key = (getattr(_settings, "perplexity_api_key", None) or "").strip()
+        sonar_model = (getattr(_settings, "perplexity_model", "") or "").strip() or _SONAR_DEFAULT_MODEL
     except Exception:  # noqa: BLE001
         api_key = ""
     if not api_key:
+        result.status = LOOKUP_NOT_CONFIGURED
+        result.status_detail = "PERPLEXITY_API_KEY not set"
         return result
 
     size_hint = _format_size_hint(size_value, size_unit)
+    # Demand a size match only when a size is known. With "Size/capacity:
+    # unknown" the old wording ("MUST match exactly") steered the model to
+    # answer null for any item whose size the customer did not give.
+    size_rule = (
+        "The size/capacity MUST match exactly. " if size_hint
+        else "If the model number identifies one specific product, price that product. "
+    )
     prompt = (
         f"Find the current NEW retail price in {country_name} of this exact "
         f"appliance: Brand: {brand or 'unknown'}; Model: {model or 'unknown'}; "
         f"Size/capacity: {size_hint or 'unknown'}; Category: {category}. "
         f"Check mainstream {country_name} retailers (Jumia, Kilimall, brand "
-        f"stores, electronics shops). The size/capacity MUST match exactly. "
+        f"stores, electronics shops). {size_rule}"
         f"Respond with ONLY a JSON object: "
-        f'{{"new_price": <number in {currency}>, "currency": "{currency}", '
+        f'{{"new_price": <plain number in {currency}, no thousands separators>, '
+        f'"currency": "{currency}", '
         f'"matched_product": "<exact product you priced>"}}. '
         f'If no price for this specific model/size exists, return {{"new_price": null}}.'
     )
@@ -376,35 +594,63 @@ def sonar_price_research(
     try:
         import requests as _req
         resp = _req.post(
-            "https://api.perplexity.ai/chat/completions",
+            _SONAR_ENDPOINT,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": "sonar",
+                "model": sonar_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 500,
             },
             timeout=45,
         )
+    except Exception as e:  # noqa: BLE001
+        result.status, result.status_detail = _classify_request_exception(e)
+        # Type only: the exception text can carry the Authorization header.
+        logger.warning(f"Sonar price research failed: {result.status_detail}")
+        return result
+
+    try:
         if resp.status_code != 200:
-            logger.warning(f"Sonar price research: HTTP {resp.status_code}: {resp.text[:200]}")
+            result.status = LOOKUP_HTTP_ERROR
+            result.status_detail = _sonar_http_detail(resp.status_code, resp.text, api_key)
+            logger.warning(f"Sonar price research: {result.status_detail}")
             return result
-        data = resp.json()
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        parsed = _extract_json_from_text(text) or {}
-        price = parsed.get("new_price")
+        try:
+            data = resp.json()
+            message = ((data.get("choices") or [{}])[0] or {}).get("message") or {}
+            text = message.get("content") or ""
+            if isinstance(text, list):  # content parts: [{"type":"text","text":...}]
+                text = "".join(
+                    str(part.get("text", "")) for part in text if isinstance(part, dict)
+                )
+        except Exception as e:  # noqa: BLE001
+            result.status = LOOKUP_BAD_RESPONSE
+            result.status_detail = f"HTTP 200 but not the documented JSON shape ({type(e).__name__})"
+            logger.warning(f"Sonar price research: {result.status_detail}")
+            return result
+
+        price, status, detail, parsed = _read_price_answer(str(text), currency)
         if price is None:
+            result.status, result.status_detail = status, detail
+            result.raw_snippets.append(f"sonar_answer: {_redact(text, api_key)[:200]}")
+            logger.warning(
+                f"Sonar price research: no price [{status}] {detail}; "
+                f"answer: {_redact(text, api_key)[:200]!r}"
+            )
             return result
-        price = float(str(price).replace(",", ""))
+
         lo, hi = _sanity_band_for(category.lower().strip(), currency)
         if not (lo <= price <= hi):
-            logger.warning(
-                f"Sonar price research: {price} {currency} outside sanity band "
-                f"[{lo:,.0f}, {hi:,.0f}] for {category} — discarded"
+            result.status = LOOKUP_OUT_OF_BAND
+            result.status_detail = (
+                f"{price:,.0f} {currency} outside the sanity band "
+                f"[{lo:,.0f}, {hi:,.0f}] for {category}"
             )
+            logger.warning(f"Sonar price research: {result.status_detail} — discarded")
             return result
         result.launch_price = price
         result.confidence = 60.0
@@ -425,9 +671,14 @@ def sonar_price_research(
                 break
         if parsed.get("matched_product"):
             result.raw_snippets.append(f"sonar_matched: {parsed['matched_product']}")
+        result.status = LOOKUP_OK
+        result.status_detail = f"{len(result.sources)} citations ({detail})"
         logger.info(f"Sonar price research: {price} {currency} for {brand} {model}")
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"Sonar price research failed: {e}")
+        result.launch_price = None
+        result.status = LOOKUP_BAD_RESPONSE
+        result.status_detail = f"unexpected error reading the answer ({type(e).__name__})"
+        logger.warning(f"Sonar price research failed: {result.status_detail}")
     return result
 
 
@@ -482,6 +733,13 @@ def search_internet_price(
         size_value=size_value, size_unit=size_unit,
     )
 
+    providers = {
+        "gemini": {"status": gemini.status, "detail": gemini.status_detail},
+        "sonar": {"status": sonar.status, "detail": sonar.status_detail},
+    }
+    gemini.providers = providers
+    sonar.providers = providers
+
     combined, how = combine_new_price_signals(gemini.launch_price, sonar.launch_price)
     if combined is None:
         return gemini  # preserves gemini's currency/snippets even when empty
@@ -504,6 +762,26 @@ def search_internet_price(
         )
     logger.info(f"New-price lookup [{how}]: {combined} for {brand} {model}")
     return result
+
+
+def internet_lookup_outage(result: InternetPriceResult | None) -> str:
+    """"" unless the new-price lookup was DOWN: every configured provider
+    failed for an infrastructure reason (HTTP error, timeout, auth...). A
+    provider that answered "no price for this item" is an answer, not an
+    outage. Returns a short description for the pricing justification."""
+    if result is None or result.launch_price:
+        return ""
+    configured = {
+        name: p for name, p in (result.providers or {}).items()
+        if p.get("status") != LOOKUP_NOT_CONFIGURED
+    }
+    if not configured:
+        return ""
+    if all(p.get("status") in LOOKUP_OUTAGE_STATUSES for p in configured.values()):
+        return "; ".join(
+            f"{name}: {p.get('status')} ({p.get('detail')})" for name, p in sorted(configured.items())
+        )
+    return ""
 
 
 # ---------------------------------------------------------------------------

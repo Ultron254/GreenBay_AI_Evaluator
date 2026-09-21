@@ -92,15 +92,29 @@ def _probe_vertex_gemini() -> tuple[bool, str]:
     return False, f"HTTP {resp.status_code}: {resp.text[:160]}"
 
 
+# The probes price one well-known product and pass its size, exactly as a real
+# evaluation does: both prompts insist on a size match, so a probe with no size
+# nudges the model towards answering "no price".
+_PROBE_PRODUCT = dict(
+    brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
+    size_value=43, size_unit="inch",
+)
+
+
 def _probe_gemini_search_grounding() -> tuple[bool, str]:
-    """Probe the exact path used for the NEW-PRICE lookup (googleSearch tool)."""
-    from greenbay_ai_evaluator.services.market_price_service import search_internet_price
-    res = search_internet_price(
-        brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
-    )
+    """Probe the Gemini half of the NEW-PRICE lookup (googleSearch tool).
+
+    Calls Gemini alone. It used to call search_internet_price, which merges
+    Gemini with Sonar, so a working Sonar could mask a dead Gemini (and the
+    Sonar key was billed twice per health-check)."""
+    from greenbay_ai_evaluator.services.market_price_service import gemini_price_research
+    res = gemini_price_research(**_PROBE_PRODUCT)
     if res.launch_price and res.launch_price > 0:
         return True, f"OK — grounded price KES {res.launch_price:,.0f} from {len(res.sources)} sources"
-    return False, "Gemini search grounding returned NO price (would silently fall back to a guess)"
+    return False, (
+        f"Gemini search grounding returned NO price [{res.status or 'unknown'}] "
+        f"{res.status_detail} (would silently fall back to a guess)"
+    )
 
 
 def _probe_perplexity_sonar() -> tuple[bool, str]:
@@ -109,23 +123,26 @@ def _probe_perplexity_sonar() -> tuple[bool, str]:
     Optional dependency: when PERPLEXITY_API_KEY is not set the system runs
     Gemini-only by design, so 'not configured' reports ok=True and simply says
     so. When the key IS set, run a real product lookup end to end (auth, JSON
-    parsing, sanity band) — a wrong/expired key must show up here loudly."""
+    parsing, sanity band) — a wrong/expired key must show up here loudly.
+
+    The detail names the cause (Sep 2026): the HTTP status and Perplexity's own
+    error message, a timeout, an empty answer, a parse failure, or a price
+    outside the sanity band. It never contains the key."""
     from app.config import get_settings
     api_key = getattr(get_settings(), "perplexity_api_key", None) or ""
-    if not api_key:
+    if not api_key.strip():
         return True, "PERPLEXITY_API_KEY not set — running Gemini-only (optional)"
     from greenbay_ai_evaluator.services.market_price_service import sonar_price_research
-    res = sonar_price_research(
-        brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
-    )
+    res = sonar_price_research(**_PROBE_PRODUCT)
     if res.launch_price and res.launch_price > 0:
         return True, (
             f"OK — Sonar grounded price KES {res.launch_price:,.0f} "
             f"({len(res.sources)} citations); dual-source cross-check ACTIVE"
         )
+    # Cause first: consumers (Pulse's Sentinel) keep the first 300 characters.
     return False, (
-        "Sonar returned NO price — check the key/credits "
-        "(evaluations still work Gemini-only)"
+        f"Sonar returned NO price [{res.status or 'unknown'}] {res.status_detail} "
+        f"(evaluations still work Gemini-only)"
     )
 
 

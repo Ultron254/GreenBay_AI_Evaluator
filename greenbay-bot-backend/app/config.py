@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # Perplexity Sonar (second grounded new-price source, cross-checks Gemini)
     perplexity_api_key: Optional[str] = Field(default=None, env="PERPLEXITY_API_KEY", repr=False)
+    # Model name sent to Perplexity. A setting so that a model retirement is an
+    # environment change, not a code change and a deploy.
+    perplexity_model: str = Field(default="sonar", env="PERPLEXITY_MODEL")
     
     # Google Cloud Vision API (for Google Lens product identification)
     google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY", repr=False)
