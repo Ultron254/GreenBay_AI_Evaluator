@@ -35,9 +35,17 @@ jobs:
           python-version: '3.12'
 
       - name: Install test dependencies
-        # The deterministic engine/service tests only need loguru + pytest
-        # (config is pure constants; gspread/google clients are imported lazily).
-        run: pip install pytest pytest-asyncio loguru pydantic
+        # The engine/service tests need loguru + pytest + pydantic. The API
+        # tests (read-only key, attribution, phone, admin-key guard) import the
+        # real router and schemas, so they also need fastapi with its TestClient
+        # (httpx), python-multipart (the router declares Form fields),
+        # sqlalchemy and pydantic-settings. Everything else (gspread, google
+        # clients, boto3, requests) is imported lazily or faked by the tests.
+        # Without these the gate fails at collection and blocks every deploy.
+        run: >-
+          pip install pytest pytest-asyncio loguru pydantic
+          "fastapi>=0.115.0,<1.0" "httpx>=0.27.0,<1.0" python-multipart
+          "sqlalchemy>=2.0.0,<3.0" "pydantic-settings>=2.7.0,<3.0"
 
       - name: Run pytest
         run: python -m pytest greenbay_ai_evaluator/tests/ -q
