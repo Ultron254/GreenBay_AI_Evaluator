@@ -7,8 +7,37 @@
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+      // A URL can carry anything: the ops dashboard is opened as
+      // dashboard.html?key=<admin key>, and a link sent to a customer could
+      // carry a name or a phone. GA4 records page_location and page_referrer
+      // on every hit, so both are cleaned BEFORE the first hit. Landing URL:
+      // path plus campaign tags and ad-click ids only. Referrer: path only.
+      // THE SAME ALLOW-LIST LIVES IN greenbay_ai_evaluator/api/schemas.py
+      // (ATTRIBUTION_QUERY_ALLOWLIST). app.js reuses this function.
+      window.gbCleanUrl = function (url, keepQuery) {
+        var allow = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+                     'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'msclkid'];
+        if (!url) return '';
+        try {
+          var u = new URL(url, window.location.href);
+          var out = u.protocol + '//' + u.host + u.pathname;
+          if (!keepQuery) return out;
+          var kept = new URLSearchParams();
+          u.searchParams.forEach(function (v, k) {
+            if (v && allow.indexOf(k.toLowerCase()) !== -1) kept.append(k, v);
+          });
+          var q = kept.toString();
+          var hash = /^#[A-Za-z0-9_\-]{0,64}$/.test(u.hash) ? u.hash : '';
+          return out + (q ? '?' + q : '') + hash;
+        } catch (e) {
+          return String(url).split(/[?#]/)[0];
+        }
+      };
       gtag('js', new Date());
-      gtag('config', 'G-2REFLT805D');
+      gtag('config', 'G-2REFLT805D', {
+        page_location: window.gbCleanUrl(window.location.href, true),
+        page_referrer: window.gbCleanUrl(document.referrer, false)
+      });
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">

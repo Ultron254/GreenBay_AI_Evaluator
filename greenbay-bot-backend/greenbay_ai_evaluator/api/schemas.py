@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -135,6 +136,48 @@ ATTRIBUTION_MAX_LEN = {
 }
 
 
+# Query parameters that may be kept on a stored landing URL: campaign tags and
+# ad-click ids. Everything else is dropped, because a URL can carry anything:
+# the ops dashboard is opened as dashboard.html?key=<admin key>, and a link in
+# a message to a customer could carry a name or a phone. THE SAME LIST LIVES IN
+# frontend/index.html (gbCleanUrl), which cleans what is sent to GA4.
+ATTRIBUTION_QUERY_ALLOWLIST = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "utm_id",
+    "gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid",
+})
+_SIMPLE_FRAGMENT_RE = re.compile(r"[A-Za-z0-9_\-]{0,64}")
+
+
+def clean_attribution_url(url: str | None, *, keep_query: bool) -> str | None:
+    """Reduce a URL to what attribution needs and nothing personal or secret.
+
+    Landing URL (*keep_query* True): scheme, host, path, allow-listed query
+    parameters, and a simple fragment such as ``#evaluate``. Referrer
+    (*keep_query* False): scheme, host and path only. User-info
+    (``user:pass@``) is always dropped. Never raises; an unparsable value is
+    cut at the first ``?`` or ``#``.
+    """
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        query = ""
+        fragment = ""
+        if keep_query:
+            query = urlencode([
+                (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=False)
+                if k.lower() in ATTRIBUTION_QUERY_ALLOWLIST
+            ])
+            if _SIMPLE_FRAGMENT_RE.fullmatch(parts.fragment or ""):
+                fragment = parts.fragment
+        return urlunsplit((parts.scheme, host, parts.path, query, fragment)) or None
+    except ValueError:
+        return re.split(r"[?#]", url, maxsplit=1)[0] or None
+
+
 class EvaluationAttribution(BaseModel):
     """Campaign attribution captured by the frontend on first load.
 
@@ -163,6 +206,12 @@ class EvaluationAttribution(BaseModel):
         if not isinstance(v, str):
             v = str(v)
         v = _strip_tags(v) or ""
+        # Defence in depth: the frontend cleans these too, but a cached older
+        # app.js (or any other client) sends the raw URL.
+        if info.field_name == "referrer":
+            v = clean_attribution_url(v, keep_query=False) or ""
+        elif info.field_name == "landing_url":
+            v = clean_attribution_url(v, keep_query=True) or ""
         v = v[:ATTRIBUTION_MAX_LEN.get(info.field_name or "", 200)]
         return v or None
 

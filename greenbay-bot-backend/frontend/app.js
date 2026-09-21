@@ -55,10 +55,24 @@ const state = {
 
  Never send names, phones or prices to GA4. The only per-event params are
  step (integer), decision (accept | negotiate | review | reject) and
- option (A | B | C).
+ option (A | B | C). URLs are cleaned with window.gbCleanUrl (index.html)
+ before they are stored or sent: the landing URL keeps only campaign tags and
+ ad-click ids, the referrer keeps no query string at all. trackEvent drops
+ any parameter that is not on GB_EVENT_PARAMS, so a future call site cannot
+ leak a field by accident.
  ============================================================ */
 const GB_ATTRIBUTION_KEY = 'gb_attribution';
 const GB_ATTRIBUTION_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
+
+// Parameters an event may carry, and the longest value GA4 keeps (100 chars).
+const GB_EVENT_PARAMS = ['step', 'decision', 'option'];
+
+function cleanUrl(url, keepQuery) {
+    try {
+        if (typeof window.gbCleanUrl === 'function') return window.gbCleanUrl(url, keepQuery);
+    } catch (_) { /* fall through */ }
+    return String(url || '').split(/[?#]/)[0];   // no cleaner: keep the path only
+}
 
 function captureAttribution() {
     let stored = null;
@@ -66,6 +80,11 @@ function captureAttribution() {
         const raw = sessionStorage.getItem(GB_ATTRIBUTION_KEY);
         if (raw) stored = JSON.parse(raw);
     } catch (_) { stored = null; }
+    if (stored) {
+        // A capture made before URL cleaning shipped is cleaned on read.
+        stored.referrer = cleanUrl(stored.referrer, false);
+        stored.landing_url = cleanUrl(stored.landing_url, true);
+    }
 
     let params;
     try { params = new URLSearchParams(window.location.search); } catch (_) { params = null; }
@@ -80,8 +99,8 @@ function captureAttribution() {
         utm_medium: (params && params.get('utm_medium')) || '',
         utm_campaign: (params && params.get('utm_campaign')) || '',
         utm_content: (params && params.get('utm_content')) || '',
-        referrer: (document.referrer || '').slice(0, 500),
-        landing_url: (window.location.href || '').slice(0, 2000),
+        referrer: cleanUrl(document.referrer, false).slice(0, 500),
+        landing_url: cleanUrl(window.location.href, true).slice(0, 2000),
     };
     try { sessionStorage.setItem(GB_ATTRIBUTION_KEY, JSON.stringify(fresh)); } catch (_) { /* ignore */ }
     return fresh;
@@ -92,7 +111,12 @@ const attribution = captureAttribution();
 function trackEvent(name, params) {
     try {
         if (typeof window.gtag !== 'function') return;
-        const payload = Object.assign({}, attribution, params || {});
+        const payload = Object.assign({}, attribution);
+        GB_EVENT_PARAMS.forEach(k => {
+            if (params && params[k] !== undefined && params[k] !== null) {
+                payload[k] = typeof params[k] === 'number' ? params[k] : String(params[k]).slice(0, 100);
+            }
+        });
         window.gtag('event', name, payload);
     } catch (_) { /* analytics must never break the wizard */ }
 }
@@ -1540,6 +1564,9 @@ function showRejectionOptions() {
     const resultsStep = document.getElementById('stepResults');
     const existing = resultsStep.querySelector('.rejection-options-area');
     if (existing) return;
+    // GA4: the customer turned the offer down. Sent once per offer (the guard
+    // above); the option they then pick is sent as rejection_option.
+    trackEvent('offer_declined');
 
     const optionsDiv = document.createElement('div');
     optionsDiv.className = 'rejection-options-area';

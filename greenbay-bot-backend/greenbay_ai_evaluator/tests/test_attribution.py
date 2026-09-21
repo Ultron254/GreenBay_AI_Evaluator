@@ -65,13 +65,44 @@ class TestEvaluateRequestAttribution:
         assert req.attribution.referrer is None
 
     def test_tags_stripped_and_long_values_truncated_not_rejected(self):
-        long_url = "https://example.com/?q=" + ("x" * 5000)
+        long_url = "https://example.com/" + ("x" * 5000)
         attr = EvaluationAttribution(
             utm_source="<script>alert(1)</script>google",
             landing_url=long_url,
         )
         assert attr.utm_source == "alert(1)google"
         assert len(attr.landing_url) == ATTRIBUTION_MAX_LEN["landing_url"]
+
+    def test_referrer_keeps_no_query_or_fragment(self):
+        # The ops dashboard is opened as dashboard.html?key=<admin key>; a click
+        # through to the wizard must not store (or send to GA4) that key.
+        attr = EvaluationAttribution(
+            referrer="https://evaluate.greenbay.market/app/dashboard.html?key=SECRETKEY#x")
+        assert attr.referrer == "https://evaluate.greenbay.market/app/dashboard.html"
+        assert EvaluationAttribution(
+            referrer="https://www.google.com/search?q=sell+my+fridge+0712345678"
+        ).referrer == "https://www.google.com/search"
+
+    def test_landing_url_keeps_only_campaign_parameters(self):
+        attr = EvaluationAttribution(landing_url=(
+            "https://evaluate.greenbay.market/app/?utm_source=facebook&utm_campaign=sept%20tv"
+            "&fbclid=abc123&phone=0712345678&name=John+Maina&key=SECRETKEY#evaluate"))
+        assert attr.landing_url == (
+            "https://evaluate.greenbay.market/app/?utm_source=facebook&utm_campaign=sept+tv"
+            "&fbclid=abc123#evaluate")
+        for leaked in ("0712345678", "John", "SECRETKEY"):
+            assert leaked not in attr.landing_url
+
+    def test_landing_url_drops_userinfo_and_odd_fragments(self):
+        from greenbay_ai_evaluator.api.schemas import clean_attribution_url
+        assert clean_attribution_url(
+            "https://user:pass@example.com:8443/a?gclid=1#name=John", keep_query=True,
+        ) == "https://example.com:8443/a?gclid=1"
+        assert clean_attribution_url("", keep_query=True) is None
+        assert clean_attribution_url(None, keep_query=False) is None
+        assert clean_attribution_url("android-app://com.google.android.gm/", keep_query=False) \
+            == "android-app://com.google.android.gm/"
+        assert clean_attribution_url("http://[bad?x=1", keep_query=True) == "http://[bad"
 
     def test_unknown_attribution_keys_are_ignored_not_fatal(self):
         req = EvaluateRequest(**_minimal_body(attribution={
