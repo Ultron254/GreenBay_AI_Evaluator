@@ -336,6 +336,13 @@ function isStepValid(step) {
 
 function nextStep() {
     if (state.currentStep === TOTAL_STEPS) {
+        // The offer is only shown to a customer we can call back. A session
+        // restored from localStorage can hold a phone saved under older,
+        // looser rules, so check again before submitting.
+        if (!isStepValid(9)) {
+            returnToContactStep();
+            return;
+        }
         startAnalysis();
         return;
     }
@@ -454,14 +461,66 @@ function handleCustomBrand(value) {
     }
 }
 
-// Accepts local (0712345678 / 0112345678), bare (712345678) and international
-// (+254712345678) formats once spaces/dashes/parentheses are removed.
+// Seller phone rules. THE SAME RULES LIVE IN normalise_phone() in
+// greenbay_ai_evaluator/api/schemas.py, which rejects (HTTP 422) anything this
+// function rejects. Change both together, or valid customers lose their
+// evaluation. Returns the stored form (country code + national number, digits
+// only, e.g. 254712345678) or null.
+//   Kenya: 0712345678, 0112345678, 712345678, +254712345678, 254712345678,
+//          00254712345678, +254 0712 345 678, with spaces / dashes / dots.
+//   Uganda (256) and Nigeria (234): the same shapes; a number written locally
+//          is read with the detected country (default Kenya).
+//   Anywhere else: international form only, 8 to 15 digits: + or 00 prefix,
+//          or 11+ digits with no leading 0.
+const PHONE_RULES = {
+    KE: ['254', '[17]\\d{8}'],
+    UG: ['256', '[2-9]\\d{8}'],
+    NG: ['234', '[789][01]\\d{8}'],
+};
+
+function normalisePhone(raw, country) {
+    if (raw === null || raw === undefined) return null;
+    let text = String(raw).replace(/<[^>]+>/g, '').trim().replace(/[\s\-().]/g, '');
+    let international = false;
+    if (text.startsWith('+')) { international = true; text = text.slice(1); }
+    else if (text.startsWith('00')) { international = true; text = text.slice(2); }
+    if (!/^[0-9]+$/.test(text)) return null;
+
+    // A number that carries one of our calling codes must fit that country.
+    for (const key of Object.keys(PHONE_RULES)) {
+        const [code, national] = PHONE_RULES[key];
+        if (text.startsWith(code) && (international || text.length > 10)) {
+            const m = new RegExp(`^${code}0?(${national})$`).exec(text);
+            return m ? code + m[1] : null;
+        }
+    }
+    // 11+ digits with no leading 0 cannot be a local KE/UG/NG number: it is a
+    // full international number written without the "+".
+    if (international || (text.length >= 11 && !text.startsWith('0'))) {
+        return (text.length >= 8 && text.length <= 15 && !text.startsWith('0')) ? text : null;
+    }
+    const rule = PHONE_RULES[String(country || 'KE').toUpperCase().trim()] || PHONE_RULES.KE;
+    const m = new RegExp(`^0?(${rule[1]})$`).exec(text);
+    return m ? rule[0] + m[1] : null;
+}
+
 function isValidPhone(raw) {
-    if (!raw) return false;
-    const cleaned = String(raw).replace(/[\s\-()]/g, '');
-    return /^\+\d{9,15}$/.test(cleaned) ||   // +<country><number>
-           /^0\d{8,11}$/.test(cleaned)  ||   // local, leading 0
-           /^\d{9,12}$/.test(cleaned);       // bare national number
+    return normalisePhone(raw, window.__gbCountry || 'KE') !== null;
+}
+
+// Send the customer back to the contact step with the inline message showing.
+// Used when a restored session holds a phone the current rules reject, and
+// when the backend answers 422 for the phone.
+function returnToContactStep() {
+    document.getElementById('wizardFooter').classList.remove('hidden');
+    goToStep(9);
+    const err = document.getElementById('phoneError');
+    if (err) err.style.display = 'block';
+    const input = document.getElementById('sellerPhoneInput');
+    if (input) {
+        input.value = state.answers.sellerPhone || '';
+        input.focus();
+    }
 }
 
 function updateAnswer(field, value) {
@@ -1064,6 +1123,17 @@ async function callEvaluationAPI() {
             body: JSON.stringify(payload),
         });
 
+        if (resp.status === 422) {
+            // The backend refused the request. If it is the phone, ask for it
+            // again; never fall through to a demo offer for a real customer.
+            let detail = '';
+            try { detail = JSON.stringify((await resp.json()).detail || ''); } catch (_) { /* ignore */ }
+            if (/phone/i.test(detail)) {
+                addChatMessage('bot', 'I need a valid phone number before I can show your offer, e.g. 0712 345 678.');
+                returnToContactStep();
+                return;
+            }
+        }
         if (!resp.ok) {
             throw new Error(`API error: ${resp.status}`);
         }

@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,70 @@ def _strip_tags(v: str | None) -> str | None:
     if v is None:
         return v
     return _TAG_RE.sub("", v).strip()
+
+
+# ---------------------------------------------------------------------------
+# Seller phone (Sep 2026): required, validated, stored normalised
+# ---------------------------------------------------------------------------
+# An accepted offer without a phone is not a lead anybody can call, and the
+# same customer typed three ways used to be stored as three different numbers.
+# Stored form: country code + national number, digits only, no "+", e.g.
+# 254712345678. THE SAME RULES LIVE IN frontend/app.js (normalisePhone): the
+# wizard must never submit a phone this function rejects, because a rejected
+# submission is a lost evaluation. Change both together.
+PHONE_ERROR_MESSAGE = (
+    "Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678."
+)
+
+# country -> (calling code, national number pattern WITHOUT the leading 0)
+_PHONE_RULES: dict[str, tuple[str, str]] = {
+    "KE": ("254", r"[17]\d{8}"),        # 07XX XXX XXX and 01XX XXX XXX
+    "UG": ("256", r"[2-9]\d{8}"),
+    "NG": ("234", r"[789][01]\d{8}"),
+}
+_PHONE_SEPARATORS_RE = re.compile(r"[\s\-().]")
+
+
+def normalise_phone(raw: Any, country: str = "KE") -> str | None:
+    """Return the stored form of a seller phone, or None when it is not valid.
+
+    Accepted, with spaces, dashes, dots or parentheses anywhere:
+      - Kenya:   0712345678, 0112345678, 712345678, +254712345678,
+                 254712345678, 00254712345678, +254 0712 345 678
+                 -> 254712345678
+      - Uganda / Nigeria: the same shapes with 256 / 234. A number written
+        locally (leading 0 or bare) is read with *country*, which defaults to
+        Kenya.
+      - Any other country: international form only, 8 to 15 digits, stored
+        as the digits: with a + or 00 prefix, or 11+ digits with no leading 0
+        (a WhatsApp sender id).
+    """
+    if raw is None:
+        return None
+    text = _PHONE_SEPARATORS_RE.sub("", _strip_tags(str(raw)) or "")
+    international = False
+    if text.startswith("+"):
+        international, text = True, text[1:]
+    elif text.startswith("00"):
+        international, text = True, text[2:]
+    if not text.isdigit() or not text.isascii():
+        return None
+
+    # A number that carries one of our calling codes must fit that country.
+    for code, national in _PHONE_RULES.values():
+        if text.startswith(code) and (international or len(text) > 10):
+            m = re.fullmatch(rf"{code}0?({national})", text)
+            return f"{code}{m.group(1)}" if m else None
+
+    # 11+ digits with no leading 0 cannot be a local number in KE/UG/NG, so it
+    # is a full international number written without the "+". This is how the
+    # WhatsApp caller (app/webhooks/flowcart.py) sends the sender's id.
+    if international or (len(text) >= 11 and not text.startswith("0")):
+        return text if 8 <= len(text) <= 15 and not text.startswith("0") else None
+
+    code, national = _PHONE_RULES.get((country or "KE").upper().strip(), _PHONE_RULES["KE"])
+    m = re.fullmatch(rf"0?({national})", text)
+    return f"{code}{m.group(1)}" if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +204,15 @@ class EvaluateRequest(BaseModel):
     defects: list[DefectItem] = Field(default_factory=list, max_length=20)
     seller_asking_price: float | None = Field(None, ge=0, le=50_000_000, description="What the seller wants (KES)")
     seller_name: str | None = Field(None, max_length=200, description="Seller's full name")
-    seller_phone: str | None = Field(None, max_length=30, description="Seller's phone number")
+    seller_phone: str = Field(
+        ...,
+        max_length=30,
+        description=(
+            "Seller's phone number. REQUIRED (Sep 2026): the offer is only shown "
+            "to a customer we can call back. Accepts 07.., 01.., +254.., 254.. "
+            "with spaces or dashes; stored normalised as 2547XXXXXXXX."
+        ),
+    )
     image_urls: list[str] = Field(default_factory=list, max_length=8)
     image_data: list[str] = Field(
         default_factory=list,
@@ -168,13 +240,20 @@ class EvaluateRequest(BaseModel):
 
     @field_validator("seller_phone", mode="before")
     @classmethod
-    def validate_phone(cls, v: str | None) -> str | None:  # noqa: N805
-        if v is None:
-            return v
-        v = _strip_tags(v)
-        # Allow digits, spaces, dashes, plus sign, and parentheses
-        cleaned = re.sub(r"[^\d+\-() ]", "", v)
-        return cleaned[:30] if cleaned else v
+    def validate_phone(cls, v: Any) -> str:  # noqa: N805
+        # Missing, null and blank all get the same customer-readable message.
+        if v is None or not str(v).strip():
+            raise ValueError(PHONE_ERROR_MESSAGE)
+        return str(v).strip()
+
+    @model_validator(mode="after")
+    def normalise_seller_phone(self) -> "EvaluateRequest":
+        # Runs after the fields so the local format can be read with `country`.
+        normalised = normalise_phone(self.seller_phone, self.country)
+        if not normalised:
+            raise ValueError(f"seller_phone: {PHONE_ERROR_MESSAGE}")
+        self.seller_phone = normalised
+        return self
 
 
 class EvaluateResponse(BaseModel):

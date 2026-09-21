@@ -28,6 +28,7 @@ def _minimal_body(**extra) -> dict:
         "condition_grade": "B",
         "condition_score": 75,
         "retail_price": 45000,
+        "seller_phone": "0712345678",  # required since Sep 2026 (test_seller_phone.py)
     }
     body.update(extra)
     return body
