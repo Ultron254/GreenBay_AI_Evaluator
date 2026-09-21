@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # Model name sent to Perplexity. A setting so that a model retirement is an
     # environment change, not a code change and a deploy.
     perplexity_model: str = Field(default="sonar", env="PERPLEXITY_MODEL")
+    # Confidence honesty (Sep 2026). False (default, the safer behaviour): the
+    # confidence score is computed exactly as before. True: when a price source
+    # was DOWN (infrastructure failure, not "no data"), the price-verification
+    # tiers are scaled to the sources that could answer. See offer_engine.
+    confidence_renormalise_unavailable_sources: bool = Field(
+        default=False, env="CONFIDENCE_RENORMALISE_UNAVAILABLE_SOURCES",
+    )
     
     # Google Cloud Vision API (for Google Lens product identification)
     google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY", repr=False)

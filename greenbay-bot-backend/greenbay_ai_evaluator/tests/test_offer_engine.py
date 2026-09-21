@@ -153,6 +153,95 @@ class TestConfidence:
 
 
 # ---------------------------------------------------------------------------
+# Source outages and the confidence score (Sep 2026)
+# ---------------------------------------------------------------------------
+class TestConfidenceSourceOutage:
+    """A price source being DOWN is recorded and named, and changes the score
+    only behind the opt-in setting (default: score exactly as before)."""
+
+    _EVIDENCE = dict(
+        comparables_count=5, image_quality_score=85.0, has_seller_asking=True,
+        has_age=True, has_brand=True, has_model=True, has_vision_analysis=True,
+    )
+
+    def test_default_ignores_outages_entirely(self):
+        for sources in range(0, 6):
+            base = _compute_confidence(**self._EVIDENCE, price_verification_sources=sources)
+            for down in range(0, 7):
+                assert _compute_confidence(
+                    **self._EVIDENCE, price_verification_sources=sources,
+                    unavailable_verification_sources=down,
+                ) == base
+
+    def test_no_outage_means_the_setting_changes_nothing(self):
+        for sources in range(0, 6):
+            assert _compute_confidence(
+                **self._EVIDENCE, price_verification_sources=sources,
+                renormalise_unavailable_sources=True,
+            ) == _compute_confidence(**self._EVIDENCE, price_verification_sources=sources)
+
+    def test_thresholds(self):
+        from greenbay_ai_evaluator.engine.offer_engine import _verification_tier_thresholds as t
+        assert t(0) == (4, 3, 2, 1)
+        assert t(1) == (4, 3, 2, 1)      # one of seven down: 3.43 rounds UP to 4
+        assert t(2) == (3, 3, 2, 1)
+        assert t(3) == (3, 2, 2, 1)
+        assert t(6) == (1, 1, 1, 1)
+        assert t(99) == t(6)             # clamped: at least one source remains
+        assert t(-3) == (4, 3, 2, 1)
+
+    def test_one_source_down_never_changes_the_score(self):
+        for sources in range(0, 6):
+            assert _compute_confidence(
+                **self._EVIDENCE, price_verification_sources=sources,
+                unavailable_verification_sources=1, renormalise_unavailable_sources=True,
+            ) == _compute_confidence(**self._EVIDENCE, price_verification_sources=sources)
+
+    def test_renormalising_adds_at_most_five_points_and_never_subtracts(self):
+        for sources in range(0, 6):
+            base = _compute_confidence(**self._EVIDENCE, price_verification_sources=sources)
+            for down in range(0, 4):  # the router can report at most two today
+                on = _compute_confidence(
+                    **self._EVIDENCE, price_verification_sources=sources,
+                    unavailable_verification_sources=down,
+                    renormalise_unavailable_sources=True,
+                )
+                assert base <= on <= base + 5.0
+
+    def test_a_dead_source_is_never_counted_as_evidence(self):
+        # Zero answers earn zero verification points however many were down.
+        assert _compute_confidence(
+            **self._EVIDENCE, price_verification_sources=0,
+            unavailable_verification_sources=6, renormalise_unavailable_sources=True,
+        ) == _compute_confidence(**self._EVIDENCE, price_verification_sources=0)
+
+    def test_hard_caps_still_apply_when_renormalising(self):
+        score = _compute_confidence(
+            0, 100.0, True, True, True, price_verification_sources=3,
+            has_matrix_match=True,
+            unavailable_verification_sources=3, renormalise_unavailable_sources=True,
+        )
+        assert score <= 70.0
+
+    def test_outage_is_named_in_trace_and_review_reason(self, basic_inputs):
+        result = compute_valuation(**basic_inputs, unavailable_sources=["internet_lookup"])
+        assert result.decision == "review"
+        assert "SOURCE OUTAGE: internet_lookup" in result.pricing_justification
+        assert "price source(s) down during this evaluation: internet_lookup" in result.decision_reason
+
+    def test_no_outage_leaves_trace_and_reason_untouched(self, basic_inputs):
+        result = compute_valuation(**basic_inputs)
+        assert "SOURCE OUTAGE" not in result.pricing_justification
+        assert "price source(s) down" not in result.decision_reason
+
+    def test_outage_does_not_move_the_offer_or_the_score_by_default(self, basic_inputs):
+        plain = compute_valuation(**basic_inputs)
+        outage = compute_valuation(**basic_inputs, unavailable_sources=["internet_lookup"])
+        assert outage.opening_offer == plain.opening_offer
+        assert outage.confidence_score == plain.confidence_score
+
+
+# ---------------------------------------------------------------------------
 # compute_valuation — full pipeline
 # ---------------------------------------------------------------------------
 class TestComputeValuation:

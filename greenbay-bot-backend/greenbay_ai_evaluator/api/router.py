@@ -73,7 +73,10 @@ from greenbay_ai_evaluator.services.image_quality_service import (
     score_images,
     score_images_with_rejections,
 )
-from greenbay_ai_evaluator.services.market_price_service import search_internet_price
+from greenbay_ai_evaluator.services.market_price_service import (
+    internet_lookup_outage,
+    search_internet_price,
+)
 from greenbay_ai_evaluator.services.marketplace_scraper import get_marketplace_prices
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
@@ -1945,6 +1948,16 @@ _ATTRIBUTION_AIRTABLE_FIELDS = {
 }
 
 
+def _renormalise_unavailable_sources() -> bool:
+    """Setting CONFIDENCE_RENORMALISE_UNAVAILABLE_SOURCES (default False, the
+    safer behaviour: score exactly as before). Never raises."""
+    try:
+        from app.config import get_settings
+        return bool(getattr(get_settings(), "confidence_renormalise_unavailable_sources", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _attribution_columns(req: EvaluateRequest) -> dict[str, Optional[str]]:
     """ValuationSession column values from the request's attribution block."""
     attr = getattr(req, "attribution", None)
@@ -2533,6 +2546,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         expert_avg = None
         internet_result = None
         mkt_result = None
+        # Price sources that were DOWN for this evaluation (infrastructure
+        # failure, not "no data"). Named in the justification so an outage is
+        # never silent; see compute_valuation(unavailable_sources=...).
+        unavailable_sources: list[str] = []
 
         # --- Source A: Internet price lookup (v6: Gemini with Google Search grounding) ---
         _search_country = getattr(req, "country", "KE") or "KE"
@@ -2545,8 +2562,13 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             )
             internet_price = internet_result.launch_price
             logger.info(f"Internet price: {internet_price} (confidence: {internet_result.confidence})")
+            _lookup_outage = internet_lookup_outage(internet_result)
+            if _lookup_outage:
+                unavailable_sources.append("internet_lookup")
+                logger.warning(f"Internet price lookup DOWN: {_lookup_outage}")
         except Exception as e:
             logger.warning(f"Internet price lookup failed: {e}")
+            unavailable_sources.append("internet_lookup")
 
         # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
         try:
@@ -2571,6 +2593,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             logger.info(f"Marketplace: avg={marketplace_avg}, count={mkt_result.count}")
         except Exception as e:
             logger.warning(f"Marketplace scraping failed: {e}")
+            unavailable_sources.append("marketplace_jiji_jumia")
 
         # --- Source C: Shopify inventory average ---
         try:
@@ -2676,7 +2699,18 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "resale_range": [internet_result.current_resale_low, internet_result.current_resale_high],
                     "sources": internet_result.sources[:3],
                     "confidence": internet_result.confidence,
+                    # Which provider answered: status tokens only ("ok",
+                    # "http_error", ...). This dict is returned to the
+                    # customer's browser, so the detail (HTTP status, provider
+                    # error text) stays in the logs and the key-gated
+                    # /tradein/health/services report.
+                    "providers": {
+                        name: (p or {}).get("status", "")
+                        for name, p in (internet_result.providers or {}).items()
+                    },
                 }
+            if unavailable_sources:
+                price_verification["unavailable_sources"] = list(unavailable_sources)
             if mkt_result:
                 price_verification["marketplace_data"] = {
                     "avg_price": mkt_result.avg_price,
@@ -2884,6 +2918,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             reference_source=reference_source,
             has_matrix_match=v6_has_matrix_match,
             has_sales_stock_match=v6_has_sales_stock_match,
+            unavailable_sources=unavailable_sources,
+            renormalise_unavailable_sources=_renormalise_unavailable_sources(),
         )
 
         # CR-7: Check per-image rejections

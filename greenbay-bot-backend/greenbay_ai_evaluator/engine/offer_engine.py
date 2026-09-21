@@ -284,6 +284,31 @@ def condition_factor(grade: str) -> float | None:
 # ---------------------------------------------------------------------------
 # Confidence score helper (v6 — matrix + sales-stock aware)
 # ---------------------------------------------------------------------------
+# The price sources reconcile_retail_price can count: internet lookup, frontend,
+# historical sheet, expert feedback, database comparables, marketplace, Shopify.
+PRICE_VERIFICATION_SOURCE_COUNT = 7
+_VERIFICATION_TIERS = (4, 3, 2, 1)  # sources needed for 30 / 25 / 20 / 12 points
+
+
+def _verification_tier_thresholds(unavailable: int = 0) -> tuple[int, int, int, int]:
+    """Source counts needed for the 30/25/20/12-point verification tiers.
+
+    With no outage these are the fixed 4/3/2/1. With *unavailable* sources
+    down they shrink in proportion to the sources that could answer, rounded
+    UP (so a partial source never earns a tier) and never below 1. One source
+    down of seven changes nothing (4*6/7 = 3.43 -> 4); it takes two down for
+    three answers to earn the top tier. Deliberately mild: fewer answers is
+    less evidence, and an outage must not manufacture confidence.
+    """
+    import math
+
+    down = max(0, min(int(unavailable or 0), PRICE_VERIFICATION_SOURCE_COUNT - 1))
+    if down == 0:
+        return _VERIFICATION_TIERS
+    share = (PRICE_VERIFICATION_SOURCE_COUNT - down) / PRICE_VERIFICATION_SOURCE_COUNT
+    return tuple(max(1, math.ceil(t * share - 1e-9)) for t in _VERIFICATION_TIERS)  # type: ignore[return-value]
+
+
 def _compute_confidence(
     comparables_count: int,
     image_quality_score: float,
@@ -296,6 +321,8 @@ def _compute_confidence(
     has_historical_data: bool = False,
     has_matrix_match: bool = False,
     has_sales_stock_match: bool = False,
+    unavailable_verification_sources: int = 0,
+    renormalise_unavailable_sources: bool = False,
 ) -> float:
     """Deterministic confidence score in [0, 100].
 
@@ -305,6 +332,16 @@ def _compute_confidence(
       - Matrix match OR 1-2 comparables                    = MAX 70%
       - Matrix match + 3+ comparables                      = MAX 85%
       - Matrix + comparables + sales-stock match           = up to 97%
+
+    Source outages (Sep 2026). *unavailable_verification_sources* is how many
+    of the PRICE_VERIFICATION_SOURCE_COUNT price sources were DOWN for this
+    evaluation (infrastructure failure, not "no data found"). It is ignored
+    unless *renormalise_unavailable_sources* is True (setting
+    CONFIDENCE_RENORMALISE_UNAVAILABLE_SOURCES, default False = score exactly
+    as before). When on, the price-verification tiers below are scaled to the
+    sources that could answer; a dead source is never counted as evidence, the
+    other blocks are untouched and every hard cap still applies, so the most
+    this can add is 5 points.
     """
     score = 0.0
 
@@ -338,13 +375,16 @@ def _compute_confidence(
         score += 10.0
 
     # Price verification from market sources (max 30 pts)
-    if price_verification_sources >= 4:
+    t4, t3, t2, t1 = _verification_tier_thresholds(
+        unavailable_verification_sources if renormalise_unavailable_sources else 0
+    )
+    if price_verification_sources >= t4:
         score += 30.0
-    elif price_verification_sources >= 3:
+    elif price_verification_sources >= t3:
         score += 25.0
-    elif price_verification_sources >= 2:
+    elif price_verification_sources >= t2:
         score += 20.0
-    elif price_verification_sources >= 1:
+    elif price_verification_sources >= t1:
         score += 12.0
 
     # Hard caps based on evidence quality
@@ -536,6 +576,12 @@ def compute_valuation(
     has_matrix_match: bool = False,
     has_sales_stock_match: bool = False,
     round_step: int = 500,
+    # Sep 2026: price sources that were DOWN (infrastructure failure) while this
+    # evaluation ran, e.g. ["internet_lookup"]. Always named in the trace and
+    # the review reason so an outage is never silent; they change the score
+    # only when renormalise_unavailable_sources is True (default False).
+    unavailable_sources: list[str] | None = None,
+    renormalise_unavailable_sources: bool = False,
 ) -> ValuationResult:
     """Deterministic valuation computation (v6 data-driven formula).
 
@@ -689,6 +735,8 @@ def compute_valuation(
         has_historical_data=has_historical,
         has_matrix_match=has_matrix_match,
         has_sales_stock_match=has_sales_stock_match,
+        unavailable_verification_sources=len(unavailable_sources or []),
+        renormalise_unavailable_sources=renormalise_unavailable_sources,
     )
 
     # -- STEP 10: Risk adjustment --------------------------------------------
@@ -850,6 +898,14 @@ def compute_valuation(
 
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
     trace_lines.append(f"Confidence: {confidence_score:.0f}%")
+    if unavailable_sources:
+        trace_lines.append(
+            "SOURCE OUTAGE: " + ", ".join(unavailable_sources) + " unavailable during "
+            "this evaluation (infrastructure failure, not missing data); confidence "
+            + ("was scaled to the sources that could answer."
+               if renormalise_unavailable_sources
+               else "reflects fewer sources than usual.")
+        )
 
     # -- STEP 12: Confidence-based routing -----------------------------------
     needs_review_image = image_quality_score < 30
@@ -864,7 +920,10 @@ def compute_valuation(
     # -- STEP 13: Decision logic ---------------------------------------------
     if confidence_score < 80 or needs_review_risk:
         decision = "review"
-        decision_reason = _build_review_reason(confidence_score, risk_score, needs_review_image)
+        decision_reason = _build_review_reason(
+            confidence_score, risk_score, needs_review_image,
+            unavailable_sources=unavailable_sources,
+        )
     elif seller_asking_price is None:
         decision = "negotiate"
         decision_reason = (
@@ -933,10 +992,15 @@ def _build_review_reason(
     confidence: float,
     risk: float,
     image_review: bool,
+    unavailable_sources: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
     if confidence < 80:
         parts.append(f"AUTO-ROUTED TO HUMAN: confidence {confidence:.0f}% below 80% threshold")
+        if unavailable_sources:
+            parts.append(
+                "price source(s) down during this evaluation: " + ", ".join(unavailable_sources)
+            )
     if risk > 70:
         parts.append(f"High risk score ({risk:.0f}/100)")
     if image_review:
