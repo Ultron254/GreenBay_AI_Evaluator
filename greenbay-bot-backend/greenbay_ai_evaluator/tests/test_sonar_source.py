@@ -375,3 +375,77 @@ class TestInternetLookupOutage:
         assert res.launch_price == 40_000
         assert res.providers["gemini"]["status"] == mps.LOOKUP_OK
         assert res.providers["sonar"] == {"status": mps.LOOKUP_HTTP_ERROR, "detail": "HTTP 401"}
+
+
+# ---------------------------------------------------------------------------
+# Billed probes are not re-run on every health-check
+# ---------------------------------------------------------------------------
+class TestPaidProbeReuse:
+    """The service monitor runs the health-check every 10 minutes. The two
+    price-lookup probes are billed web searches, so their result is reused."""
+
+    @pytest.fixture
+    def lhs(self, monkeypatch):
+        from greenbay_ai_evaluator.services import live_healthcheck_service as lhs
+        calls = {"perplexity_sonar": 0, "gemini_search_newprice": 0, "database": 0}
+        outcome = {"ok": True}
+
+        def _make(name):
+            def _probe():
+                calls[name] += 1
+                return outcome["ok"], f"{name} call {calls[name]}"
+            return _probe
+
+        monkeypatch.setattr(lhs, "_PROBES", {name: _make(name) for name in calls})
+        monkeypatch.setattr(lhs, "_paid_probe_cache", {})
+        monkeypatch.delenv("HEALTH_PAID_PROBE_INTERVAL_MIN", raising=False)
+        lhs.calls, lhs.outcome = calls, outcome
+        return lhs
+
+    def test_paid_probes_run_once_free_probes_every_time(self, lhs):
+        first = lhs.run_live_healthcheck()
+        second = lhs.run_live_healthcheck()
+        assert lhs.calls == {"perplexity_sonar": 1, "gemini_search_newprice": 1, "database": 2}
+        assert first["services"]["perplexity_sonar"]["cached"] is False
+        assert second["services"]["perplexity_sonar"]["cached"] is True
+        assert second["services"]["perplexity_sonar"]["detail"] == "perplexity_sonar call 1"
+        assert "checked_at" in second["services"]["perplexity_sonar"]
+        assert "cached" not in second["services"]["database"]
+
+    def test_fresh_forces_a_real_lookup(self, lhs):
+        lhs.run_live_healthcheck()
+        report = lhs.run_live_healthcheck(fresh=True)
+        assert lhs.calls["perplexity_sonar"] == 2
+        assert report["services"]["perplexity_sonar"]["cached"] is False
+
+    def test_result_expires_after_the_interval(self, lhs, monkeypatch):
+        monkeypatch.setenv("HEALTH_PAID_PROBE_INTERVAL_MIN", "60")
+        lhs.run_live_healthcheck()
+        checked_at, result = lhs._paid_probe_cache["perplexity_sonar"]
+        lhs._paid_probe_cache["perplexity_sonar"] = (checked_at - 61 * 60, result)
+        lhs.run_live_healthcheck()
+        assert lhs.calls["perplexity_sonar"] == 2
+
+    def test_a_failure_is_rechecked_within_thirty_minutes(self, lhs):
+        lhs.outcome["ok"] = False
+        lhs.run_live_healthcheck()
+        checked_at, result = lhs._paid_probe_cache["perplexity_sonar"]
+        lhs._paid_probe_cache["perplexity_sonar"] = (checked_at - 31 * 60, result)
+        lhs.run_live_healthcheck()
+        assert lhs.calls["perplexity_sonar"] == 2
+
+    def test_interval_zero_restores_a_lookup_on_every_check(self, lhs, monkeypatch):
+        monkeypatch.setenv("HEALTH_PAID_PROBE_INTERVAL_MIN", "0")
+        lhs.run_live_healthcheck()
+        lhs.run_live_healthcheck()
+        assert lhs.calls["perplexity_sonar"] == 2
+
+    def test_bad_interval_value_falls_back_to_the_default(self, lhs, monkeypatch):
+        monkeypatch.setenv("HEALTH_PAID_PROBE_INTERVAL_MIN", "soon")
+        assert lhs._paid_probe_interval_seconds() == 360 * 60
+
+    def test_report_shape_pulse_reads_is_unchanged(self, lhs):
+        entry = lhs.run_live_healthcheck()["services"]["perplexity_sonar"]
+        assert {"ok", "detail", "latency_ms"} <= set(entry)
+        # Pulse's parser reads a "status" key before "ok"; never add one.
+        assert "status" not in entry

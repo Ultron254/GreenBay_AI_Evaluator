@@ -14,7 +14,10 @@ Exposed via GET /tradein/health/services (key-gated in the router).
 
 from __future__ import annotations
 
+import os
+import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from loguru import logger
@@ -293,11 +296,69 @@ _PROBES: dict[str, Callable[[], tuple[bool, str]]] = {
 }
 
 
-def run_live_healthcheck() -> dict[str, Any]:
-    """Run every probe and return a structured report."""
+# ---------------------------------------------------------------------------
+# Paid probes (Sep 2026)
+# ---------------------------------------------------------------------------
+# These two probes run a real, BILLED web-search lookup. The service monitor
+# calls run_live_healthcheck every MONITOR_INTERVAL_MIN (default 10 minutes),
+# so from 13 Jul 2026 monitoring alone made 288 Perplexity requests a day (the
+# Gemini probe called Sonar too) against a prepaid credit balance, before one
+# customer was priced. Their result is now reused between runs.
+_PAID_PROBES = frozenset({"gemini_search_newprice", "perplexity_sonar"})
+_PAID_PROBE_FAILURE_RECHECK_S = 30 * 60   # a failure is re-probed sooner
+_paid_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_paid_probe_lock = threading.Lock()
+
+
+def _paid_probe_interval_seconds() -> int:
+    """HEALTH_PAID_PROBE_INTERVAL_MIN, default 360 (four lookups a day each).
+    0 restores the old behaviour: a billed lookup on every health-check."""
+    try:
+        return max(0, int(float(os.environ.get("HEALTH_PAID_PROBE_INTERVAL_MIN", "360")) * 60))
+    except (TypeError, ValueError):
+        return 360 * 60
+
+
+def _run_paid_probe(name: str, fn: Callable[[], tuple[bool, str]], fresh: bool) -> dict[str, Any]:
+    with _paid_probe_lock:
+        interval = _paid_probe_interval_seconds()
+        cached = _paid_probe_cache.get(name)
+        if cached and not fresh and interval > 0:
+            checked_at, result = cached
+            age = time.time() - checked_at
+            limit = interval if result["ok"] else min(interval, _PAID_PROBE_FAILURE_RECHECK_S)
+            if age < limit:
+                return {
+                    **result,
+                    "cached": True,
+                    "age_s": int(age),
+                    "checked_at": datetime.fromtimestamp(checked_at, timezone.utc).isoformat(),
+                }
+        result = _timed(fn)
+        now = time.time()
+        _paid_probe_cache[name] = (now, result)
+        return {
+            **result,
+            "cached": False,
+            "age_s": 0,
+            "checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+        }
+
+
+def run_live_healthcheck(fresh: bool = False) -> dict[str, Any]:
+    """Run every probe and return a structured report.
+
+    The two billed price-lookup probes reuse their last result for
+    HEALTH_PAID_PROBE_INTERVAL_MIN (a failure for at most 30 minutes); their
+    entries say so with ``cached`` / ``age_s`` / ``checked_at``. Pass
+    ``fresh=True`` (``?fresh=true`` on the endpoint) to force a real lookup,
+    e.g. right after topping up credits."""
     results: dict[str, Any] = {}
     for name, fn in _PROBES.items():
-        results[name] = _timed(fn)
+        if name in _PAID_PROBES:
+            results[name] = _run_paid_probe(name, fn, fresh)
+        else:
+            results[name] = _timed(fn)
         status = "OK" if results[name]["ok"] else "FAIL"
         logger.info(f"Live health-check [{name}]: {status} — {results[name]['detail']}")
 

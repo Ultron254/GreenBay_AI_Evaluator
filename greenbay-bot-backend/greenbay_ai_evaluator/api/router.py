@@ -105,17 +105,21 @@ evaluator_router = APIRouter()
 # GET /tradein/health/services?key=...
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/health/services")
-def health_services(_: bool = Depends(verify_readonly_or_admin_key)):
+def health_services(fresh: bool = False, _: bool = Depends(verify_readonly_or_admin_key)):
     """Run live probes against every external dependency.
 
     Gated by DASHBOARD_KEY or READONLY_DASHBOARD_KEY (header X-Admin-Key or
     ?key=) so the report, which can include error snippets, is not
     publicly exposed.
+
+    The two billed price-lookup probes (gemini_search_newprice,
+    perplexity_sonar) reuse their last result; ``?fresh=true`` forces a real
+    lookup, e.g. right after topping up Perplexity credits.
     """
     from greenbay_ai_evaluator.services.live_healthcheck_service import (
         run_live_healthcheck,
     )
-    return run_live_healthcheck()
+    return run_live_healthcheck(fresh=fresh)
 
 
 @evaluator_router.get("/dashboard/metrics")
