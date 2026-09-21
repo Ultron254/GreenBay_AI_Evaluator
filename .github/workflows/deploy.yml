@@ -250,8 +250,13 @@ jobs:
                 if [ -z "${ADMIN_KEY}" ]; then
                   echo "::warning::DASHBOARD_KEY is not set in the container, so the smoke-test row (ref ${SID}) was NOT deleted and admin routes answer 503. Set the DASHBOARD_KEY secret and redeploy."
                 else
-                  curl -s -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
-                    "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true
+                  # A key the app refuses (a committed value gets 503, a wrong
+                  # one 403) must not fail silently, or ZZSMOKE rows pile up.
+                  DEL_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+                    "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true)"
+                  if [ "${DEL_CODE}" != "200" ]; then
+                    echo "::warning::Smoke-test row (ref ${SID}) was NOT deleted: the admin route answered HTTP ${DEL_CODE}. 503 means DASHBOARD_KEY is a committed value; set the DASHBOARD_KEY secret and redeploy."
+                  fi
                 fi
               fi
             else
@@ -263,8 +268,11 @@ jobs:
             echo "=== Purging leftover test/probe rows ==="
             ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || true)"
             if [ -n "${ADMIN_KEY}" ]; then
-              curl -s --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
-                "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true
+              PURGE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
+                "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true)"
+              if [ "${PURGE_CODE}" != "200" ]; then
+                echo "::warning::Probe-row purge answered HTTP ${PURGE_CODE} (503 means DASHBOARD_KEY is a committed value)."
+              fi
             else
               echo "::warning::DASHBOARD_KEY is not set in the container; skipped the probe-row purge."
             fi

@@ -88,6 +88,13 @@ PHONE_CASES: list[tuple[str, str, str | None]] = [
     ("+1234567", "KE", None),            # under 8 digits
     ("+1234567890123456", "KE", None),   # over 15 digits
     ("+0712345678", "KE", None),
+    # As typed: pasted invisibles, odd spaces, and the 30-character limit
+    ("\ufeff0712345678", "KE", "254712345678"),
+    ("0712\u00a0345\u2009678", "KE", "254712345678"),
+    ("0-7-1-2-3-4-5-6-7-8----------", "KE", "254712345678"),            # 29 typed
+    ("0-7-1-2-3-4-5-6-7-8-----------------", "KE", None),             # 36 typed
+    ("  " + "0712345678" + " " * 40, "KE", "254712345678"),            # outer spaces do not count
+    ("０７１２３４５６７８", "KE", None),                                    # fullwidth digits
     # Unknown country code falls back to the Kenyan local rules
     ("0712345678", "TZ", "254712345678"),
     ("0712345678", "", "254712345678"),
@@ -180,7 +187,23 @@ class TestEvaluateRequestPhone:
                     {k: v for k, v in _body().items() if k != "seller_phone"}):
             r = client.post("/evaluate", json=bad)
             assert r.status_code == 422
-            assert re.search("phone", json.dumps(r.json()["detail"]), re.IGNORECASE)
+            # Exactly what the wizard checks: loc or msg, never the echoed input.
+            assert any(
+                "seller_phone" in e.get("loc", []) or "seller_phone" in e.get("msg", "")
+                for e in r.json()["detail"]
+            )
+
+    def test_over_long_phone_is_a_phone_error_too(self):
+        with pytest.raises(ValidationError) as exc:
+            EvaluateRequest(**_body(seller_phone="0-7-1-2-3-4-5-6-7-8-----------------"))
+        assert "seller_phone" in str(exc.value)
+
+    def test_wizard_input_cannot_exceed_the_api_limit(self):
+        from greenbay_ai_evaluator.api.schemas import PHONE_MAX_INPUT_LEN
+        html = (_APP_JS.parent / "index.html").read_text(encoding="utf-8")
+        tag = re.search(r'<input[^>]*id="sellerPhoneInput"[^>]*>', html, re.DOTALL).group(0)
+        assert f'maxlength="{PHONE_MAX_INPUT_LEN}"' in tag
+        assert EvaluateRequest.model_fields["seller_phone"].metadata  # max_length is declared
 
     def test_deploy_smoke_test_payload_still_validates(self):
         # .github/workflows/deploy.yml posts this body after every deploy.

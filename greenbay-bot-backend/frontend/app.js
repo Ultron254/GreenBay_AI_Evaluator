@@ -504,7 +504,10 @@ const PHONE_RULES = {
 
 function normalisePhone(raw, country) {
     if (raw === null || raw === undefined) return null;
-    let text = String(raw).replace(/<[^>]+>/g, '').trim().replace(/[\s\-().]/g, '');
+    // The API refuses more than 30 characters as typed (separators included).
+    const typed = String(raw).replace(/\ufeff/g, '').trim();
+    if (typed.length > 30) return null;
+    let text = typed.replace(/<[^>]+>/g, '').trim().replace(/[\s\-().]/g, '');
     let international = false;
     if (text.startsWith('+')) { international = true; text = text.slice(1); }
     else if (text.startsWith('00')) { international = true; text = text.slice(2); }
@@ -1150,9 +1153,17 @@ async function callEvaluationAPI() {
         if (resp.status === 422) {
             // The backend refused the request. If it is the phone, ask for it
             // again; never fall through to a demo offer for a real customer.
-            let detail = '';
-            try { detail = JSON.stringify((await resp.json()).detail || ''); } catch (_) { /* ignore */ }
-            if (/phone/i.test(detail)) {
+            // Look at where the error is (loc) and what it says (msg), never
+            // at the echoed input: an over-long issues text that happens to
+            // contain the word "phone" is not a phone error.
+            let aboutPhone = false;
+            try {
+                const detail = (await resp.json()).detail;
+                aboutPhone = Array.isArray(detail) && detail.some(e =>
+                    (Array.isArray(e.loc) && e.loc.indexOf('seller_phone') !== -1) ||
+                    /seller_phone/.test(String(e.msg || '')));
+            } catch (_) { /* ignore */ }
+            if (aboutPhone) {
                 addChatMessage('bot', 'I need a valid phone number before I can show your offer, e.g. 0712 345 678.');
                 returnToContactStep();
                 return;

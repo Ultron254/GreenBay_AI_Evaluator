@@ -49,6 +49,7 @@ _PHONE_RULES: dict[str, tuple[str, str]] = {
     "NG": ("234", r"[789][01]\d{8}"),
 }
 _PHONE_SEPARATORS_RE = re.compile(r"[\s\-().]")
+PHONE_MAX_INPUT_LEN = 30   # as typed, separators included; the field's max_length
 
 
 def normalise_phone(raw: Any, country: str = "KE") -> str | None:
@@ -67,7 +68,12 @@ def normalise_phone(raw: Any, country: str = "KE") -> str | None:
     """
     if raw is None:
         return None
-    text = _PHONE_SEPARATORS_RE.sub("", _strip_tags(str(raw)) or "")
+    # U+FEFF rides along when a number is pasted from some apps. Python's
+    # strip() leaves it and JavaScript's trim() removes it, so drop it first.
+    typed = str(raw).replace("\ufeff", "").strip()
+    if len(typed) > PHONE_MAX_INPUT_LEN:
+        return None
+    text = _PHONE_SEPARATORS_RE.sub("", _strip_tags(typed) or "")
     international = False
     if text.startswith("+"):
         international, text = True, text[1:]
@@ -143,7 +149,9 @@ ATTRIBUTION_MAX_LEN = {
 # frontend/index.html (gbCleanUrl), which cleans what is sent to GA4.
 ATTRIBUTION_QUERY_ALLOWLIST = frozenset({
     "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "utm_id",
-    "gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid",
+    "utm_source_platform",
+    "gclid", "gbraid", "wbraid", "dclid", "gad_source", "gad_campaignid",
+    "fbclid", "ttclid", "msclkid",
 })
 _SIMPLE_FRAGMENT_RE = re.compile(r"[A-Za-z0-9_\-]{0,64}")
 
@@ -291,9 +299,9 @@ class EvaluateRequest(BaseModel):
     @classmethod
     def validate_phone(cls, v: Any) -> str:  # noqa: N805
         # Missing, null and blank all get the same customer-readable message.
-        if v is None or not str(v).strip():
+        if v is None or not str(v).replace("\ufeff", "").strip():
             raise ValueError(PHONE_ERROR_MESSAGE)
-        return str(v).strip()
+        return str(v).replace("\ufeff", "").strip()
 
     @model_validator(mode="after")
     def normalise_seller_phone(self) -> "EvaluateRequest":

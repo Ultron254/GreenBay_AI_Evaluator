@@ -16,7 +16,9 @@
       // (ATTRIBUTION_QUERY_ALLOWLIST). app.js reuses this function.
       window.gbCleanUrl = function (url, keepQuery) {
         var allow = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
-                     'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'msclkid'];
+                     'utm_source_platform',
+                     'gclid', 'gbraid', 'wbraid', 'dclid', 'gad_source', 'gad_campaignid',
+                     'fbclid', 'ttclid', 'msclkid'];
         if (!url) return '';
         try {
           var u = new URL(url, window.location.href);
@@ -819,7 +821,7 @@
                                 <label class="form-label">Your Phone Number <span style="color:var(--red);">*</span></label>
                                 <input type="tel" class="form-input" id="sellerPhoneInput"
                                     placeholder="e.g. 0712 345 678" required aria-required="true"
-                                    autocomplete="tel" inputmode="tel"
+                                    autocomplete="tel" inputmode="tel" maxlength="30"
                                     oninput="updateAnswer('sellerPhone', this.value)">
                                 <p class="form-hint" id="phoneError" style="display:none;color:var(--red);">
                                     Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>

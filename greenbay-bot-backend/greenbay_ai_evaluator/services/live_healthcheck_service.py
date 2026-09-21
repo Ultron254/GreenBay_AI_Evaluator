@@ -306,6 +306,7 @@ _PROBES: dict[str, Callable[[], tuple[bool, str]]] = {
 # customer was priced. Their result is now reused between runs.
 _PAID_PROBES = frozenset({"gemini_search_newprice", "perplexity_sonar"})
 _PAID_PROBE_FAILURE_RECHECK_S = 30 * 60   # a failure is re-probed sooner
+_PAID_PROBE_FRESH_FLOOR_S = 60            # ?fresh=true never re-runs sooner
 _paid_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _paid_probe_lock = threading.Lock()
 
@@ -320,29 +321,40 @@ def _paid_probe_interval_seconds() -> int:
 
 
 def _run_paid_probe(name: str, fn: Callable[[], tuple[bool, str]], fresh: bool) -> dict[str, Any]:
-    with _paid_probe_lock:
-        interval = _paid_probe_interval_seconds()
-        cached = _paid_probe_cache.get(name)
-        if cached and not fresh and interval > 0:
+    # The lock guards the cache only, never the lookup: a grounded search can
+    # take over a minute, and the monitor thread must not make an API request
+    # to /health/services wait behind it. Two overlapping checks can therefore
+    # both run a lookup; that is rare and costs one extra request.
+    interval = _paid_probe_interval_seconds()
+    if fresh or interval > 0:
+        with _paid_probe_lock:
+            cached = _paid_probe_cache.get(name)
+        if cached:
             checked_at, result = cached
             age = time.time() - checked_at
-            limit = interval if result["ok"] else min(interval, _PAID_PROBE_FAILURE_RECHECK_S)
-            if age < limit:
+            if fresh:
+                # The read-only key can pass fresh=true; without a floor a loop
+                # of requests would spend the prepaid balance.
+                limit = _PAID_PROBE_FRESH_FLOOR_S
+            else:
+                limit = interval if result["ok"] else min(interval, _PAID_PROBE_FAILURE_RECHECK_S)
+            if 0 <= age < limit:
                 return {
                     **result,
                     "cached": True,
                     "age_s": int(age),
                     "checked_at": datetime.fromtimestamp(checked_at, timezone.utc).isoformat(),
                 }
-        result = _timed(fn)
-        now = time.time()
+    result = _timed(fn)
+    now = time.time()
+    with _paid_probe_lock:
         _paid_probe_cache[name] = (now, result)
-        return {
-            **result,
-            "cached": False,
-            "age_s": 0,
-            "checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
-        }
+    return {
+        **result,
+        "cached": False,
+        "age_s": 0,
+        "checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+    }
 
 
 def run_live_healthcheck(fresh: bool = False) -> dict[str, Any]:
@@ -352,7 +364,8 @@ def run_live_healthcheck(fresh: bool = False) -> dict[str, Any]:
     HEALTH_PAID_PROBE_INTERVAL_MIN (a failure for at most 30 minutes); their
     entries say so with ``cached`` / ``age_s`` / ``checked_at``. Pass
     ``fresh=True`` (``?fresh=true`` on the endpoint) to force a real lookup,
-    e.g. right after topping up credits."""
+    e.g. right after topping up credits; a result less than a minute old is
+    still reused, so the flag cannot be looped to spend credits."""
     results: dict[str, Any] = {}
     for name, fn in _PROBES.items():
         if name in _PAID_PROBES:

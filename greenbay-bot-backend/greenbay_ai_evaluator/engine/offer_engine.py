@@ -287,6 +287,11 @@ def condition_factor(grade: str) -> float | None:
 # The price sources reconcile_retail_price can count: internet lookup, frontend,
 # historical sheet, expert feedback, database comparables, marketplace, Shopify.
 PRICE_VERIFICATION_SOURCE_COUNT = 7
+# Outages beyond this many are ignored by the scaling. With more than three of
+# seven sources down the evaluation is simply short of evidence, and the
+# scaling must not grow with the size of the outage (uncapped, six down would
+# add 18 points). The evaluate route can report two today.
+MAX_RENORMALISED_OUTAGES = 3
 _VERIFICATION_TIERS = (4, 3, 2, 1)  # sources needed for 30 / 25 / 20 / 12 points
 
 
@@ -297,12 +302,14 @@ def _verification_tier_thresholds(unavailable: int = 0) -> tuple[int, int, int, 
     down they shrink in proportion to the sources that could answer, rounded
     UP (so a partial source never earns a tier) and never below 1. One source
     down of seven changes nothing (4*6/7 = 3.43 -> 4); it takes two down for
-    three answers to earn the top tier. Deliberately mild: fewer answers is
-    less evidence, and an outage must not manufacture confidence.
+    three answers to earn the top tier. The count is clamped to
+    MAX_RENORMALISED_OUTAGES, which keeps the gain at 5 points or less.
+    Deliberately mild: fewer answers is less evidence, and an outage must not
+    manufacture confidence.
     """
     import math
 
-    down = max(0, min(int(unavailable or 0), PRICE_VERIFICATION_SOURCE_COUNT - 1))
+    down = max(0, min(int(unavailable or 0), MAX_RENORMALISED_OUTAGES))
     if down == 0:
         return _VERIFICATION_TIERS
     share = (PRICE_VERIFICATION_SOURCE_COUNT - down) / PRICE_VERIFICATION_SOURCE_COUNT

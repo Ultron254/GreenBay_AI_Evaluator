@@ -186,8 +186,9 @@ class TestConfidenceSourceOutage:
         assert t(1) == (4, 3, 2, 1)      # one of seven down: 3.43 rounds UP to 4
         assert t(2) == (3, 3, 2, 1)
         assert t(3) == (3, 2, 2, 1)
-        assert t(6) == (1, 1, 1, 1)
-        assert t(99) == t(6)             # clamped: at least one source remains
+        assert t(4) == t(3)              # clamped: a bigger outage earns no more
+        assert t(6) == t(3)
+        assert t(99) == t(3)
         assert t(-3) == (4, 3, 2, 1)
 
     def test_one_source_down_never_changes_the_score(self):
@@ -200,7 +201,7 @@ class TestConfidenceSourceOutage:
     def test_renormalising_adds_at_most_five_points_and_never_subtracts(self):
         for sources in range(0, 6):
             base = _compute_confidence(**self._EVIDENCE, price_verification_sources=sources)
-            for down in range(0, 4):  # the router can report at most two today
+            for down in range(0, 8):  # every possible count, and one beyond
                 on = _compute_confidence(
                     **self._EVIDENCE, price_verification_sources=sources,
                     unavailable_verification_sources=down,

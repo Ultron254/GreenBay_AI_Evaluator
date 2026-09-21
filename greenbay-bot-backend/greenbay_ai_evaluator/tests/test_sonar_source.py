@@ -5,8 +5,9 @@ Pulse Sentinel D01 "Perplexity price source failing in production"):
   - every way of returning no price names its cause (status + detail)
   - the detail never contains the API key
   - answers are read the way Sonar actually writes them: JSON, fenced JSON,
-    JSON broken by a thousands separator or a [1] citation mark, quoted
-    "KES 42,999" strings, and single-price prose; ambiguous prose is refused
+    JSON broken by a thousands separator or a [1] citation mark, and quoted
+    "KES 42,999" strings. Prose is NEVER read as a price: a wrong low reading
+    wins the Gemini cross-check, so every misreading found in review is pinned
   - the model name comes from PERPLEXITY_MODEL
   - the health probe reports the cause first, and probes Gemini on its own
   - a source outage is recorded, named in the justification, and changes the
@@ -97,9 +98,8 @@ class TestReadPriceAnswer:
         '{"new_price": 42,999, "currency": "KES"}',          # invalid JSON: separator
         '{"new_price": 42999[1], "currency": "KES"}',        # invalid JSON: citation mark
         '<think>compare Jumia and Kilimall</think>{"new_price": 42999}',
-        'The Samsung UA43T5300 retails at KES 42,999 on Jumia Kenya [1][2].',
-        'It costs 42,999 KES at most retailers.',
-        'Jumia lists it at Ksh 42,999, and Kilimall also at KSh42,999.',
+        '{"new_price": 42,999/=, "currency": "KES"}',
+        'Price below.\n{"new_price": "42,999", "matched_product": "Samsung {43 inch}"',  # truncated
     ])
     def test_price_is_read(self, text):
         price, status, _detail, _parsed = _read_price_answer(text, "KES")
@@ -121,29 +121,61 @@ class TestReadPriceAnswer:
         assert price is None
         assert status == mps.LOOKUP_PARSE_FAILURE
 
-    def test_ambiguous_prose_is_refused(self):
-        # Two different amounts: never guess which one is the new price.
+    @pytest.mark.parametrize("text", [
+        # Each of these was read as an in-band price by a prose reader that an
+        # adversarial review broke before merge. A sentence is never a price.
+        "The Samsung UA43T5300 retails at KES 42,999 on Jumia Kenya [1][2].",
+        "Samsung UA43T5300 KES 42,999 at Jumia",                 # 5300 KES
+        "Model 2023 KES 55,000",                                 # 2023 KES
+        "Released in 2019 KES pricing unavailable.",
+        "I could not find this model. A similar 32 inch model is KES 18,999.",
+        "The 55 inch costs KES 75,000 while the 43 inch has no listing",
+        "Prices range from KES 42,999 to 45,999.",
+        "The monthly instalment is KES 3,999 for 12 months.",
+        "Save KES 10,000! Now only 35,000.",
+        "It was KES 60,000 last year and is now KES 45,000.",
+        "It costs 42,999 KES at most retailers.",
+        "The 2024 model with a 43 inch panel is widely sold.",
+        "Sells for UGX 1,450,000 in Kampala.",
+    ])
+    def test_prose_is_never_read_as_a_price(self, text):
+        for currency in ("KES", "UGX", "NGN"):
+            price, status, _d, _p = _read_price_answer(text, currency)
+            assert price is None
+            assert status == mps.LOOKUP_PARSE_FAILURE
+
+    def test_an_explicit_null_beats_anything_said_after_it(self):
         price, status, _d, _p = _read_price_answer(
-            "It was KES 60,000 last year and is now KES 45,000.", "KES")
+            '{"new_price": null}. The closest match {different size} costs Ksh 18,999', "KES")
+        assert price is None
+        assert status == mps.LOOKUP_NULL_PRICE
+
+    @pytest.mark.parametrize("text", [
+        '{"new_price": 42999-45999}',
+        '{"new_price": "42999-45999"}',
+        '{"new_price": "42,999 to 45,999"}',
+        '{"new_price": 42,999 - 45,999, "currency": "KES"}',
+        '{"new_price": -42999}',
+        '{"new_price": "-42999"}',
+        '{"new_price": {"low": 42999, "high": 45999}}',
+        '{"new_price": [42999, 45999]}',
+        '{"new_price": true}',
+        '{"new_price": "about forty thousand"}',
+        '{"new_price": 1e999}',
+    ])
+    def test_ranges_negatives_and_non_scalars_are_refused(self, text):
+        price, status, _d, _p = _read_price_answer(text, "KES")
         assert price is None
         assert status == mps.LOOKUP_PARSE_FAILURE
 
-    def test_untagged_numbers_in_prose_are_ignored(self):
-        # A year or a screen size must never be read as a price.
-        price, _s, _d, _p = _read_price_answer(
-            "The 2024 model with a 43 inch panel is widely sold.", "KES")
-        assert price is None
-
-    def test_other_currencies(self):
-        assert _read_price_answer("Sells for UGX 1,450,000 in Kampala.", "UGX")[0] == 1_450_000
-        assert _read_price_answer("Priced at ₦450,000.", "NGN")[0] == 450_000
-
     @pytest.mark.parametrize("value,expected", [
         (42999, 42999.0), (42999.5, 42999.5), ("42999", 42999.0),
-        ("42,999", 42999.0), ("42 999", 42999.0), ("KES 42,999/=", 42999.0),
+        ("42,999", 42999.0), ("KES 42,999/=", 42999.0),
         ("KSh. 42,999.00", 42999.0),
         (None, None), (True, None), (0, None), (-5, None), ("", None),
-        ("unknown", None), ("40,000 to 45,000", None),
+        ("unknown", None), ("40,000 to 45,000", None), ("42999-45999", None),
+        ("-42999", None), ("42 999", None), ("12,995 365", None),
+        (float("inf"), None), (float("nan"), None), ([42999], None), ({"low": 42999}, None),
     ])
     def test_coerce_price(self, value, expected):
         assert _coerce_price(value) == expected
@@ -412,11 +444,25 @@ class TestPaidProbeReuse:
         assert "checked_at" in second["services"]["perplexity_sonar"]
         assert "cached" not in second["services"]["database"]
 
+    def _age(self, lhs, seconds):
+        for name, (checked_at, result) in list(lhs._paid_probe_cache.items()):
+            lhs._paid_probe_cache[name] = (checked_at - seconds, result)
+
     def test_fresh_forces_a_real_lookup(self, lhs):
         lhs.run_live_healthcheck()
+        self._age(lhs, 61)
         report = lhs.run_live_healthcheck(fresh=True)
         assert lhs.calls["perplexity_sonar"] == 2
         assert report["services"]["perplexity_sonar"]["cached"] is False
+
+    def test_fresh_cannot_be_looped_to_spend_credits(self, lhs, monkeypatch):
+        for interval in ("360", "0"):
+            monkeypatch.setenv("HEALTH_PAID_PROBE_INTERVAL_MIN", interval)
+            lhs._paid_probe_cache.clear()
+            lhs.calls["perplexity_sonar"] = 0
+            for _ in range(5):
+                lhs.run_live_healthcheck(fresh=True)
+            assert lhs.calls["perplexity_sonar"] == 1
 
     def test_result_expires_after_the_interval(self, lhs, monkeypatch):
         monkeypatch.setenv("HEALTH_PAID_PROBE_INTERVAL_MIN", "60")

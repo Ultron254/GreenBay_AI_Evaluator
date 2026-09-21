@@ -443,32 +443,42 @@ def _sonar_http_detail(status_code: int, body: str, api_key: str) -> str:
 
 _CITATION_MARK_RE = re.compile(r"\[\d{1,3}\]")
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-# A number with optional thousands separators and decimals: 42999, 42,999.00
-_AMOUNT = r"\d{1,3}(?:[, ]\d{3})+(?!\d)(?:\.\d+)?|\d+(?:\.\d+)?"
-_NEW_PRICE_FIELD_RE = re.compile(r'"new_price"\s*:\s*"?\s*(?:[A-Za-z₦/=.]{0,5}\s*)?(' + _AMOUNT + r')')
-_CURRENCY_WORDS: dict[str, str] = {
-    "KES": r"KES|KSHS?\.?|K\.?SH\.?",
-    "UGX": r"UGX|USHS?\.?",
-    "NGN": r"NGN|₦",
-}
+# A number with optional comma thousands separators and decimals: 42999,
+# 42,999.00. A space is NOT a separator: "12,995 365 days" is two numbers.
+_AMOUNT = r"\d{1,3}(?:,\d{3})+(?!\d)(?:\.\d+)?|\d+(?:\.\d+)?"
+# The "new_price" field of an answer whose JSON did not parse. The value must
+# END the field: next comes the following key (a comma then a quote), the
+# closing brace, or the end of the text. So a range such as 42999-45999 or
+# "42,999 to 45,999" is not read as its first number, and "42,999 - 45,999"
+# is not read as 42.
+_NEW_PRICE_FIELD_RE = re.compile(
+    r'"new_price"\s*:\s*"?\s*(?:[A-Za-z₦/=.]{0,5}\s*)?(' + _AMOUNT + r')\s*(?:/=)?\s*"?\s*(?=,\s*"|\}|$)'
+)
+_NEW_PRICE_NULL_RE = re.compile(r'"new_price"\s*:\s*(?:null|None|"")', re.IGNORECASE)
 
 
 def _coerce_price(value: Any) -> float | None:
     """Read a price the way providers actually write it: 42999, 42999.0,
-    "42,999", "KES 42,999", "KSh. 42,999.00", "42 999/=". None when the value
-    holds no single positive number."""
+    "42,999", "KES 42,999", "KSh. 42,999.00", "42,999/=". None when the value
+    is not a single positive, finite number: a list or dict, a range, a
+    negative, "inf", free text."""
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value) if value > 0 else None
-    found = re.findall(_AMOUNT, str(value))
+        number = float(value)
+        return number if number > 0 and number != float("inf") and number == number else None
+    if not isinstance(value, str):
+        return None  # a list or a dict is not a price
+    if "-" in value or "–" in value:
+        return None  # a negative or a range
+    found = re.findall(_AMOUNT, value)
     if len(found) != 1:
         return None
     try:
-        number = float(re.sub(r"[,\s]", "", found[0]))
+        number = float(found[0].replace(",", ""))
     except ValueError:
         return None
-    return number if number > 0 else None
+    return number if number > 0 and number != float("inf") else None
 
 
 def _clean_answer_text(text: str) -> str:
@@ -476,29 +486,19 @@ def _clean_answer_text(text: str) -> str:
     return _CITATION_MARK_RE.sub("", _THINK_BLOCK_RE.sub("", text or "")).strip()
 
 
-def _price_from_loose_text(text: str, currency: str) -> float | None:
-    """Last-resort reader for an answer that is not valid JSON.
+def _price_from_loose_text(text: str) -> float | None:
+    """Last-resort reader for an answer whose JSON did not parse: the
+    ``"new_price": 42,999`` field, whose thousands separator is what made the
+    JSON invalid. Nothing else.
 
-    1. A ``"new_price": 42,999`` field whose thousands separator made the JSON
-       invalid.
-    2. Prose such as "retails at KES 42,999": accepted ONLY when every
-       currency-tagged amount in the answer is the same number. Two different
-       amounts ("was 60,000, now 45,000") are ambiguous, and an ambiguous
-       answer must never become a price.
+    Prose is deliberately NOT read. "Samsung UA43T5300 KES 42,999" contains
+    5300 next to a currency word, "a similar 32 inch model is KES 18,999"
+    prices the wrong product, and "KES 3,999 a month" is an instalment. A
+    wrong LOW reading wins the Gemini cross-check (a conflict takes the lower
+    price), so a sentence must never become a price.
     """
     m = _NEW_PRICE_FIELD_RE.search(text)
-    if m:
-        return _coerce_price(m.group(1))
-    words = _CURRENCY_WORDS.get(currency, re.escape(currency))
-    tagged = re.findall(
-        rf"(?:{words})\s*({_AMOUNT})|({_AMOUNT})\s*(?:{words})(?![A-Za-z])",
-        text, flags=re.IGNORECASE,
-    )
-    amounts = {_coerce_price(a or b) for a, b in tagged}
-    amounts.discard(None)
-    if len(amounts) == 1:
-        return amounts.pop()
-    return None
+    return _coerce_price(m.group(1)) if m else None
 
 
 def _read_price_answer(text: str, currency: str) -> tuple[float | None, str, str, dict]:
@@ -519,9 +519,12 @@ def _read_price_answer(text: str, currency: str) -> tuple[float | None, str, str
         if price is None:
             return None, LOOKUP_PARSE_FAILURE, "new_price was not a readable number", parsed
         return price, LOOKUP_OK, "json", parsed
-    price = _price_from_loose_text(cleaned, currency)
+    # An explicit null always wins, whatever else the answer goes on to say.
+    if _NEW_PRICE_NULL_RE.search(cleaned):
+        return None, LOOKUP_NULL_PRICE, "the model found no price for this item", {}
+    price = _price_from_loose_text(cleaned)
     if price is not None:
-        return price, LOOKUP_OK, "read from a non-JSON answer", {}
+        return price, LOOKUP_OK, "new_price field of an answer that was not valid JSON", {}
     return None, LOOKUP_PARSE_FAILURE, "no price could be read from the answer", {}
 
 

@@ -127,13 +127,24 @@ def _presented_key(x_admin_key: str, key: str) -> str:
     return (x_admin_key or key or "").strip()
 
 
+_refusal_logged = False
+
+
 def _refuse_if_admin_key_is_public() -> None:
     """503 (not 403) so the operator sees a configuration fault, with the fix,
     rather than a wrong-password answer. Says nothing an attacker can use: the
     public values no longer open anything."""
+    global _refusal_logged
     problem = admin_key_problem()
     if problem:
-        logger.error(f"SECURITY: admin route refused: {problem}.")
+        # Once at ERROR (start-up already logged it too), then DEBUG: these
+        # routes are on the internet, and a loop of requests must not be able
+        # to fill the log.
+        if not _refusal_logged:
+            _refusal_logged = True
+            logger.error(f"SECURITY: admin route refused: {problem}.")
+        else:
+            logger.debug(f"SECURITY: admin route refused: {problem}.")
         raise HTTPException(status_code=503, detail=ADMIN_KEY_NOT_SET_DETAIL)
 
 
