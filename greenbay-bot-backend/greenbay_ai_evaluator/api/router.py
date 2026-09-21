@@ -3819,8 +3819,17 @@ def notify_pickup(req: PickupNotifyRequest, db: Session = Depends(get_db)):
 # GET /pickup-requests  (MUST be above /{session_id} wildcard)
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/pickup-requests")
-def list_pickup_requests(status: str = "pending", db: Session = Depends(get_db)):
-    """List pickup requests, filtered by status."""
+def list_pickup_requests(
+    status: str = "pending",
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """List pickup requests, filtered by status.
+
+    Admin key required (Sep 2026). This returned every seller's name, phone
+    and pickup address to anyone on the internet: nginx proxies /tradein/
+    publicly and the route had no gate. Nothing in this repository calls it.
+    """
     q = db.query(PickupRequest)
     if status != "all":
         q = q.filter(PickupRequest.status == status)

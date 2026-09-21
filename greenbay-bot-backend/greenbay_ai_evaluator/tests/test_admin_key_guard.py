@@ -8,6 +8,7 @@ the committed default and also gates destructive admin routes"):
   - a read-only key that is public, or equal to the admin key, is ignored
   - ALLOW_DEFAULT_DASHBOARD_KEY=true restores the old behaviour for local work
   - the destructive routes (delete, purge, backfills, repairs) are admin only
+  - routes that return customer contact data are admin only
   - app/main.py no longer keeps its own copy of the key or its own comparison
   - no key value is ever logged
 
@@ -213,6 +214,11 @@ class TestRealRouterWiring:
             if path.startswith("/admin/") or path in ("/health/services", "/dashboard/metrics",
                                                       "/dashboard/calibration"):
                 assert deps & {verify_admin_key, verify_readonly_or_admin_key}, (path, method)
+
+    def test_pickup_requests_with_customer_contacts_is_admin_only(self, routes):
+        deps = routes[("/pickup-requests", "GET")]
+        assert verify_admin_key in deps
+        assert verify_readonly_or_admin_key not in deps
 
 
 class TestMainAppUsesTheSharedGate:
