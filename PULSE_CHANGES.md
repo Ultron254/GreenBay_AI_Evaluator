@@ -81,7 +81,7 @@ Nothing here was deployed, pushed, or run against a database. No secret, key val
 
 ## Which entries this covers
 
-- E1: done in code. Still needed from the evaluator team: rotate `DASHBOARD_KEY` off the committed default, mint a `READONLY_DASHBOARD_KEY`, set both in the runtime environment, and hand the read-only one to Pulse (Pulse reads it from `EVALUATOR_API_KEY`; header name stays `X-Admin-Key`, so `EVALUATOR_KEY_HEADER` needs no change).
+- E1: done in code. Still needed from the evaluator team: rotate `DASHBOARD_KEY` off the committed default, mint a `READONLY_DASHBOARD_KEY`, set both in the runtime environment, and hand the read-only one to Pulse (Pulse reads it from `EVALUATOR_DASHBOARD_KEY`; header name stays `X-Admin-Key`, so `EVALUATOR_KEY_HEADER` needs no change).
 - E2: done in code. Still needed: deploy, confirm "Data collection is active" in the GA4 data stream, and grant the Pulse runtime service account Viewer on the property (Pulse needs the numeric property id in `GA4_PROPERTY_ID`).
 - E3: partial. Written on every new evaluation: `Session ID`, `Confidence`, `Decision`, `UTM Source`, `UTM Medium`, `UTM Campaign`, `UTM Content`, `Referrer`, `Landing URL`. The columns must exist on `Appliance Evaluations` (base `appQP9goyJQ6SRU5c`) with those exact names; until they do the writer logs "dropping columns not present on base" and writes the rest. Suggested types: `Session ID` single line text, `Confidence` number (1 decimal), `Decision` single select (accept, negotiate, review, reject, decline), the six attribution fields single line text (Landing URL can be long text). Not done: `Customer Decision` and `Channel`. Both belong on the accept-offer and rejection-choice patch paths, which do not tolerate unknown fields, and `Channel` needs a decision on how WhatsApp-originated evaluations (which call the same `/tradein/evaluate` from `app/webhooks/flowcart.py`) are labelled. See "Still owed".
 
@@ -165,7 +165,7 @@ Pulse's Evaluator Sentinel lists four critical issues. For each: what the code a
 1. **Set a private `DASHBOARD_KEY` first.** After the D03 commit, a `DASHBOARD_KEY` that is unset, blank, the old committed default, or the `env.example` placeholder opens nothing: every admin route, the ops dashboard's `/dashboard/*` data routes, and any client still presenting the default get HTTP 503 until a private key is set. Production is on the committed default today (that is what D03 says), so deploying without doing this locks the ops dashboard and Pulse out. The customer wizard and the public API are not affected. Two ways to set it, both without anybody handling the value in a chat or a commit:
    - GitHub, Settings, Secrets and variables, Actions: add `DASHBOARD_KEY` and `READONLY_DASHBOARD_KEY` (two different values, for example from `openssl rand -hex 32` run twice). The deploy workflow now writes both into the server `.env`, the way it already writes `PERPLEXITY_API_KEY`.
    - Or SSH to the server and edit `/opt/greenbay/greenbay-bot-backend/.env`, then `sudo docker compose up -d app`.
-   - Then put the read-only value in Pulse's `EVALUATOR_API_KEY`. Hex keys are recommended: docker compose interpolates `$` in `.env` values.
+   - Then put the read-only value in Pulse's `EVALUATOR_DASHBOARD_KEY`. Hex keys are recommended: docker compose interpolates `$` in `.env` values.
    - If GitHub Actions cannot run (a billing block, or a release done by hand), the workflow's `.env` step does not run either: use the SSH route.
    - Emergency opt-out with no code change: `ALLOW_DEFAULT_DASHBOARD_KEY=true` in the server `.env` restores the old behaviour. It should not stay set.
 2. **The deploy test gate needed more packages.** `.github/workflows/deploy.yml` installed only `pytest pytest-asyncio loguru pydantic`. Round 1's `test_readonly_key.py` imports `fastapi`, so the gate failed at collection and would have blocked the first deploy after a merge (reproduced in a clean venv: 1 collection error). The gate now also installs `fastapi`, `httpx`, `python-multipart`, `sqlalchemy` and `pydantic-settings`; with that list all 394 tests pass in a venv built from nothing else. The frontend parity tests run under `node`, which `ubuntu-latest` has; they skip when it is missing.
@@ -360,7 +360,7 @@ Not changed, for the evaluator team to decide:
 1. Create two values, for example `openssl rand -hex 32` twice, on your own machine.
 2. GitHub, repository Settings, Secrets and variables, Actions, New repository secret: `DASHBOARD_KEY`, then `READONLY_DASHBOARD_KEY`.
 3. Merge and deploy (or run the deploy workflow by hand). The start-up log should show `[OK]   Admin key: private DASHBOARD_KEY configured`.
-4. Put the read-only value in Pulse's `EVALUATOR_API_KEY` (the header name stays `X-Admin-Key`). Give the admin value only to people who run backfills.
+4. Put the read-only value in Pulse's `EVALUATOR_DASHBOARD_KEY` (the header name stays `X-Admin-Key`). Give the admin value only to people who run backfills.
 5. Check with the curl list under "Read-only key" above, plus: the old default on any admin route now answers 503 before step 2 and 403 after it.
 
 ### How Pulse will show it
