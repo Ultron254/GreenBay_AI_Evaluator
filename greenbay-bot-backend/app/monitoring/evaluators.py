@@ -57,7 +57,6 @@ def tool_usage_efficiency(run: Run, example: Example) -> Dict[str, Any]:
         expected_tools = {
             "search_product": ["search", "find", "look", "product"],
             "add_to_cart": ["add", "cart", "buy", "purchase"],
-            "process_final_checkout_with_mpesa": ["pay", "checkout", "payment", "mpesa"],
             "calculate_delivery_options": ["delivery", "shipping", "address"],
             "get_store_info": ["store", "location", "contact", "address"]
         }
@@ -109,7 +108,7 @@ def conversation_flow_quality(run: Run, example: Example) -> Dict[str, Any]:
             "cart_management": ["cart", "add", "remove", "clear", "show"],
             "checkout": ["checkout", "buy", "purchase", "pay", "order"],
             "delivery": ["delivery", "shipping", "address", "location"],
-            "payment": ["payment", "mpesa", "pay", "money", "cost"],
+            "payment": ["payment", "pay", "money", "cost"],
             "support": ["help", "support", "contact", "problem", "issue"]
         }
         
@@ -139,7 +138,7 @@ def conversation_flow_quality(run: Run, example: Example) -> Dict[str, Any]:
             if any(word in agent_output for word in ["delivery", "address", "shipping", "cost"]):
                 response_quality = 1.0
         elif conversation_stage == "payment":
-            if any(word in agent_output for word in ["payment", "mpesa", "pay", "transaction"]):
+            if any(word in agent_output for word in ["payment", "pay", "transaction"]):
                 response_quality = 1.0
         elif conversation_stage == "support":
             if any(word in agent_output for word in ["help", "support", "assist", "contact"]):

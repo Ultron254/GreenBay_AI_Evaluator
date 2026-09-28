@@ -43,18 +43,33 @@ def _probe_anthropic() -> tuple[bool, str]:
     if not s.anthropic_api_key:
         return False, "ANTHROPIC_API_KEY not configured"
     import requests
-    # Minimal models list call — cheap, validates the key without spending tokens.
-    resp = requests.get(
-        "https://api.anthropic.com/v1/models",
+    # A models-list call only proves the key exists — it still returns 200 on an
+    # account with no credit. Spend one token on a real completion so an
+    # exhausted balance (the failure that silently broke pricing) shows up here.
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
         headers={
             "x-api-key": s.anthropic_api_key,
             "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
         },
-        timeout=10,
+        json={
+            "model": s.anthropic_primary_model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        timeout=20,
     )
     if resp.status_code == 200:
-        return True, f"OK (model configured: {s.anthropic_primary_model})"
-    return False, f"HTTP {resp.status_code}: {resp.text[:160]}"
+        return True, f"OK (billable call succeeded on {s.anthropic_primary_model})"
+    body = resp.text[:200]
+    if resp.status_code in (400, 402) and "credit" in body.lower():
+        return False, f"OUT OF CREDIT — top up billing. HTTP {resp.status_code}: {body}"
+    if resp.status_code == 401:
+        return False, f"Key rejected (revoked or wrong). HTTP 401: {body}"
+    if resp.status_code == 429:
+        return False, f"Rate limited / quota exhausted. HTTP 429: {body}"
+    return False, f"HTTP {resp.status_code}: {body}"
 
 
 def _probe_vertex_gemini() -> tuple[bool, str]:

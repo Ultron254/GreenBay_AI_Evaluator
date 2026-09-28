@@ -39,9 +39,6 @@ from app.agent.tools.checkout_tools import (
     create_order_from_cart,
     checkout_with_selected_items,
     calculate_checkout_total_with_delivery,
-    process_final_checkout_with_mpesa,
-    check_payment_status,
-    buy_product,
     generate_and_send_receipt,
 )
 
@@ -129,9 +126,6 @@ ALL_TOOLS = [
     compare_delivery_options,
     
     # Payment Processing
-    process_final_checkout_with_mpesa,
-    check_payment_status,
-    buy_product,
     generate_and_send_receipt,
     
     # Order Management

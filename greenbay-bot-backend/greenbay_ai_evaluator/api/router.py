@@ -2289,7 +2289,17 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     vision_result = pool.submit(_run_vision).result(timeout=120)
                 logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
             except Exception as ve:
-                logger.warning(f"Vision analysis skipped: {ve}")
+                # Photos were supplied but could not be analysed. Quoting here
+                # would price an item nobody looked at, so refuse instead.
+                logger.error(f"Vision analysis unavailable — refusing to quote: {ve}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "We couldn't analyse your photos just now, so we can't give "
+                        "you an accurate price. Our team has been alerted — please "
+                        "try again shortly or talk to us on WhatsApp."
+                    ),
+                )
 
         # 3b-ii. Vertex AI (Gemini) secondary evaluation — advisory only.
         # Runs in a separate thread with its own event loop, matches the vision
@@ -3030,6 +3040,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     else str(vs.id)
                 )
                 eval_s3_keys = _upload_eval_image_data_to_s3(req.image_data, folder_id)
+                if eval_s3_keys:
+                    vs.image_s3_keys = eval_s3_keys
                 if req.trade_in_session_id is not None and eval_s3_keys:
                     tis_row = (
                         db.query(TradeInSession)
@@ -3199,6 +3211,16 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         except Exception as _notify_err:
             logger.warning(f"v6 internal notification failed: {_notify_err}")
 
+        # Email CX the leads worth phoning back. Most evaluations route to
+        # human review, so this is where the callable ones surface.
+        try:
+            from greenbay_ai_evaluator.services.email_service import (
+                snapshot_session, send_qualified_lead_email,
+            )
+            send_qualified_lead_email(snapshot_session(vs), _outcome)
+        except Exception as _lead_err:
+            logger.warning(f"Qualified-lead email failed: {_lead_err}")
+
         return EvaluateResponse(
             session_id=vs.id,
             estimated_resale_value=result.estimated_resale_value,
@@ -3275,14 +3297,14 @@ def accept_offer(
         logger.warning(f"Accept notification failed: {e}")
 
     # Issue #13: email the GreenBay team that the price was accepted.
-    # Re-enabled (Jul 2026). Fail-safe by design: prefers SMTP when SMTP_HOST is
-    # configured, falls back to SES; if neither is usable it logs one warning
-    # and returns without raising — it can never break the accept flow.
+    # Fail-safe by design: prefers SMTP when SMTP_HOST is configured, falls back
+    # to SES; if neither is usable it logs one warning and returns without
+    # raising — it can never break the accept flow.
     try:
         from greenbay_ai_evaluator.services.email_service import (
-            snapshot_session, send_evaluation_accepted_email,
+            snapshot_session, send_evaluation_outcome_email,
         )
-        send_evaluation_accepted_email(snapshot_session(vs))
+        send_evaluation_outcome_email(snapshot_session(vs), "ACCEPTED")
     except Exception as e:
         logger.warning(f"Accept email failed: {e}")
 
@@ -3290,8 +3312,9 @@ def accept_offer(
         session_id=session_id,
         decision="accepted",
         message=(
-            "Your offer is accepted. Our team has been notified and will "
-            "contact you to arrange collection and payment."
+            "Your offer is accepted. Our sourcing team has been notified and "
+            "will contact you to arrange collection and confirm the final "
+            "amount after inspecting the item."
         ),
     )
 
@@ -3330,9 +3353,10 @@ def rejection_choice(
         balance = round(offer * 0.90, -2)
         vs.final_offer = upfront
         message = (
-            f"Great choice! You'll receive {currency} {upfront:,.0f} upfront today, "
+            f"Great choice! You'll receive {currency} {upfront:,.0f} upfront, "
             f"and {currency} {balance:,.0f} when the item sells (within 90 days). "
-            f"Our team will contact you to arrange collection."
+            f"Our sourcing team will contact you to arrange collection and settle "
+            f"the amounts directly with you."
         )
     else:  # C
         message = (
@@ -3350,9 +3374,10 @@ def rejection_choice(
         logger.warning(f"Airtable rejection-choice patch failed: {e}")
 
     # Internal notification
+    option_labels = {"A": "Consignment", "B": "10/90 Split", "C": "Talk to Team"}
+    option_label = f"Option {option}: {option_labels.get(option, option)}"
     try:
         from greenbay_ai_evaluator.services.internal_notification_service import notify_internal_team
-        option_labels = {"A": "Consignment", "B": "10/90 Split", "C": "Talk to Team"}
         notify_internal_team({
             "outcome": "REJECTED",
             "product": f"{vs.brand} {vs.model} {vs.category}".strip(),
@@ -3362,10 +3387,19 @@ def rejection_choice(
             "customer_name": vs.seller_name or "",
             "customer_phone": vs.seller_phone or "",
             "session_id": session_id,
-            "extra": f"Option {option}: {option_labels.get(option, option)}",
+            "extra": option_label,
         })
     except Exception as e:
         logger.warning(f"Rejection notification failed: {e}")
+
+    # Email the team the rejected outcome with photos so CX can pick it up.
+    try:
+        from greenbay_ai_evaluator.services.email_service import (
+            snapshot_session, send_evaluation_outcome_email,
+        )
+        send_evaluation_outcome_email(snapshot_session(vs), "REJECTED", option_label)
+    except Exception as e:
+        logger.warning(f"Rejection email failed: {e}")
 
     return RejectionChoiceResponse(
         session_id=session_id,

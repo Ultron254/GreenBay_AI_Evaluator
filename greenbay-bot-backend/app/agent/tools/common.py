@@ -10,7 +10,6 @@ from app.services.search_cache import search_cache
 from app.services.cart_service import cart_service
 from app.services.order_service import order_service
 from app.services.delivery_service import delivery_service
-from app.services.mpesa_service import mpesa_service
 from app.services.receipt_service import receipt_generator
 from app.config import get_settings
 
@@ -28,7 +27,6 @@ __all__ = [
     'cart_service',
     'order_service',
     'delivery_service',
-    'mpesa_service',
     'receipt_generator',
     'settings',
     'logger',

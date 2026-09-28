@@ -37,8 +37,7 @@ class ReceiptGenerator:
         total_amount: float = 0.0,
         delivery_address: str = "",
         delivery_timeline: str = "",
-        payment_method: str = "M-Pesa",
-        mpesa_transaction_id: str = "",
+        payment_method: str = "Settled by sourcing team",
         customer_name: Optional[str] = None
     ) -> str:
         """
@@ -55,7 +54,6 @@ class ReceiptGenerator:
             delivery_address: Delivery address
             delivery_timeline: Delivery timeline
             payment_method: Payment method used
-            mpesa_transaction_id: M-Pesa transaction ID
             
         Returns:
             Path to generated PDF receipt
@@ -127,9 +125,6 @@ class ReceiptGenerator:
             
             receipt_info.append(['Phone Number:', customer_phone])
             receipt_info.append(['Payment Method:', payment_method])
-            
-            if mpesa_transaction_id:
-                receipt_info.append(['M-Pesa Ref:', mpesa_transaction_id])
             
             # Add delivery address if available
             if delivery_address:

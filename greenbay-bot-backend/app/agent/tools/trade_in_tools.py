@@ -1,4 +1,4 @@
-﻿"""Agent tools for Trade In Tools."""
+"""Agent tools for Trade In Tools."""
 
 from typing import Dict, Any, List, Optional
 from loguru import logger
@@ -3558,7 +3558,6 @@ def use_store_credit(product_name: str, product_price: float, product_id: str = 
         # Create payment record
         payment = Payment(
             order_id=order.id,
-            mpesa_transaction_id=f"STORE_CREDIT_{order_id}",
             amount=product_price,
             status=PaymentStatus.COMPLETED if payment_required == 0 else PaymentStatus.PENDING,
             phone_number=user_phone
@@ -3598,7 +3597,7 @@ def use_store_credit(product_name: str, product_price: float, product_id: str = 
             else:
                 message = f"Purchase successful! You bought {product_name} for KES {product_price:,}. Remaining credit: KES {remaining_credit:,}."
         else:
-            message = f"Purchase successful! You used KES {current_credit:,} credit. Additional payment needed: KES {payment_required:,} via M-Pesa."
+            message = f"Purchase successful! You used KES {current_credit:,} credit. Balance of KES {payment_required:,} to settle with our team."
         
         db.commit()
         

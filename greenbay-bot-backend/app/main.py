@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import uvicorn
@@ -40,14 +40,13 @@ except ImportError:
 
 from app.config import get_settings, invalidate_settings_cache, runtime_s3_bucket_name
 from app.database.db import init_db
-from app.webhooks.whatsapp import whatsapp_router
-# CR-5: M-Pesa backend disabled — uncomment to re-enable
-# from app.webhooks.mpesa import mpesa_router
-from app.webhooks.shopify import shopify_router
+# WhatsApp Cloud API webhook disabled — the evaluator hands off to a human via a
+# wa.me deep link, so no inbound webhook (and no ACCESS_TOKEN/APP_SECRET) is needed.
+# from app.webhooks.whatsapp import whatsapp_router
+# Shopify webhooks disabled — scrape-only catalogue refresh, see create_app()
+# from app.webhooks.shopify import shopify_router
 from app.webhooks.flowcart import flowcart_router
 from app.monitoring.dashboard import langsmith_monitor
-# CR-5: Payment polling disabled (depends on M-Pesa)
-# from app.services.payment_polling_service import payment_polling_service
 from greenbay_ai_evaluator.api.router import evaluator_router
 from greenbay_ai_evaluator.api.chat_router import chat_router
 
@@ -213,12 +212,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup health check encountered an error: {e}")
 
-    # CR-5: M-Pesa payment polling disabled — uncomment to re-enable
     # async def _resilient_polling():
     #     """Wrapper that restarts the polling loop if it crashes."""
     #     while True:
     #         try:
-    #             await payment_polling_service.start_polling_loop()
     #         except asyncio.CancelledError:
     #             raise  # propagate cancellation
     #         except Exception as e:
@@ -227,7 +224,6 @@ async def lifespan(app: FastAPI):
     #
     # polling_task = asyncio.create_task(_resilient_polling())
     # logger.info("Payment polling service started (with auto-restart)")
-    logger.info("M-Pesa payment polling DISABLED (CR-5)")
 
     # Start background Shopify inventory scraper (runs on startup + every 12 hours)
     async def _shopify_scraper_loop():
@@ -292,7 +288,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown — cancel any background tasks we started above.
-    # Note: M-Pesa polling task is disabled (CR-5), so it's NOT cancelled here.
     for task_name, task in (
         ("Shopify scraper", scraper_task),
         ("Pricing learner", learner_task),
@@ -378,10 +373,11 @@ def create_app() -> FastAPI:
         logger.warning("Rate limiting disabled (install slowapi to enable)")
     
     # Include routers
-    app.include_router(whatsapp_router, tags=["WhatsApp"])
-    # CR-5: M-Pesa router disabled — uncomment to re-enable
-    # app.include_router(mpesa_router, tags=["M-Pesa"])
-    app.include_router(shopify_router, tags=["Shopify"])
+    # WhatsApp Cloud API webhook disabled — unauthenticated and unused by the evaluator
+    # app.include_router(whatsapp_router, tags=["WhatsApp"])
+    # Shopify webhooks disabled — the catalogue is refreshed by the 12-hourly
+    # products.json scraper in lifespan(), which is all the carousel needs.
+    # app.include_router(shopify_router, tags=["Shopify"])
     app.include_router(flowcart_router, prefix="/webhook", tags=["Flowcart WhatsApp"])
     app.include_router(evaluator_router, prefix="/tradein", tags=["Trade-In Evaluator"])
     app.include_router(chat_router, prefix="/tradein", tags=["Trade-In Chat"])
@@ -412,7 +408,11 @@ def create_app() -> FastAPI:
 
         # OWASP security headers on ALL responses
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        # X-Frame-Options cannot express an allow-list, so framing is controlled
+        # by CSP frame-ancestors below (greenbay.market embeds the evaluator).
+        response.headers["Content-Security-Policy"] = (
+            "frame-ancestors 'self' https://greenbay.market https://www.greenbay.market"
+        )
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = (
@@ -433,9 +433,19 @@ def create_app() -> FastAPI:
     
     @app.get("/")
     async def root():
-        """Root endpoint."""
+        """Send visitors straight to the evaluator rather than a JSON blob."""
+        return RedirectResponse(url="/app/", status_code=307)
+
+    @app.get("/evaluate")
+    async def evaluate_alias():
+        """Clean public URL for the wizard."""
+        return RedirectResponse(url="/app/", status_code=307)
+
+    @app.get("/api")
+    async def api_info():
+        """Service metadata, previously served at /."""
         return {
-            "message": "GreenBay Market WhatsApp E-commerce Chatbot",
+            "message": "GreenBay AI Evaluator",
             "version": settings.app_version,
             "status": "running"
         }

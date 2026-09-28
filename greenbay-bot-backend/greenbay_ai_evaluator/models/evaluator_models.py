@@ -109,6 +109,10 @@ class ValuationSession(Base):
     image_quality_score = Column(Float, nullable=True)  # 0-100
     risk_score = Column(Float, nullable=True)  # 0-100
 
+    # S3 object keys for the submitted photos, re-presigned on demand so the
+    # CX handoff can show the images long after the upload URLs expire.
+    image_s3_keys = Column(JSON, nullable=True)
+
     # Valuation results
     retail_price = Column(Float, nullable=True)
     estimated_resale_value = Column(Float, nullable=True)

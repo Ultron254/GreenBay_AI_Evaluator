@@ -848,6 +848,27 @@ def compute_valuation(
             # An under-sourced base is unreliable — route to human review.
             confidence_score = min(confidence_score, 75.0)
 
+    # -- STEP 11d: Never bid above the seller's own asking price -------------
+    # The engine estimates what an item is worth; the seller states what they
+    # will take. Quoting the higher of the two hands away margin on every deal
+    # where the seller undervalued their item.
+    if seller_asking_price and 0 < seller_asking_price < opening_offer:
+        ask_note = (
+            f"Asking-price cap: seller asked KES {seller_asking_price:,.0f}, "
+            f"below the computed offer of KES {opening_offer:,.0f}. "
+            f"Offer capped at the asking price."
+        )
+        # A very large gap usually means a mistyped amount or a misunderstood
+        # item rather than a bargain — let a human confirm before closing.
+        if seller_asking_price < opening_offer * 0.6:
+            ask_note += " Gap exceeds 40% — flagged for review."
+            confidence_score = min(confidence_score, 75.0)
+        logger.info(ask_note)
+        trace_lines.append(f"GUARDRAIL: {ask_note}")
+        # Rounding must never push the offer back above what was asked.
+        opening_offer = min(_round_price(seller_asking_price, round_step), seller_asking_price)
+        walkaway_limit = min(walkaway_limit, opening_offer)
+
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
     trace_lines.append(f"Confidence: {confidence_score:.0f}%")
 

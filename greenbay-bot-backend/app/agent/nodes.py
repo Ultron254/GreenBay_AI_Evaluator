@@ -29,8 +29,6 @@ from app.agent.tools import (
     find_upsell_product,
     get_or_set_delivery_address,
     calculate_checkout_total_with_delivery,
-    process_final_checkout_with_mpesa,
-    check_payment_status,
     generate_and_send_receipt,
     create_trade_in_session,
     set_current_user_phone,
@@ -1010,130 +1008,6 @@ def delivery_setup_node(state: ChatbotState) -> ChatbotState:
 # PAYMENT PROCESSING NODE
 # ============================================================================
 
-def payment_processing_node(state: ChatbotState) -> ChatbotState:
-    """
-    Initiate M-Pesa payment.
-    """
-    logger.info("[PAYMENT] Processing payment")
-    
-    try:
-        set_current_user_phone(state["user_phone"])
-        
-        # Initiate payment
-        payment_result = process_final_checkout_with_mpesa.invoke({
-            "user_phone": state["user_phone"]
-        })
-        
-        if payment_result.get("success"):
-            state["order_id"] = payment_result.get("order_id")
-            state["payment_status"] = "initiated"
-            
-            response = "💳 *Payment Initiated!*\n\n"
-            response += f"Order ID: {state['order_id']}\n"
-            response += f"Amount: KES {state['payment_amount']:,.0f}\n\n"
-            response += "📱 Please check your phone for the M-Pesa prompt and enter your PIN.\n\n"
-            response += "I'll check the payment status in a moment..."
-            
-            state["messages"].append(AIMessage(content=response))
-            state["conversation_stage"] = "payment_confirmation"
-            state["needs_user_input"] = False
-        else:
-            error_msg = payment_result.get("message", "Payment failed")
-            state["messages"].append(AIMessage(
-                content=f"❌ Payment could not be initiated: {error_msg}\n\nPlease try again."
-            ))
-            state["payment_status"] = "failed"
-            state["conversation_stage"] = "error"
-            state["needs_user_input"] = True
-        
-        state["nodes_visited"].append("payment_processing")
-        return state
-        
-    except Exception as e:
-        logger.error(f"[PAYMENT] Error: {e}")
-        state["error_message"] = str(e)
-        state["error_count"] += 1
-        state["payment_status"] = "failed"
-        state["conversation_stage"] = "error"
-        return state
-
-
-# ============================================================================
-# PAYMENT CONFIRMATION NODE
-# ============================================================================
-
-def payment_confirmation_node(state: ChatbotState) -> ChatbotState:
-    """
-    Check payment status and generate receipt.
-    """
-    logger.info("[PAYMENT CONFIRMATION] Checking status")
-    
-    try:
-        set_current_user_phone(state["user_phone"])
-        
-        # Check payment status
-        status_result = check_payment_status.invoke({
-            "user_phone": state["user_phone"],
-            "order_id": state.get("order_id"),
-            "use_stk_query": True
-        })
-        
-        payment_status = status_result.get("payment_status", "pending")
-        state["payment_status"] = payment_status
-        
-        if payment_status == "completed":
-            # Payment successful - generate receipt
-            state["mpesa_transaction_id"] = status_result.get("mpesa_code")
-            
-            receipt_result = generate_and_send_receipt.invoke({
-                "user_phone": state["user_phone"],
-                "order_id": state["order_id"]
-            })
-            
-            response = "✅ *Payment Successful!*\n\n"
-            response += f"Order ID: {state['order_id']}\n"
-            response += f"M-Pesa Code: {state['mpesa_transaction_id']}\n\n"
-            
-            if receipt_result.get("success"):
-                response += "📧 Receipt has been generated!\n\n"
-            
-            response += "Thank you for shopping with GreenBay Market! 🎉\n\n"
-            response += "Your order will be delivered soon. Is there anything else I can help you with?"
-            
-            state["messages"].append(AIMessage(content=response))
-            state["conversation_stage"] = "completed"
-            state["workflow_completed"] = True
-            state["needs_user_input"] = True
-            
-        elif payment_status == "failed":
-            response = "❌ Payment failed or was cancelled.\n\n"
-            response += "Would you like to try again? (yes/no)"
-            
-            state["messages"].append(AIMessage(content=response))
-            state["conversation_stage"] = "checkout_confirmation"
-            state["needs_user_input"] = True
-            
-        else:
-            # Still pending
-            response = "⏳ Payment is still pending. Please complete the M-Pesa prompt on your phone.\n\n"
-            response += "I'll check again in a moment..."
-            
-            state["messages"].append(AIMessage(content=response))
-            state["needs_user_input"] = False
-        
-        state["nodes_visited"].append("payment_confirmation")
-        return state
-        
-    except Exception as e:
-        logger.error(f"[PAYMENT CONFIRMATION] Error: {e}")
-        state["error_message"] = str(e)
-        state["error_count"] += 1
-        return state
-
-
-# ============================================================================
-# ERROR HANDLING NODE
-# ============================================================================
 
 def error_handling_node(state: ChatbotState) -> ChatbotState:
     """

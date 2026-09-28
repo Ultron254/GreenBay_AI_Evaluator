@@ -9,7 +9,7 @@
  STATE
  ============================================================ */
 const API_BASE = window.location.origin;
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 10;
 
 // v6: Detect country via timezone heuristic (no permissions needed)
 (function detectCountry() {
@@ -31,7 +31,6 @@ const state = {
         age: null,
         condition: null,
         conditionGrade: null,
-        ownership: null,
         issues: '',
         otherDescription: '',
         sellerName: '',
@@ -93,7 +92,7 @@ function resetWizard() {
     state.answers = {
         category: null, brand: null, model: '', modelPhoto: null,
         age: null, condition: null, conditionGrade: null,
-        ownership: null, issues: '', otherDescription: '',
+        issues: '', otherDescription: '',
         sellerName: '', sellerPhone: '',
         photos: [], price: null,
     };
@@ -140,15 +139,14 @@ function resetWizard() {
 const STEP_LABELS = {
     1: 'Category',
     2: 'Brand',
-    3: 'Model Number',
+    3: 'Model & Size',
     4: 'Model Label Photo',
     5: 'Product Age',
     6: 'Condition',
-    7: 'Ownership',
-    8: 'Issues & Damage',
-    9: 'Your Details',
-    10: 'Photos',
-    11: 'Your Price',
+    7: 'Issues & Damage',
+    8: 'Your Details',
+    9: 'Photos',
+    10: 'Your Price',
 };
 
 const CATEGORY_NAMES = {
@@ -261,11 +259,10 @@ function isStepValid(step) {
         case 4: return true; // model photo is now optional
         case 5: return state.answers.age !== null;
         case 6: return !!state.answers.condition;
-        case 7: return !!state.answers.ownership;
-        case 8: return true; // issues can be empty
-        case 9: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
-        case 10: return state.answers.photos.length >= 3;
-        case 11: return true; // price can be null ("make me an offer")
+        case 7: return true; // issues can be empty
+        case 8: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
+        case 9: return state.answers.photos.length >= 3;
+        case 10: return true; // price can be null ("make me an offer")
         default: return true;
     }
 }
@@ -299,9 +296,8 @@ function restoreSelections() {
     const mappings = [
         { step: 1, field: 'category', container: 'categoryOptions' },
         { step: 2, field: 'brand', container: 'brandOptions' },
-        { step: 4, field: 'age', container: 'ageOptions' },
-        { step: 5, field: 'condition', container: 'conditionOptions' },
-        { step: 6, field: 'ownership', container: 'ownershipOptions' },
+        { step: 5, field: 'age', container: 'ageOptions' },
+        { step: 6, field: 'condition', container: 'conditionOptions' },
     ];
 
     mappings.forEach(({ field, container }) => {
@@ -805,13 +801,12 @@ function mirrorStepToChat(step) {
         4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : 'Model photo skipped',
         5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
         6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
-        7: () => a.ownership ? `Ownership: <strong>${a.ownership.replace(/_/g, ' ')}</strong>` : null,
-        8: () => a.issues ? (a.issues === 'No issues'
+        7: () => a.issues ? (a.issues === 'No issues'
             ? 'No issues, that\'s great!'
             : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
-        9: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
-        10: () => `${a.photos.length} photos uploaded`,
-        11: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        8: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
+        9: () => `${a.photos.length} photos uploaded`,
+        10: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
     };
 
     const fn = messages[step];
@@ -824,15 +819,14 @@ function mirrorStepToChat(step) {
 function promptNextStep(step) {
     const prompts = {
         2: 'Great choice! Now, what brand is your appliance?',
-        3: 'Next up, the model number. This is optional — skip it if you\'re not sure!',
+        3: 'What size is it? Size drives the price more than anything else. The model number is optional — add it if you know it.',
         4: 'Upload a photo of the model label if you have it. This is optional but helps me look up exact specs!',
         5: 'How old is this product? Younger appliances hold more value!',
         6: 'And what condition is it in? Be honest, it helps me be accurate!',
-        7: 'How long have you personally owned it? This helps with provenance.',
-        8: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
-        9: 'I need your name and phone number so we can reach you about pickup or drop-off.',
-        10: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
-        11: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
+        7: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
+        8: 'I need your name and phone number so we can reach you about pickup or drop-off.',
+        9: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
+        10: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
     };
 
     // Show/hide Other description field based on category
@@ -1775,7 +1769,7 @@ async function submitPickupRequest(amount) {
  <strong>PICKUP SUMMARY</strong><br>
  📍 Location: ${escapeHtml(address)}<br>
  📅 Preferred: ${day || 'ASAP'}<br>
- 💰 Payment: KES ${formatKES(amount)} via M-Pesa on pickup<br><br>
+ 💰 Agreed value: KES ${formatKES(amount)} — confirmed and settled by our sourcing team on collection<br><br>
  Our team (Newton) will contact you at <strong>${escapeHtml(a.sellerPhone)}</strong> to confirm the exact time. Thanks for choosing GreenBay!`);
 
     showFinalConfirmation(amount, 'pickup', address, day);
@@ -1790,7 +1784,7 @@ function showDropoffLocations(amount) {
  <div class="deal-result">
  <div class="result-icon">🏬</div>
  <h3>Our Outlet Locations</h3>
- <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location and get paid on the spot!</p>
+ <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location — our sourcing team will inspect it and settle with you directly.</p>
  
  <div style="display:grid;gap:16px;margin:20px 0;">
  <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
@@ -1819,7 +1813,7 @@ function showDropoffLocations(amount) {
  <span>${escapeHtml(a.sellerName)} (${escapeHtml(a.sellerPhone)})</span>
  </div>
  <div class="deal-summary-row total">
- <span>Amount Due on Drop-off</span>
+ <span>Agreed Value on Drop-off</span>
  <span>${curSym()} ${formatKES(amount)}</span>
  </div>
  </div>
@@ -1862,8 +1856,8 @@ function showFinalConfirmation(amount, method, address, day) {
  ${method === 'pickup' ? `<div class="deal-summary-row"><span>Pickup Location</span><span>${escapeHtml(address || '')}</span></div>` : ''}
  ${method === 'pickup' && day ? `<div class="deal-summary-row"><span>Preferred Day</span><span>${day}</span></div>` : ''}
  <div class="deal-summary-row">
- <span>Payment</span>
- <span>M-Pesa on ${method === 'pickup' ? 'pickup' : 'drop-off'}</span>
+ <span>Settlement</span>
+ <span>Arranged by our sourcing team on ${method === 'pickup' ? 'collection' : 'drop-off'}</span>
  </div>
  <div class="deal-summary-row">
  <span>Reference</span>
@@ -1884,7 +1878,7 @@ Start New Evaluation
  <div class="whatsapp-bridge-icon">💬</div>
  <div class="whatsapp-bridge-text">
  <h4>Track on WhatsApp</h4>
- <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and payment confirmation.</p>
+ <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and confirmation from our team.</p>
  </div>
  <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
@@ -1975,7 +1969,7 @@ function resetEvaluator() {
     state.sessionId = null;
     state.answers = {
         category: null, brand: null, model: '', modelPhoto: null,
-        age: null, condition: null, conditionGrade: null, ownership: null,
+        age: null, condition: null, conditionGrade: null,
         issues: '', otherDescription: '', sellerName: '', sellerPhone: '',
         photos: [], price: null,
     };
