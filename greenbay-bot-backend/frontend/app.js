@@ -655,12 +655,14 @@ async function lookupModelFromPhoto(dataUrl) {
         if (response.ok) {
             const result = await response.json();
             if (result.model_verified) {
-                addChatMessage('bot', `Model <strong>${result.model_number || state.answers.model}</strong> verified! ${result.specs_summary || ''}`);
-                // Update model if OCR found a better match
-                if (result.model_number && result.model_number !== state.answers.model) {
-                    state.answers.model = result.model_number;
+                addChatMessage('bot', `Model <strong>${escapeHtml(result.model_number || state.answers.model || '')}</strong> verified! ${escapeHtml(result.specs_summary || '')}`);
+                // OCR output is model-generated text read off a photo, so it is
+                // sanitised like any other free-text answer before it is stored.
+                const ocrModel = sanitiseText(result.model_number || '');
+                if (ocrModel && ocrModel !== state.answers.model) {
+                    state.answers.model = ocrModel;
                     const modelInput = document.getElementById('modelInput');
-                    if (modelInput) modelInput.value = result.model_number;
+                    if (modelInput) modelInput.value = ocrModel;
                     saveState();
                 }
             }
@@ -958,8 +960,8 @@ function mirrorStepToChat(step) {
     const a = state.answers;
     const messages = {
         1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}` : null,
-        2: () => a.brand ? `Brand: <strong>${a.brand}</strong>, nice choice!` : null,
-        3: () => a.model ? `Model: <strong>${a.model}</strong>, got it!` : 'Model number skipped',
+        2: () => a.brand ? `Brand: <strong>${escapeHtml(a.brand)}</strong>, nice choice!` : null,
+        3: () => a.model ? `Model: <strong>${escapeHtml(a.model)}</strong>, got it!` : 'Model number skipped',
         4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : 'Model photo skipped',
         5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
         6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
@@ -1042,7 +1044,7 @@ async function startAnalysis() {
 
         // Chat updates
         const chatMsgs = [
-            ` Brand verified: <strong>${a.brand}</strong>`,
+            ` Brand verified: <strong>${escapeHtml(a.brand || '')}</strong>`,
             ` Condition: Grade <strong>${a.conditionGrade}</strong> , ${CONDITION_LABELS[a.condition]}`,
             ' Finding you the best offer price based on current market data',
             ' Calculating your offer...',

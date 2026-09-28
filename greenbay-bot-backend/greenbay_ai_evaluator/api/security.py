@@ -167,6 +167,21 @@ def verify_admin_key(
     return True
 
 
+def presented_is_admin_key(
+    key: str = Query("", alias="key", max_length=200),
+    x_admin_key: str = Header("", alias="X-Admin-Key"),
+) -> bool:
+    """Whether the caller presented the ADMIN key, without raising.
+
+    For read-only routes that expose one expensive sub-action: the route stays
+    open to the read-only key, but the billed part needs the admin key.
+    """
+    if admin_key_problem():
+        return False
+    presented = _presented_key(x_admin_key, key)
+    return bool(presented) and _same(presented, admin_key().strip())
+
+
 def verify_readonly_or_admin_key(
     key: str = Query("", alias="key", max_length=200),
     x_admin_key: str = Header("", alias="X-Admin-Key"),

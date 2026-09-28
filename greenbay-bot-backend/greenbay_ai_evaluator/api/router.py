@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.database.db import get_db
 from greenbay_ai_evaluator.api.security import (
+    presented_is_admin_key,
     verify_admin_key,
     verify_readonly_or_admin_key,
 )
@@ -105,7 +106,11 @@ evaluator_router = APIRouter()
 # GET /tradein/health/services?key=...
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/health/services")
-def health_services(fresh: bool = False, _: bool = Depends(verify_readonly_or_admin_key)):
+def health_services(
+    fresh: bool = False,
+    _: bool = Depends(verify_readonly_or_admin_key),
+    is_admin: bool = Depends(presented_is_admin_key),
+):
     """Run live probes against every external dependency.
 
     Gated by DASHBOARD_KEY or READONLY_DASHBOARD_KEY (header X-Admin-Key or
@@ -114,11 +119,18 @@ def health_services(fresh: bool = False, _: bool = Depends(verify_readonly_or_ad
 
     The two billed price-lookup probes (gemini_search_newprice,
     perplexity_sonar) reuse their last result; ``?fresh=true`` forces a real
-    lookup, e.g. right after topping up Perplexity credits.
+    lookup, e.g. right after topping up Perplexity credits. Because that
+    spends money, fresh=true needs the admin key — a polling reader must not
+    be able to bill the account, by mistake or in a loop.
     """
     from greenbay_ai_evaluator.services.live_healthcheck_service import (
         run_live_healthcheck,
     )
+    if fresh and not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="fresh=true makes billed calls and requires the admin key.",
+        )
     return run_live_healthcheck(fresh=fresh)
 
 
