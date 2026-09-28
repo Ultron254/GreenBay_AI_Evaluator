@@ -21,7 +21,10 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
-from greenbay_ai_evaluator.api.security import verify_admin_key
+from greenbay_ai_evaluator.api.security import (
+    verify_admin_key,
+    verify_readonly_or_admin_key,
+)
 from greenbay_ai_evaluator.api.schemas import (
     AcceptOfferResponse,
     CounterRequest,
@@ -70,7 +73,10 @@ from greenbay_ai_evaluator.services.image_quality_service import (
     score_images,
     score_images_with_rejections,
 )
-from greenbay_ai_evaluator.services.market_price_service import search_internet_price
+from greenbay_ai_evaluator.services.market_price_service import (
+    internet_lookup_outage,
+    search_internet_price,
+)
 from greenbay_ai_evaluator.services.marketplace_scraper import get_marketplace_prices
 from greenbay_ai_evaluator.services.risk_service import assess_risk
 from greenbay_ai_evaluator.services.vision_service import analyze_images
@@ -99,23 +105,28 @@ evaluator_router = APIRouter()
 # GET /tradein/health/services?key=...
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/health/services")
-def health_services(_: bool = Depends(verify_admin_key)):
+def health_services(fresh: bool = False, _: bool = Depends(verify_readonly_or_admin_key)):
     """Run live probes against every external dependency.
 
-    Gated by DASHBOARD_KEY (header X-Admin-Key or ?key=) so the report —
-    which can include error snippets — is not publicly exposed.
+    Gated by DASHBOARD_KEY or READONLY_DASHBOARD_KEY (header X-Admin-Key or
+    ?key=) so the report, which can include error snippets, is not
+    publicly exposed.
+
+    The two billed price-lookup probes (gemini_search_newprice,
+    perplexity_sonar) reuse their last result; ``?fresh=true`` forces a real
+    lookup, e.g. right after topping up Perplexity credits.
     """
     from greenbay_ai_evaluator.services.live_healthcheck_service import (
         run_live_healthcheck,
     )
-    return run_live_healthcheck()
+    return run_live_healthcheck(fresh=fresh)
 
 
 @evaluator_router.get("/dashboard/metrics")
 def dashboard_metrics(
     days: int = 30,
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _: bool = Depends(verify_readonly_or_admin_key),
 ):
     """Pricing/performance metrics for the ops dashboard (gated)."""
     from greenbay_ai_evaluator.services.evaluator_metrics_service import (
@@ -127,7 +138,7 @@ def dashboard_metrics(
 @evaluator_router.get("/dashboard/calibration")
 def dashboard_calibration(
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _: bool = Depends(verify_readonly_or_admin_key),
 ):
     """Back-test the pricing policy against real sold prices (issue #12, gated)."""
     from greenbay_ai_evaluator.services.calibration_service import compute_calibration
@@ -347,7 +358,7 @@ def _at_empty(v) -> bool:
 
 
 @evaluator_router.get("/admin/tracker-analysis")
-def tracker_analysis(_: bool = Depends(verify_admin_key)):
+def tracker_analysis(_: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only dump of the 'Customer Initiated Evaluation' tracker rows so the
     AI vs internal/new-price accuracy can be analysed off the real numbers."""
     from greenbay_ai_evaluator.services import reference_data_service as rds
@@ -396,7 +407,7 @@ def tracker_analysis(_: bool = Depends(verify_admin_key)):
 
 
 @evaluator_router.get("/admin/accuracy-report")
-def accuracy_report(_: bool = Depends(verify_admin_key)):
+def accuracy_report(_: bool = Depends(verify_readonly_or_admin_key)):
     """Measured pricing accuracy vs the internal team, plus the calibrated
     acquisition ratios currently in force. This is THE weekly number to watch:
     'within_15pct' should trend up as the calibration loop learns."""
@@ -676,7 +687,7 @@ def delete_eval_record(ref: str, _: bool = Depends(verify_admin_key)):
 
 
 @evaluator_router.get("/admin/contact-data-stats")
-def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only: do stored sessions actually carry seller name/phone? Confirms
     whether historical name/phone is recoverable for an Airtable backfill, and
     whether recent (post-wiring) evaluations are capturing it."""
@@ -708,7 +719,7 @@ def contact_data_stats(db: Session = Depends(get_db), _: bool = Depends(verify_a
 
 
 @evaluator_router.get("/admin/airtable-audit")
-def airtable_audit(samples: int = 15, _: bool = Depends(verify_admin_key)):
+def airtable_audit(samples: int = 15, _: bool = Depends(verify_readonly_or_admin_key)):
     """Read-only deep audit of the live Airtable base. Reports total rows, the
     empty-cell count per important column, and (the key one) the rows that HAVE a
     Model Number but are MISSING a New Price — so we can see exactly what's left."""
@@ -1929,6 +1940,64 @@ def _repressign_images_for_airtable(
     return fresh or raw_attachments
 
 
+# Airtable column names for the attribution fields, keyed by the
+# ValuationSession / EvaluationAttribution attribute that feeds them.
+_ATTRIBUTION_AIRTABLE_FIELDS = {
+    "utm_source": "UTM Source",
+    "utm_medium": "UTM Medium",
+    "utm_campaign": "UTM Campaign",
+    "utm_content": "UTM Content",
+    "referrer": "Referrer",
+    "landing_url": "Landing URL",
+}
+
+
+def _renormalise_unavailable_sources() -> bool:
+    """Setting CONFIDENCE_RENORMALISE_UNAVAILABLE_SOURCES (default False, the
+    safer behaviour: score exactly as before). Never raises."""
+    try:
+        from app.config import get_settings
+        return bool(getattr(get_settings(), "confidence_renormalise_unavailable_sources", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _attribution_columns(req: EvaluateRequest) -> dict[str, Optional[str]]:
+    """ValuationSession column values from the request's attribution block."""
+    attr = getattr(req, "attribution", None)
+    if attr is None:
+        return {}
+    return {name: getattr(attr, name, None) or None for name in _ATTRIBUTION_AIRTABLE_FIELDS}
+
+
+def _pulse_airtable_fields(vs: ValuationSession) -> dict[str, Any]:
+    """Extra columns Pulse reads by name (EVALUATOR_CHANGES_REQUIRED.md E3).
+
+    Session ID is the same 8-character Ref that Notes carries and the tracker
+    sheet uses, so the three sources join on one token. Confidence and
+    Decision are the engine values at write time. The attribution columns come
+    from the stored session (one source for the live write and the backfill).
+    Only the two Airtable write paths that tolerate unknown columns consume
+    this dict (write_evaluation pre-filters by schema and _post_record
+    self-heals on 422), so a column missing from the base drops that value
+    and never the record.
+    """
+    out: dict[str, Any] = {
+        "Session ID": str(vs.id)[:8],
+        "Decision": vs.decision or "",
+    }
+    if vs.confidence_score is not None:
+        try:
+            out["Confidence"] = float(vs.confidence_score)
+        except (TypeError, ValueError):
+            pass
+    for attr_name, column in _ATTRIBUTION_AIRTABLE_FIELDS.items():
+        value = getattr(vs, attr_name, None)
+        if value:
+            out[column] = str(value)
+    return out
+
+
 def _build_airtable_payload(
     vs: ValuationSession,
     req: EvaluateRequest,
@@ -2016,6 +2085,10 @@ def _build_airtable_payload(
     _size_u = getattr(vs, "size_unit", None)
     if _size_v and _size_u:
         payload["Size"] = f"{_size_v:g} {_size_u}"
+    # Pulse fields (Session ID, Confidence, Decision, UTM/referrer/landing).
+    # The stored session already carries the attribution columns, so read
+    # them from vs rather than the request: one source for both writers.
+    payload.update(_pulse_airtable_fields(vs))
     return payload
 
 
@@ -2068,6 +2141,7 @@ def _build_airtable_payload_from_session(vs: ValuationSession) -> dict:
     su = getattr(vs, "size_unit", None)
     if sv and su:
         payload["Size"] = f"{sv:g} {su}"
+    payload.update(_pulse_airtable_fields(vs))
     return payload
 
 
@@ -2486,6 +2560,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         expert_avg = None
         internet_result = None
         mkt_result = None
+        # Price sources that were DOWN for this evaluation (infrastructure
+        # failure, not "no data"). Named in the justification so an outage is
+        # never silent; see compute_valuation(unavailable_sources=...).
+        unavailable_sources: list[str] = []
 
         # --- Source A: Internet price lookup (v6: Gemini with Google Search grounding) ---
         _search_country = getattr(req, "country", "KE") or "KE"
@@ -2498,8 +2576,13 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             )
             internet_price = internet_result.launch_price
             logger.info(f"Internet price: {internet_price} (confidence: {internet_result.confidence})")
+            _lookup_outage = internet_lookup_outage(internet_result)
+            if _lookup_outage:
+                unavailable_sources.append("internet_lookup")
+                logger.warning(f"Internet price lookup DOWN: {_lookup_outage}")
         except Exception as e:
             logger.warning(f"Internet price lookup failed: {e}")
+            unavailable_sources.append("internet_lookup")
 
         # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
         try:
@@ -2524,6 +2607,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             logger.info(f"Marketplace: avg={marketplace_avg}, count={mkt_result.count}")
         except Exception as e:
             logger.warning(f"Marketplace scraping failed: {e}")
+            unavailable_sources.append("marketplace_jiji_jumia")
 
         # --- Source C: Shopify inventory average ---
         try:
@@ -2629,7 +2713,18 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     "resale_range": [internet_result.current_resale_low, internet_result.current_resale_high],
                     "sources": internet_result.sources[:3],
                     "confidence": internet_result.confidence,
+                    # Which provider answered: status tokens only ("ok",
+                    # "http_error", ...). This dict is returned to the
+                    # customer's browser, so the detail (HTTP status, provider
+                    # error text) stays in the logs and the key-gated
+                    # /tradein/health/services report.
+                    "providers": {
+                        name: (p or {}).get("status", "")
+                        for name, p in (internet_result.providers or {}).items()
+                    },
                 }
+            if unavailable_sources:
+                price_verification["unavailable_sources"] = list(unavailable_sources)
             if mkt_result:
                 price_verification["marketplace_data"] = {
                     "avg_price": mkt_result.avg_price,
@@ -2837,6 +2932,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             reference_source=reference_source,
             has_matrix_match=v6_has_matrix_match,
             has_sales_stock_match=v6_has_sales_stock_match,
+            unavailable_sources=unavailable_sources,
+            renormalise_unavailable_sources=_renormalise_unavailable_sources(),
         )
 
         # CR-7: Check per-image rejections
@@ -2977,6 +3074,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 "weighted_average": comp_result.weighted_average,
                 "confidence": comp_result.confidence,
             },
+            **_attribution_columns(req),
         )
         db.add(vs)
         db.flush()  # Populate vs.id before creating ledger entries
@@ -3755,8 +3853,17 @@ def notify_pickup(req: PickupNotifyRequest, db: Session = Depends(get_db)):
 # GET /pickup-requests  (MUST be above /{session_id} wildcard)
 # ---------------------------------------------------------------------------
 @evaluator_router.get("/pickup-requests")
-def list_pickup_requests(status: str = "pending", db: Session = Depends(get_db)):
-    """List pickup requests, filtered by status."""
+def list_pickup_requests(
+    status: str = "pending",
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """List pickup requests, filtered by status.
+
+    Admin key required (Sep 2026). This returned every seller's name, phone
+    and pickup address to anyone on the internet: nginx proxies /tradein/
+    publicly and the route had no gate. Nothing in this repository calls it.
+    """
     q = db.query(PickupRequest)
     if status != "all":
         q = q.filter(PickupRequest.status == status)

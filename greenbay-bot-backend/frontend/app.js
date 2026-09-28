@@ -44,6 +44,92 @@ const state = {
     chatHistory: [],
 };
 
+/* ============================================================
+ ANALYTICS (GA4, measurement id G-2REFLT805D, loaded in index.html)
+
+ Funnel events sent with gtag('event', name, params). Every event carries
+ the attribution captured on first load (utm_* from the query string,
+ document.referrer, location.href) so campaigns can be attributed. The
+ attribution lives in sessionStorage so it survives the whole wizard.
+
+ Never send names, phones or prices to GA4. The only per-event params are
+ step (integer), decision (accept | negotiate | review | reject) and
+ option (A | B | C). URLs are cleaned with window.gbCleanUrl (index.html)
+ before they are stored or sent: the landing URL keeps only campaign tags and
+ ad-click ids, the referrer keeps no query string at all. trackEvent drops
+ any parameter that is not on GB_EVENT_PARAMS, so a future call site cannot
+ leak a field by accident.
+ ============================================================ */
+const GB_ATTRIBUTION_KEY = 'gb_attribution';
+const GB_ATTRIBUTION_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
+
+// Parameters an event may carry, and the longest value GA4 keeps (100 chars).
+const GB_EVENT_PARAMS = ['step', 'decision', 'option'];
+
+function cleanUrl(url, keepQuery) {
+    try {
+        if (typeof window.gbCleanUrl === 'function') return window.gbCleanUrl(url, keepQuery);
+    } catch (_) { /* fall through */ }
+    return String(url || '').split(/[?#]/)[0];   // no cleaner: keep the path only
+}
+
+function captureAttribution() {
+    let stored = null;
+    try {
+        const raw = sessionStorage.getItem(GB_ATTRIBUTION_KEY);
+        if (raw) stored = JSON.parse(raw);
+    } catch (_) { stored = null; }
+    if (stored) {
+        // A capture made before URL cleaning shipped is cleaned on read.
+        stored.referrer = cleanUrl(stored.referrer, false);
+        stored.landing_url = cleanUrl(stored.landing_url, true);
+    }
+
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch (_) { params = null; }
+    const hasUtm = !!params && GB_ATTRIBUTION_FIELDS.some(f => params.get(f));
+
+    // Keep the first-load capture for the whole session. Only a fresh
+    // campaign link (new utm_* in the query) replaces it.
+    if (stored && stored.landing_url && !hasUtm) return stored;
+
+    const fresh = {
+        utm_source: (params && params.get('utm_source')) || '',
+        utm_medium: (params && params.get('utm_medium')) || '',
+        utm_campaign: (params && params.get('utm_campaign')) || '',
+        utm_content: (params && params.get('utm_content')) || '',
+        referrer: cleanUrl(document.referrer, false).slice(0, 500),
+        landing_url: cleanUrl(window.location.href, true).slice(0, 2000),
+    };
+    try { sessionStorage.setItem(GB_ATTRIBUTION_KEY, JSON.stringify(fresh)); } catch (_) { /* ignore */ }
+    return fresh;
+}
+
+const attribution = captureAttribution();
+
+function trackEvent(name, params) {
+    try {
+        if (typeof window.gtag !== 'function') return;
+        const payload = Object.assign({}, attribution);
+        GB_EVENT_PARAMS.forEach(k => {
+            if (params && params[k] !== undefined && params[k] !== null) {
+                payload[k] = typeof params[k] === 'number' ? params[k] : String(params[k]).slice(0, 100);
+            }
+        });
+        window.gtag('event', name, payload);
+    } catch (_) { /* analytics must never break the wizard */ }
+}
+
+/** Fire an event once per browser session (guarded by sessionStorage). */
+function trackOnce(name, params) {
+    const flag = 'gb_evt_' + name;
+    try {
+        if (sessionStorage.getItem(flag)) return;
+        sessionStorage.setItem(flag, '1');
+    } catch (_) { /* fall through and send anyway */ }
+    trackEvent(name, params);
+}
+
 // Restore from localStorage — auto-reset if previous evaluation was complete
 try {
     const saved = localStorage.getItem('gb_eval_state');
@@ -80,6 +166,8 @@ function saveState() {
  */
 function startNewEvaluation() {
     try { localStorage.removeItem('gb_eval_state'); } catch (_) { /* ignore */ }
+    // A fresh wizard run counts as a new wizard_start; attribution is kept.
+    try { sessionStorage.removeItem('gb_evt_wizard_start'); } catch (_) { /* ignore */ }
     // Preserve any access key or query params that should persist across reloads.
     window.location.href = window.location.pathname + window.location.hash;
 }
@@ -269,6 +357,13 @@ function isStepValid(step) {
 
 function nextStep() {
     if (state.currentStep === TOTAL_STEPS) {
+        // The offer is only shown to a customer we can call back. A session
+        // restored from localStorage can hold a phone saved under older,
+        // looser rules, so check again before submitting.
+        if (!isStepValid(9)) {
+            returnToContactStep();
+            return;
+        }
         startAnalysis();
         return;
     }
@@ -281,6 +376,7 @@ function nextStep() {
     mirrorStepToChat(state.currentStep);
 
     goToStep(next);
+    trackEvent('wizard_step', { step: next });
 
     // Chat prompt for new step
     promptNextStep(next);
@@ -329,6 +425,9 @@ function selectOption(el, field) {
     } else {
         state.answers[field] = value;
     }
+
+    // The first category choice is the start of the wizard.
+    if (field === 'category') trackOnce('wizard_start');
 
     // Enable next button
     document.getElementById('nextBtn').disabled = false;
@@ -382,14 +481,69 @@ function handleCustomBrand(value) {
     }
 }
 
-// Accepts local (0712345678 / 0112345678), bare (712345678) and international
-// (+254712345678) formats once spaces/dashes/parentheses are removed.
+// Seller phone rules. THE SAME RULES LIVE IN normalise_phone() in
+// greenbay_ai_evaluator/api/schemas.py, which rejects (HTTP 422) anything this
+// function rejects. Change both together, or valid customers lose their
+// evaluation. Returns the stored form (country code + national number, digits
+// only, e.g. 254712345678) or null.
+//   Kenya: 0712345678, 0112345678, 712345678, +254712345678, 254712345678,
+//          00254712345678, +254 0712 345 678, with spaces / dashes / dots.
+//   Uganda (256) and Nigeria (234): the same shapes; a number written locally
+//          is read with the detected country (default Kenya).
+//   Anywhere else: international form only, 8 to 15 digits: + or 00 prefix,
+//          or 11+ digits with no leading 0.
+const PHONE_RULES = {
+    KE: ['254', '[17]\\d{8}'],
+    UG: ['256', '[2-9]\\d{8}'],
+    NG: ['234', '[789][01]\\d{8}'],
+};
+
+function normalisePhone(raw, country) {
+    if (raw === null || raw === undefined) return null;
+    // The API refuses more than 30 characters as typed (separators included).
+    const typed = String(raw).replace(/\ufeff/g, '').trim();
+    if (typed.length > 30) return null;
+    let text = typed.replace(/<[^>]+>/g, '').trim().replace(/[\s\-().]/g, '');
+    let international = false;
+    if (text.startsWith('+')) { international = true; text = text.slice(1); }
+    else if (text.startsWith('00')) { international = true; text = text.slice(2); }
+    if (!/^[0-9]+$/.test(text)) return null;
+
+    // A number that carries one of our calling codes must fit that country.
+    for (const key of Object.keys(PHONE_RULES)) {
+        const [code, national] = PHONE_RULES[key];
+        if (text.startsWith(code) && (international || text.length > 10)) {
+            const m = new RegExp(`^${code}0?(${national})$`).exec(text);
+            return m ? code + m[1] : null;
+        }
+    }
+    // 11+ digits with no leading 0 cannot be a local KE/UG/NG number: it is a
+    // full international number written without the "+".
+    if (international || (text.length >= 11 && !text.startsWith('0'))) {
+        return (text.length >= 8 && text.length <= 15 && !text.startsWith('0')) ? text : null;
+    }
+    const rule = PHONE_RULES[String(country || 'KE').toUpperCase().trim()] || PHONE_RULES.KE;
+    const m = new RegExp(`^0?(${rule[1]})$`).exec(text);
+    return m ? rule[0] + m[1] : null;
+}
+
 function isValidPhone(raw) {
-    if (!raw) return false;
-    const cleaned = String(raw).replace(/[\s\-()]/g, '');
-    return /^\+\d{9,15}$/.test(cleaned) ||   // +<country><number>
-           /^0\d{8,11}$/.test(cleaned)  ||   // local, leading 0
-           /^\d{9,12}$/.test(cleaned);       // bare national number
+    return normalisePhone(raw, window.__gbCountry || 'KE') !== null;
+}
+
+// Send the customer back to the contact step with the inline message showing.
+// Used when a restored session holds a phone the current rules reject, and
+// when the backend answers 422 for the phone.
+function returnToContactStep() {
+    document.getElementById('wizardFooter').classList.remove('hidden');
+    goToStep(9);
+    const err = document.getElementById('phoneError');
+    if (err) err.style.display = 'block';
+    const input = document.getElementById('sellerPhoneInput');
+    if (input) {
+        input.value = state.answers.sellerPhone || '';
+        input.focus();
+    }
 }
 
 // Free-text answers are interpolated into innerHTML in many places, so strip
@@ -430,6 +584,7 @@ function handlePriceInput(raw) {
 
 function selectCategoryFromLanding(cat) {
     state.answers.category = cat;
+    trackOnce('wizard_start');
     // Scroll to evaluation section
     document.getElementById('evaluate').scrollIntoView({ behavior: 'smooth' });
     setTimeout(() => {
@@ -975,7 +1130,19 @@ async function callEvaluationAPI() {
         country: window.__gbCountry || 'KE',
         size_value: a.sizeValue || null,
         size_unit: a.sizeUnit || null,
+        // Campaign attribution captured on first load (see ANALYTICS above);
+        // stored on the evaluation record and mirrored to Airtable.
+        attribution: {
+            utm_source: attribution.utm_source || null,
+            utm_medium: attribution.utm_medium || null,
+            utm_campaign: attribution.utm_campaign || null,
+            utm_content: attribution.utm_content || null,
+            referrer: attribution.referrer || null,
+            landing_url: attribution.landing_url || null,
+        },
     };
+
+    trackEvent('evaluate_submit');
 
     try {
         const resp = await fetch(`${API_BASE}/tradein/evaluate`, {
@@ -984,6 +1151,25 @@ async function callEvaluationAPI() {
             body: JSON.stringify(payload),
         });
 
+        if (resp.status === 422) {
+            // The backend refused the request. If it is the phone, ask for it
+            // again; never fall through to a demo offer for a real customer.
+            // Look at where the error is (loc) and what it says (msg), never
+            // at the echoed input: an over-long issues text that happens to
+            // contain the word "phone" is not a phone error.
+            let aboutPhone = false;
+            try {
+                const detail = (await resp.json()).detail;
+                aboutPhone = Array.isArray(detail) && detail.some(e =>
+                    (Array.isArray(e.loc) && e.loc.indexOf('seller_phone') !== -1) ||
+                    /seller_phone/.test(String(e.msg || '')));
+            } catch (_) { /* ignore */ }
+            if (aboutPhone) {
+                addChatMessage('bot', 'I need a valid phone number before I can show your offer, e.g. 0712 345 678.');
+                returnToContactStep();
+                return;
+            }
+        }
         if (!resp.ok) {
             let detail = '';
             try { detail = (await resp.json()).detail || ''; } catch (_) { }
@@ -1040,6 +1226,19 @@ function showResults(data) {
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const gradeClass = `grade-${(data.condition_grade || 'b').toLowerCase()}`;
     const confidence = data.confidence_score || 0;
+
+    // GA4 offer_shown: report the screen the customer actually sees, which is
+    // decided below (reject screen, specialist routing, or the offer card).
+    // Demo results (backend unreachable) are not real evaluations; skip them.
+    const isDemo = String(data.session_id || '').startsWith('demo_');
+    if (!isDemo) {
+        let shownDecision = 'negotiate';
+        if (data.decision === 'reject') shownDecision = 'reject';
+        else if (confidence < 80 || data.decision === 'review') shownDecision = 'review';
+        else if (data.decision === 'accept') shownDecision = 'accept';
+        trackEvent('offer_shown', { decision: shownDecision });
+        if (shownDecision === 'review') trackEvent('human_review_routed');
+    }
 
     // HARD REJECT — product doesn't meet quality standards
     if (data.decision === 'reject') {
@@ -1362,6 +1561,9 @@ function showRejectionOptions() {
     const resultsStep = document.getElementById('stepResults');
     const existing = resultsStep.querySelector('.rejection-options-area');
     if (existing) return;
+    // GA4: the customer turned the offer down. Sent once per offer (the guard
+    // above); the option they then pick is sent as rejection_option.
+    trackEvent('offer_declined');
 
     const optionsDiv = document.createElement('div');
     optionsDiv.className = 'rejection-options-area';
@@ -1415,6 +1617,7 @@ async function selectRejectionOption(option) {
 
     addChatMessage('user', `I'd like Option ${option}`);
     showTypingIndicator();
+    trackEvent('rejection_option', { option: option });
 
     try {
         if (state.sessionId) {
@@ -1596,6 +1799,7 @@ async function acceptOffer(amount) {
     addChatMessage('user', `I accept ${currency} ${formatKES(amount)}`);
 
     showTypingIndicator();
+    trackEvent('offer_accepted');
 
     // v6: Call backend accept-offer endpoint
     try {

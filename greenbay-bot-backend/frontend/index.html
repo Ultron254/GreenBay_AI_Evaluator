@@ -2,6 +2,45 @@
 <html lang="en">
 
 <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2REFLT805D"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      // A URL can carry anything: the ops dashboard is opened as
+      // dashboard.html?key=<admin key>, and a link sent to a customer could
+      // carry a name or a phone. GA4 records page_location and page_referrer
+      // on every hit, so both are cleaned BEFORE the first hit. Landing URL:
+      // path plus campaign tags and ad-click ids only. Referrer: path only.
+      // THE SAME ALLOW-LIST LIVES IN greenbay_ai_evaluator/api/schemas.py
+      // (ATTRIBUTION_QUERY_ALLOWLIST). app.js reuses this function.
+      window.gbCleanUrl = function (url, keepQuery) {
+        var allow = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+                     'utm_source_platform',
+                     'gclid', 'gbraid', 'wbraid', 'dclid', 'gad_source', 'gad_campaignid',
+                     'fbclid', 'ttclid', 'msclkid'];
+        if (!url) return '';
+        try {
+          var u = new URL(url, window.location.href);
+          var out = u.protocol + '//' + u.host + u.pathname;
+          if (!keepQuery) return out;
+          var kept = new URLSearchParams();
+          u.searchParams.forEach(function (v, k) {
+            if (v && allow.indexOf(k.toLowerCase()) !== -1) kept.append(k, v);
+          });
+          var q = kept.toString();
+          var hash = /^#[A-Za-z0-9_\-]{0,64}$/.test(u.hash) ? u.hash : '';
+          return out + (q ? '?' + q : '') + hash;
+        } catch (e) {
+          return String(url).split(/[?#]/)[0];
+        }
+      };
+      gtag('js', new Date());
+      gtag('config', 'G-2REFLT805D', {
+        page_location: window.gbCleanUrl(window.location.href, true),
+        page_referrer: window.gbCleanUrl(document.referrer, false)
+      });
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GreenBay AI Evaluator | Instant Appliance Valuations</title>
@@ -13,7 +52,7 @@
         href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com; connect-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com https://*.google-analytics.com https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com;">
     <link rel="stylesheet" href="styles.css?v=20260319">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -739,7 +778,7 @@
                                 <label class="form-label">Your Phone Number <span style="color:var(--red);">*</span></label>
                                 <input type="tel" class="form-input" id="sellerPhoneInput"
                                     placeholder="e.g. 0712 345 678" required aria-required="true"
-                                    autocomplete="tel" inputmode="tel"
+                                    autocomplete="tel" inputmode="tel" maxlength="30"
                                     oninput="updateAnswer('sellerPhone', this.value)">
                                 <p class="form-hint" id="phoneError" style="display:none;color:var(--red);">
                                     Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>
@@ -943,7 +982,7 @@
             }
         } catch(e) { localStorage.removeItem('gb_eval_state'); }
     </script>
-    <script src="app.js?v=20260311"></script>
+    <script src="app.js?v=20260921"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
