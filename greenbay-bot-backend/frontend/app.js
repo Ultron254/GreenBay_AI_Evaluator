@@ -376,7 +376,7 @@ function handleCustomBrand(value) {
     if (value.trim().length > 0) {
         // Deselect option cards
         document.querySelectorAll('#brandOptions .option-card').forEach(c => c.classList.remove('selected'));
-        state.answers.brand = value.trim();
+        state.answers.brand = sanitiseText(value.trim());
         document.getElementById('nextBtn').disabled = false;
         saveState();
     }
@@ -392,8 +392,15 @@ function isValidPhone(raw) {
            /^\d{9,12}$/.test(cleaned);       // bare national number
 }
 
+// Free-text answers are interpolated into innerHTML in many places, so strip
+// HTML-significant characters once here rather than trusting every call site.
+// Mirrors the backend's _strip_tags in api/schemas.py.
+function sanitiseText(value) {
+    return String(value == null ? '' : value).replace(/[<>]/g, '');
+}
+
 function updateAnswer(field, value) {
-    state.answers[field] = value;
+    state.answers[field] = typeof value === 'string' ? sanitiseText(value) : value;
     // Inline validation feedback for the contact step.
     if (field === 'sellerPhone') {
         const err = document.getElementById('phoneError');
@@ -978,7 +985,9 @@ async function callEvaluationAPI() {
         });
 
         if (!resp.ok) {
-            throw new Error(`API error: ${resp.status}`);
+            let detail = '';
+            try { detail = (await resp.json()).detail || ''; } catch (_) { }
+            throw new Error(detail || `API error: ${resp.status}`);
         }
 
         const data = await resp.json();
@@ -991,54 +1000,37 @@ async function callEvaluationAPI() {
 
     } catch (err) {
         console.error('Evaluation API error:', err);
-        // Show demo results if API unavailable
-        const demo = generateDemoResults(a);
-        state.evaluation = demo;
-        saveState();
-        await sleep(800);
-        showResults(demo);
-        addChatMessage('bot', '<em style="opacity:.7">(Demo mode , connect to the backend API for live valuations)</em>');
+        // Never invent an offer. A fabricated price the backend never issued
+        // cannot be honoured, is recorded nowhere, and nobody is notified.
+        showEvaluationError(err && err.message);
     }
 }
 
-function generateDemoResults(answers) {
-    // Deterministic demo calculation when backend is unavailable
-    const retailPrices = {
-        refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
-        cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
-        other: 30000,
-    };
-    const condMult = { A: 1.0, B: 0.85, C: 0.65, D: 0.45 };
-    const brandPrem = { Samsung: 1.10, LG: 1.05, Sony: 1.08, Bosch: 1.12 };
+function showEvaluationError(detail) {
+    const a = state.answers;
+    const msg = detail && detail.length > 10
+        ? detail
+        : "We couldn't complete your valuation just now.";
+    const wa = 'https://wa.me/254705919099?text=' + encodeURIComponent(
+        `Hi GreenBay, I tried to value my ${a.brand || ''} ${CATEGORY_NAMES[a.category] || 'appliance'} `
+        + `but the valuation could not be completed. Name: ${a.sellerName || ''}. Phone: ${a.sellerPhone || ''}.`
+    );
 
-    const retail = retailPrices[answers.category] || 35000;
-    const age = answers.age || 2;
-    const depr = Math.max(0.05, Math.pow(0.85, age));
-    const condGrade = answers.conditionGrade || 'B';
-    const base = retail * depr * (condMult[condGrade] || 0.75) * (brandPrem[answers.brand] || 1.0);
-    const resale = Math.round(base / 100) * 100;
-    const ceiling = Math.round(resale * 0.70 / 100) * 100;
-    const opening = Math.round(resale * 0.55 / 100) * 100;
-    const walkaway = Math.round(resale * 0.45 / 100) * 100;
-
-    let decision = 'negotiate';
-    if (answers.price && answers.price <= opening) decision = 'accept';
-    else if (answers.price && answers.price > ceiling * 1.5) decision = 'decline';
-
-    return {
-        session_id: 'demo_' + Date.now(),
-        estimated_resale_value: resale,
-        confidence_score: 72,
-        acquisition_ceiling: ceiling,
-        opening_offer: opening,
-        walkaway_limit: walkaway,
-        decision: decision,
-        decision_reason: 'Demo valuation based on category defaults',
-        condition_grade: condGrade,
-        risk_score: 15,
-        comparable_count: 0,
-    };
+    const resultsStep = document.getElementById('stepResults');
+    if (resultsStep) {
+        resultsStep.innerHTML = `
+ <div class="deal-result">
+ <div class="result-icon">⚠️</div>
+ <h3>We couldn't finish your valuation</h3>
+ <p>${escapeHtml(msg)}</p>
+ <p style="margin-top:12px;">Our team has been alerted. Talk to us and we'll value it by hand, or try again in a few minutes.</p>
+ <a href="${wa}" target="_blank" rel="noopener" class="btn btn-whatsapp" style="width:100%;margin-top:20px;">💬 Talk to our team on WhatsApp</a>
+ <button class="btn btn-ghost" style="width:100%;margin-top:12px;" onclick="startNewEvaluation()">Try again</button>
+ </div>`;
+    }
+    addChatMessage('bot', `⚠️ ${escapeHtml(msg)} I have not given you a price, because I could not assess your photos properly. Our team can help on WhatsApp.`);
 }
+
 
 /* ============================================================
  RESULTS DISPLAY
@@ -1064,7 +1056,7 @@ function showResults(data) {
  <div class="offer-breakdown">
  <div class="offer-breakdown-row">
  <span class="label">Reason</span>
- <span class="value" style="color:#dc3545;">${data.decision_reason || 'Below quality threshold'}</span>
+ <span class="value" style="color:#dc3545;">${escapeHtml(data.decision_reason || 'Below quality threshold')}</span>
  </div>
  </div>
  <div style="background:var(--warm);border-radius:var(--radius-sm);padding:16px;margin:20px 0;">
@@ -1907,11 +1899,11 @@ async function loadRelatedProducts(category) {
                 `<span style="text-decoration:line-through;color:var(--muted);font-size:.78rem;margin-left:6px;">KES ${Math.round(p.compare_at_price).toLocaleString('en-KE')}</span>` : '';
             const imgSrc = p.image_url || '';
             return `
-            <a href="${p.product_url || 'https://greenbay.market'}" target="_blank" style="text-decoration:none;color:inherit;display:block;">
+            <a href="${escapeHtml(p.product_url || 'https://greenbay.market')}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;display:block;">
             <div style="background:var(--surface);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);">
-                ${imgSrc ? `<img src="${imgSrc}" alt="${p.title}" style="width:100%;height:140px;object-fit:cover;" loading="lazy">` : ''}
+                ${imgSrc ? `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(p.title || '')}" style="width:100%;height:140px;object-fit:cover;" loading="lazy">` : ''}
                 <div style="padding:10px;">
-                    <p style="font-size:.82rem;font-weight:600;margin:0 0 4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${p.title}</p>
+                    <p style="font-size:.82rem;font-weight:600;margin:0 0 4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(p.title || '')}</p>
                     <p style="font-size:.85rem;margin:0;color:var(--emerald);font-weight:700;">${priceStr}${savingsStr}</p>
                     <span style="font-size:.72rem;color:var(--muted);">${p.product_type || ''}</span>
                 </div>
