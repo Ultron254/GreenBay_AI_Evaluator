@@ -252,6 +252,21 @@ jobs:
               exit 1
             )
 
+            # nginx.conf is bind-mounted read-only, so a changed config only
+            # takes effect on reload. Without this the CSP / GA4 / frame-ancestors
+            # headers stay on whatever was loaded whenever nginx last started.
+            echo "=== Reloading nginx so config changes take effect ==="
+            if sudo docker compose exec -T nginx nginx -t < /dev/null; then
+              sudo docker compose exec -T nginx nginx -s reload < /dev/null || \
+                sudo docker compose restart nginx || true
+            else
+              echo "::warning::nginx config test FAILED; left the running config in place."
+            fi
+
+            echo "=== Security headers now being served ==="
+            curl -sI http://localhost/ | grep -iE "content-security-policy|x-frame-options|strict-transport" || \
+              echo "::warning::no security headers seen on the local vhost"
+
             echo ""
             echo "=== Deploy successful ==="
             sudo docker ps --format '{{.Names}} {{.Status}}'

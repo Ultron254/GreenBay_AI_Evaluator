@@ -2348,6 +2348,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         # 3b. Run vision analysis if photos were submitted
         vision_result = None
+        vision_unavailable = False
+        vision_unavailable_reason = ""
         if req.image_data:
             try:
                 import asyncio
@@ -2375,17 +2377,17 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     vision_result = pool.submit(_run_vision).result(timeout=120)
                 logger.info(f"Vision analysis complete: grade={vision_result.get('condition_grade')}")
             except Exception as ve:
-                # Photos were supplied but could not be analysed. Quoting here
-                # would price an item nobody looked at, so refuse instead.
-                logger.error(f"Vision analysis unavailable — refusing to quote: {ve}")
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "We couldn't analyse your photos just now, so we can't give "
-                        "you an accurate price. Our team has been alerted — please "
-                        "try again shortly or talk to us on WhatsApp."
-                    ),
-                )
+                # Photos were supplied but could not be analysed (third-party
+                # outage, rate limit, bad response). Refusing outright stopped
+                # the business every time Anthropic had an incident, so degrade
+                # instead: price from the seller's own reported condition, cap
+                # confidence, and force human review. This is NOT the stub that
+                # was removed -- nothing is invented, the photos simply go
+                # unread and the evaluation is labelled as such.
+                logger.error(f"Vision analysis unavailable — degrading to seller-reported: {ve}")
+                vision_result = None
+                vision_unavailable = True
+                vision_unavailable_reason = str(ve)[:200]
 
         # 3b-ii. Vertex AI (Gemini) secondary evaluation — advisory only.
         # Runs in a separate thread with its own event loop, matches the vision
@@ -2954,6 +2956,23 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             unavailable_sources=unavailable_sources,
             renormalise_unavailable_sources=_renormalise_unavailable_sources(),
         )
+
+        # The customer sent photos and nobody could read them, so this price
+        # rests entirely on what the seller told us. Never auto-accept it.
+        if vision_unavailable:
+            result.confidence_score = min(result.confidence_score, 60.0)
+            result.decision = "review"
+            result.decision_reason = (
+                "AUTO-ROUTED TO HUMAN: photos were submitted but the vision "
+                f"service was unavailable ({vision_unavailable_reason}), so the "
+                "condition is the seller's own report and has not been verified "
+                "against the images. " + (result.decision_reason or "")
+            ).strip()
+            result.pricing_justification = (
+                "NOT PHOTO-VERIFIED — vision was unavailable for this evaluation; "
+                "condition is seller-reported only.\n\n"
+                + (result.pricing_justification or "")
+            )
 
         # CR-7: Check per-image rejections
         rejected_images_data = None

@@ -164,10 +164,21 @@ async def chat_endpoint(req: ChatRequest):
             )
             logger.info(f"Vision analysis completed for session {sid}")
         except Exception as e:
+            # Same contract as /evaluate: the photos go unread, nothing is
+            # invented, and the caller is told rather than left to assume the
+            # analysis succeeded.
             logger.error(f"Vision analysis error: {e}")
+            analysis = None
+            session["context"]["vision_unavailable"] = True
 
     # Build reply
     reply = _build_reply(req.message, session["context"], analysis)
+    if session["context"].get("vision_unavailable"):
+        reply += (
+            "\n\n_I couldn't read your photos just now, so I'll go by what you "
+            "tell me about the condition. Our team will double-check the photos "
+            "before confirming any price._"
+        )
 
     # Store bot reply in history
     session["history"].append({

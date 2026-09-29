@@ -82,6 +82,14 @@ ACQUISITION_RATIOS: dict[str, float] = {
     "iron_box": 0.55,    # was 0.72 -> over-valued vs internal
 }
 DEFAULT_ACQUISITION_RATIO = 0.70
+# Ceiling on any learned acquisition ratio, i.e. the most we will ever pay as a
+# share of what the item resells for. Measured on 344 live tracker rows the
+# team's real ratios were cooker_oven 0.639, refrigerator 0.869,
+# washing_machine 0.936 and tv_monitor 1.054 -- TVs were being bought at ABOVE
+# resale value. 0.85 guarantees at least 15% gross margin on this step and
+# still sits above every static prior (the highest is tv at 0.81), so the
+# calibrator keeps its room to learn upward from the priors.
+MAX_ACQUISITION_RATIO = 0.85
 
 _last_refresh: datetime | None = None
 _matrix_cache: list[dict[str, Any]] = []
@@ -1193,7 +1201,7 @@ def _collapse(s: str) -> str:
 _calibrated_ratios: dict[str, dict[str, Any]] = {}
 _CALIB_SHRINK_K = 5          # pseudo-samples of the static prior
 _CALIB_MIN_N = 4             # below this, stay fully on the static prior
-_CALIB_CLAMP = (0.30, 0.90)  # sane bounds for any learned ratio
+_CALIB_CLAMP = (0.30, MAX_ACQUISITION_RATIO)  # sane bounds for any learned ratio
 
 
 def _static_acquisition_ratio(category: str) -> float:
