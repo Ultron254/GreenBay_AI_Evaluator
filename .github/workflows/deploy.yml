@@ -86,13 +86,17 @@ jobs:
           # deploy owns these rather than leaving them to drift.
           ANTHROPIC_PRIMARY_MODEL: ${{ vars.ANTHROPIC_PRIMARY_MODEL }}
           ANTHROPIC_FALLBACK_MODEL: ${{ vars.ANTHROPIC_FALLBACK_MODEL }}
+          # Scoped to the GreenBay AI Evaluator workspace ($50/mo cap), so a
+          # leak cannot drain the org balance. Previously the key existed only
+          # in the server's .env, untracked and lost on a rebuild.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
-          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_FROM,SMTP_PASSWORD,TEAM_NOTIFICATION_EMAILS,ANTHROPIC_PRIMARY_MODEL,ANTHROPIC_FALLBACK_MODEL
+          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_FROM,SMTP_PASSWORD,TEAM_NOTIFICATION_EMAILS,ANTHROPIC_PRIMARY_MODEL,ANTHROPIC_FALLBACK_MODEL,ANTHROPIC_API_KEY
           script: |
             set -e
             echo "=== Syncing code to origin/main ==="
@@ -137,7 +141,7 @@ jobs:
             # SMTP settings, same upsert. Only SMTP_PASSWORD is a secret; the
             # rest are repository variables so they can be read back and
             # corrected without rotating anything.
-            for _v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_PASSWORD TEAM_NOTIFICATION_EMAILS ANTHROPIC_PRIMARY_MODEL ANTHROPIC_FALLBACK_MODEL; do
+            for _v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_PASSWORD TEAM_NOTIFICATION_EMAILS ANTHROPIC_PRIMARY_MODEL ANTHROPIC_FALLBACK_MODEL ANTHROPIC_API_KEY; do
               _val=$(eval "printf '%s' \"\${$_v}\"")
               if [ -n "$_val" ]; then
                 echo "=== Writing ${_v} into .env ==="
