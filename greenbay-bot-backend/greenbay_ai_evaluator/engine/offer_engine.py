@@ -472,8 +472,13 @@ def reconcile_retail_price(
     (STEP 11) anchored on ``historical_team_avg``.
     """
     sources: list[dict[str, Any]] = []
+    # "google_lens"/"vision_estimate" are a vision model's guess at retail read
+    # off a photo, not a retail listing. Counting them as verified armed the
+    # 11c floor against the curated matrix and pinned confidence to 75, which
+    # routed the evaluation to human review.
     _frontend_is_estimate = frontend_source.lower().strip() in (
         "category_default", "whatsapp_category_estimate", "default", "",
+        "google_lens", "vision_estimate", "vision", "ai_estimate",
     )
 
     # Trade-in / resale-level intel: listed + counted for corroboration, never
