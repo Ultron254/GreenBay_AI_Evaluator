@@ -17,7 +17,9 @@ Config (app.config.Settings):
 
 from __future__ import annotations
 
+import re
 import threading
+from html import escape as html_escape
 from typing import Any
 
 from loguru import logger
@@ -56,6 +58,39 @@ def _summarise_issues(defects: Any, condition_grade: str | None) -> str:
     else:
         parts.append("Reported issues: none recorded")
     return " | ".join(parts)
+
+
+def _strip_html(value: str) -> str:
+    """Plain-text fallback for a cell that may carry anchors."""
+    return re.sub(r"<[^>]+>", "", str(value))
+
+
+def _phone_actions(phone: Any) -> str:
+    """Phone as one-tap WhatsApp + call links so a lead can be actioned at once."""
+    raw = str(phone or "").strip()
+    if not raw:
+        return "—"
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return html_escape(raw)
+    # Kenyan numbers reach us as 07..., 2547... or +2547...; wa.me needs no plus.
+    if digits.startswith("0"):
+        digits = "254" + digits[1:]
+    shown = html_escape(raw)
+    return (
+        f"{shown} &nbsp; "
+        f"<a href='https://wa.me/{digits}' style='color:#25D366;font-weight:600;'>WhatsApp</a>"
+        f" &nbsp;|&nbsp; <a href='tel:+{digits}' style='color:#2563eb;font-weight:600;'>Call</a>"
+    )
+
+
+def _photo_status(image_urls: list[str], vs: dict[str, Any]) -> str:
+    """Distinguish "customer sent none" from "we failed to keep them"."""
+    if image_urls:
+        return f"{len(image_urls)} attached below"
+    if vs.get("image_s3_keys"):
+        return "stored, but links could not be generated (check S3 credentials)"
+    return "none submitted by the customer"
 
 
 def presign_session_images(vs: Any, expires_in_seconds: int = 7 * 24 * 3600) -> list[str]:
@@ -160,13 +195,13 @@ def build_outcome_email(
         (f"AI price ({outcome.lower()})", _format_money(currency, ai_price)),
         ("AI confidence", f"{confidence:.0f}%" if confidence is not None else "—"),
         ("Customer", vs.get("seller_name") or "—"),
-        ("Phone", vs.get("seller_phone") or "—"),
-        ("Photos", f"{len(image_urls)} attached below" if image_urls else "none stored"),
+        ("Phone", _phone_actions(vs.get("seller_phone"))),
+        ("Photos", _photo_status(image_urls, vs)),
         ("Session", str(vs.get("id") or "")[:8]),
     ]
 
     text_body = f"GreenBay trade-in offer {outcome}\n\n" + "\n".join(
-        f"{label}: {value}" for label, value in rows
+        f"{label}: {_strip_html(value)}" for label, value in rows
     )
     if image_urls:
         text_body += "\n\nPhotos (links valid 7 days):\n" + "\n".join(image_urls)
