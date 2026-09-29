@@ -40,39 +40,75 @@ def _timed(fn: Callable[[], tuple[bool, str]]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Individual probes
 # ---------------------------------------------------------------------------
-def _probe_anthropic() -> tuple[bool, str]:
-    from app.config import get_settings
-    s = get_settings()
-    if not s.anthropic_api_key:
-        return False, "ANTHROPIC_API_KEY not configured"
+def _anthropic_model_call(api_key: str, model: str) -> tuple[bool, str]:
+    """Spend one token on *model* and classify the outcome.
+
+    A models-list call only proves the key exists — it still returns 200 on an
+    account with no credit. A real completion makes an exhausted balance (the
+    failure that silently broke pricing) visible.
+    """
     import requests
-    # A models-list call only proves the key exists — it still returns 200 on an
-    # account with no credit. Spend one token on a real completion so an
-    # exhausted balance (the failure that silently broke pricing) shows up here.
     resp = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
-            "x-api-key": s.anthropic_api_key,
+            "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
         json={
-            "model": s.anthropic_primary_model,
+            "model": model,
             "max_tokens": 1,
             "messages": [{"role": "user", "content": "hi"}],
         },
         timeout=20,
     )
     if resp.status_code == 200:
-        return True, f"OK (billable call succeeded on {s.anthropic_primary_model})"
+        return True, "OK"
     body = resp.text[:200]
     if resp.status_code in (400, 402) and "credit" in body.lower():
         return False, f"OUT OF CREDIT — top up billing. HTTP {resp.status_code}: {body}"
     if resp.status_code == 401:
-        return False, f"Key rejected (revoked or wrong). HTTP 401: {body}"
+        return False, f"key rejected (revoked or wrong). HTTP 401: {body}"
+    if resp.status_code == 404:
+        return False, f"model not available to this account. HTTP 404: {body}"
     if resp.status_code == 429:
-        return False, f"Rate limited / quota exhausted. HTTP 429: {body}"
+        return False, f"rate limited / quota exhausted. HTTP 429: {body}"
     return False, f"HTTP {resp.status_code}: {body}"
+
+
+def _probe_anthropic() -> tuple[bool, str]:
+    """Probe vision the way analyze_appliance_images() actually calls it.
+
+    That function loops over [primary, fallback] and succeeds if EITHER model
+    answers, so probing the primary alone gives the wrong verdict twice over:
+    it reports the whole service down when only the primary is unavailable
+    (a false alarm), and it would report healthy while the fallback is broken,
+    hiding the fact that there is no safety net left.
+    """
+    from app.config import get_settings
+    s = get_settings()
+    if not s.anthropic_api_key:
+        return False, "ANTHROPIC_API_KEY not configured"
+
+    primary, fallback = s.anthropic_primary_model, s.anthropic_fallback_model
+    primary_ok, primary_detail = _anthropic_model_call(s.anthropic_api_key, primary)
+    if primary_ok:
+        return True, f"OK (billable call succeeded on {primary})"
+
+    # Primary is unusable. Vision still works if the fallback answers, but the
+    # wasted round-trip is on every single request, so this must stay visible.
+    fallback_ok, fallback_detail = _anthropic_model_call(s.anthropic_api_key, fallback)
+    if fallback_ok:
+        return True, (
+            f"DEGRADED — primary {primary} is unusable ({primary_detail}); "
+            f"serving from fallback {fallback}. Every vision call pays a failed "
+            f"round-trip first and there is no safety net left. Fix "
+            f"ANTHROPIC_PRIMARY_MODEL."
+        )
+    return False, (
+        f"vision DOWN — primary {primary}: {primary_detail} | "
+        f"fallback {fallback}: {fallback_detail}"
+    )
 
 
 def _probe_vertex_gemini() -> tuple[bool, str]:

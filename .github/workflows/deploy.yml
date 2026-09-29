@@ -254,6 +254,14 @@ jobs:
             # rate-limit. A failure here emits a ::warning:: annotation (visible)
             # but does NOT fail the deploy — the unit-test gate already blocks
             # logic regressions, and health + migrations have already passed.
+            #
+            # That intent was previously only a comment: the script runs under
+            # `set -e`, so any stray non-zero exit in this block still failed
+            # the whole deploy. A release that passed health, migrations and
+            # the smoke test was reported red, which fires the failure
+            # notification and teaches everyone to ignore red builds. Disable
+            # errexit for the block and restore it once cleanup is done.
+            set +e
             sleep 8  # let the freshly-started worker warm up
             SMOKE_PAYLOAD='{"category":"tv_monitor","brand":"Samsung","model":"ZZSMOKE-CI","age_years":2,"condition_grade":"B","condition_score":70,"retail_price":50000,"retail_price_source":"category_default","seller_name":"ZZSMOKE CI","seller_phone":"+254700000000","country":"KE"}'
             SMOKE_RESP=""
@@ -297,6 +305,8 @@ jobs:
             else
               echo "::warning::DASHBOARD_KEY is not set in the container; skipped the probe-row purge."
             fi
+            # Cleanup is best-effort only; resume fail-fast for anything after it.
+            set -e
 
             echo ""
             echo "=== Deploy successful ==="
