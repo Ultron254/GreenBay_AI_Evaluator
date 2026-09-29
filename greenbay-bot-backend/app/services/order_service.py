@@ -85,7 +85,7 @@ class OrderService:
             # Generate order ID
             order_id = f"GB{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
             
-            # Create order with PENDING status (waiting for M-Pesa confirmation)
+            # Create order with PENDING status
             order = Order(
                 order_id=order_id,
                 user_id=user.id,

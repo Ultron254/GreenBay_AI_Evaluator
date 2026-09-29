@@ -176,10 +176,50 @@ def _count_fallback_records() -> int:
         return 0
 
 
+def _prune_fallback(max_age_days: int = 30, max_files: int = 5000) -> int:
+    """Drop fallback entries that will never be replayed usefully.
+
+    Nothing else deletes from this directory, so a long Airtable outage or a
+    permanently-rejected payload grows it without limit until the disk fills
+    and the app itself stops. Oldest first, since those are the least likely
+    to still matter.
+    """
+    removed = 0
+    try:
+        if not FALLBACK_DIR.exists():
+            return 0
+        files = sorted(
+            (p for p in FALLBACK_DIR.iterdir() if p.is_file() and p.suffix == ".json"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        cutoff = time.time() - max_age_days * 86400
+        for p in files:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed += 1
+        surplus = len(files) - removed - max_files
+        for p in files[removed:]:
+            if surplus <= 0:
+                break
+            p.unlink()
+            removed += 1
+            surplus -= 1
+        if removed:
+            logger.warning(
+                f"Airtable: pruned {removed} fallback payloads "
+                f"(older than {max_age_days}d or over the {max_files}-file cap)"
+            )
+    except Exception as e:  # noqa: BLE001 — pruning must never break a write
+        logger.warning(f"Airtable: fallback prune failed: {e}")
+    return removed
+
+
 def _dump_fallback(payload: dict) -> Optional[Path]:
     """Persist a failed Airtable write to disk for later retry."""
     try:
         FALLBACK_DIR.mkdir(parents=True, exist_ok=True)
+        if _count_fallback_records() >= 5000:
+            _prune_fallback()
         fp = FALLBACK_DIR / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
         fp.write_text(json.dumps(payload, default=str), encoding="utf-8")
         logger.warning(f"Airtable: payload queued to fallback at {fp.name}")
@@ -196,11 +236,17 @@ def _post_record(cfg: dict[str, str], fields: dict) -> tuple[bool, Optional[str]
     offending column is dropped and the write is retried (up to 8 times) so a
     single missing column never discards the whole record. The set of dropped
     columns is logged so the team can add them to the base later.
+
+    Rate limits and Airtable-side errors are retried with backoff, like
+    _patch_record: otherwise a burst of evaluations pushes records onto the
+    disk fallback queue for what is usually a one-second problem.
     """
     import requests
+    import time
 
     work = dict(fields)
     dropped: list[str] = []
+    transient = 0
     for _ in range(8):
         body = {"fields": work, "typecast": True}
         try:
@@ -230,6 +276,21 @@ def _post_record(cfg: dict[str, str], fields: dict) -> tuple[bool, Optional[str]
                     work.pop(bad, None)
                     dropped.append(bad)
                     continue
+
+        if (resp.status_code == 429 or resp.status_code >= 500) and transient < len(RETRY_BACKOFFS):
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else RETRY_BACKOFFS[transient]
+            except (TypeError, ValueError):
+                delay = RETRY_BACKOFFS[transient]
+            transient += 1
+            logger.warning(
+                f"Airtable: HTTP {resp.status_code}, retrying in {delay:.0f}s "
+                f"({transient}/{len(RETRY_BACKOFFS)})"
+            )
+            time.sleep(delay)
+            continue
+
         return False, f"HTTP {resp.status_code}: {text}"
 
     return False, f"HTTP 422: too many unknown fields (dropped {dropped})"

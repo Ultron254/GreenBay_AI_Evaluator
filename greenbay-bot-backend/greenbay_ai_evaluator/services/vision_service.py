@@ -24,7 +24,16 @@ try:
     HAS_ANTHROPIC = True
 except ImportError:
     HAS_ANTHROPIC = False
-    logger.warning("anthropic package not installed — vision analysis will use fallback")
+    logger.warning("anthropic package not installed — vision analysis will fail")
+
+
+class VisionUnavailableError(RuntimeError):
+    """Raised when photos could not be analysed, so no offer may be quoted.
+
+    Never downgrade this to a default grade: a fabricated condition score feeds
+    straight into the pricing engine and produces a real money offer on photos
+    nobody looked at.
+    """
 
 
 VISION_SYSTEM_PROMPT = """You are an expert appliance evaluator for GreenBay Market,
@@ -91,11 +100,15 @@ async def analyze_images(
         fallback_model: Fallback model if primary fails
 
     Returns:
-        Structured analysis dict, or fallback stub if API unavailable
+        Structured analysis dict.
+
+    Raises:
+        VisionUnavailableError: if the package, key, or both models are unusable.
     """
-    if not HAS_ANTHROPIC or not api_key:
-        logger.info("Anthropic not configured — returning stub vision analysis")
-        return _stub_analysis(category, brand_hint, model_hint)
+    if not HAS_ANTHROPIC:
+        raise VisionUnavailableError("anthropic package is not installed")
+    if not api_key:
+        raise VisionUnavailableError("ANTHROPIC_API_KEY is not configured")
 
     # Build the message content with images
     content: list[dict] = []
@@ -143,6 +156,7 @@ async def analyze_images(
     content.append({"type": "text", "text": prompt})
 
     # Try primary, then fallback
+    last_error: Exception | None = None
     for model in [primary_model, fallback_model]:
         try:
             client = anthropic.Anthropic(api_key=api_key)
@@ -166,35 +180,13 @@ async def analyze_images(
             return result
 
         except Exception as e:
+            last_error = e
             logger.warning(f"Vision analysis failed with {model}: {e}")
-            if model == fallback_model:
-                logger.error("Both primary and fallback models failed")
-                return _stub_analysis(category, brand_hint, model_hint)
 
-    return _stub_analysis(category, brand_hint, model_hint)
-
-
-def _stub_analysis(
-    category: str | None = None,
-    brand: str | None = None,
-    model: str | None = None,
-) -> dict[str, Any]:
-    """Fallback analysis when API is unavailable."""
-    return {
-        "brand_detected": brand,
-        "model_detected": model,
-        "condition_grade": "B",
-        "condition_score": 65,
-        "defects": [],
-        "safety_concerns": [],
-        "completeness_score": 80,
-        "authenticity_signals": [],
-        "photo_quality_score": 60,
-        "photo_quality_notes": "Analysis unavailable, using defaults",
-        "estimated_age_years": None,
-        "key_observations": ["Automated vision analysis not configured"],
-        "recommended_retail_price_kes": None,
-    }
+    logger.error("Both primary and fallback vision models failed")
+    raise VisionUnavailableError(
+        f"Claude vision unavailable ({type(last_error).__name__}: {last_error})"
+    )
 
 
 MODEL_LABEL_PROMPT = """You are an expert at reading appliance model labels and stickers.

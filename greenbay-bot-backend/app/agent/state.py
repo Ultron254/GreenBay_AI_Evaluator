@@ -37,7 +37,6 @@ class ChatbotState(TypedDict):
     # Payment information
     payment_status: str  # pending, completed, failed
     payment_amount: float
-    mpesa_transaction_id: Optional[str]
     
     # Cross-selling
     cross_sell_offered: bool  # Whether cross-sell has been offered

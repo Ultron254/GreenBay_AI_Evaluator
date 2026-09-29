@@ -2,18 +2,57 @@
 <html lang="en">
 
 <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2REFLT805D"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      // A URL can carry anything: the ops dashboard is opened as
+      // dashboard.html?key=<admin key>, and a link sent to a customer could
+      // carry a name or a phone. GA4 records page_location and page_referrer
+      // on every hit, so both are cleaned BEFORE the first hit. Landing URL:
+      // path plus campaign tags and ad-click ids only. Referrer: path only.
+      // THE SAME ALLOW-LIST LIVES IN greenbay_ai_evaluator/api/schemas.py
+      // (ATTRIBUTION_QUERY_ALLOWLIST). app.js reuses this function.
+      window.gbCleanUrl = function (url, keepQuery) {
+        var allow = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+                     'utm_source_platform',
+                     'gclid', 'gbraid', 'wbraid', 'dclid', 'gad_source', 'gad_campaignid',
+                     'fbclid', 'ttclid', 'msclkid'];
+        if (!url) return '';
+        try {
+          var u = new URL(url, window.location.href);
+          var out = u.protocol + '//' + u.host + u.pathname;
+          if (!keepQuery) return out;
+          var kept = new URLSearchParams();
+          u.searchParams.forEach(function (v, k) {
+            if (v && allow.indexOf(k.toLowerCase()) !== -1) kept.append(k, v);
+          });
+          var q = kept.toString();
+          var hash = /^#[A-Za-z0-9_\-]{0,64}$/.test(u.hash) ? u.hash : '';
+          return out + (q ? '?' + q : '') + hash;
+        } catch (e) {
+          return String(url).split(/[?#]/)[0];
+        }
+      };
+      gtag('js', new Date());
+      gtag('config', 'G-2REFLT805D', {
+        page_location: window.gbCleanUrl(window.location.href, true),
+        page_referrer: window.gbCleanUrl(document.referrer, false)
+      });
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GreenBay AI Evaluator | Instant Appliance Valuations</title>
     <meta name="description"
-        content="Get an instant, AI-powered valuation for your secondhand appliance. Free pickup in Nairobi, same-day M-Pesa payment.">
+        content="Get an instant, AI-powered valuation for your secondhand appliance. Free pickup in Nairobi, settled by our sourcing team.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com; connect-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com https://*.google-analytics.com https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com;">
     <link rel="stylesheet" href="styles.css?v=20260319">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -55,7 +94,7 @@
                     <h1>Turn Your Old Appliances into <em>Cash</em></h1>
                     <p class="hero-description">
                         Upload photos of your appliance and get an instant, AI-powered valuation.
-                        Free pickup anywhere in Nairobi and same-day M-Pesa payment.
+                        Free pickup anywhere in Nairobi, settled by our sourcing team.
                     </p>
                     <div class="hero-actions">
                         <a href="#evaluate" class="btn btn-primary btn-lg">Get Free Valuation <i
@@ -72,7 +111,7 @@
                         </div>
                         <div class="stat-item">
                             <div class="stat-number">24hr</div>
-                            <div class="stat-label">Pickup & Payment</div>
+                            <div class="stat-label">Pickup &amp; Collection</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-number">90%+</div>
@@ -182,8 +221,8 @@
                 <div class="step-card">
                     <div class="step-number">4</div>
                     <div class="step-icon"><i data-lucide="banknote" class="icon-lg"></i></div>
-                    <h3>Get Paid</h3>
-                    <p>Free pickup anywhere in Nairobi and same-day payment via M-Pesa. Done!</p>
+                    <h3>Hand It Over</h3>
+                    <p>Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!</p>
                 </div>
             </div>
         </div>
@@ -386,8 +425,8 @@
                 </div>
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="smartphone" class="icon-md"></i></div>
-                    <h4>Same-Day M-Pesa</h4>
-                    <p>Get paid instantly via mobile money</p>
+                    <h4>Handled by Our Team</h4>
+                    <p>Our sourcing team confirms and settles with you directly</p>
                 </div>
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="target" class="icon-md"></i></div>
@@ -548,22 +587,13 @@
                             </div>
                         </div>
 
-                        <!-- STEP 3: Model -->
+                        <!-- STEP 3: Size & Model -->
                         <div class="wizard-step" data-step="3" id="step3">
-                            <h3>What is the exact model number? <span class="step-optional-badge">Optional</span></h3>
-                            <p class="step-description">If you know it, check the sticker or plate on the back or inside door of your
-                                appliance.</p>
-                            <div class="form-group">
-                                <label class="form-label">Type the model number</label>
-                                <input type="text" class="form-input" id="modelInput"
-                                    placeholder="e.g. RT34K5532S8, WF-T7000"
-                                    oninput="updateAnswer('model', this.value)">
-                                <p class="form-hint"><i data-lucide="camera"
-                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
-                                    You'll upload a photo of the model label in the next step for verification.</p>
-                            </div>
+                            <h3>What size is your appliance?</h3>
+                            <p class="step-description">Size affects the price more than any other detail, so this is
+                                the one worth getting right.</p>
                             <!-- Appliance size (TV inches / washer kg / fridge litres) -->
-                            <div class="form-group" id="sizeGroup" style="display:none; margin-top: 16px;">
+                            <div class="form-group" id="sizeGroup" style="display:none;">
                                 <label class="form-label" id="sizeLabel">What is the size?</label>
                                 <div style="display:flex; align-items:center; gap:8px;">
                                     <input type="number" min="0" step="1" class="form-input" id="sizeInput"
@@ -576,6 +606,16 @@
                                     Size strongly affects the price (a 43" and a 55" TV are very different).
                                     If you're not sure, leave it blank — we'll estimate it from your photos and model number.
                                 </p>
+                            </div>
+                            <div class="form-group" style="margin-top:16px;">
+                                <label class="form-label">Model number <span class="step-optional-badge">Optional</span></label>
+                                <input type="text" class="form-input" id="modelInput"
+                                    placeholder="e.g. RT34K5532S8, WF-T7000"
+                                    oninput="updateAnswer('model', this.value)">
+                                <p class="form-hint"><i data-lucide="camera"
+                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
+                                    Check the sticker or plate on the back or inside door. You'll upload a photo of the
+                                    label in the next step for verification.</p>
                             </div>
                             <!-- Other category description -->
                             <div class="form-group" id="otherDescriptionGroup" style="display:none; margin-top: 16px;">
@@ -701,52 +741,8 @@
                             </div>
                         </div>
 
-                        <!-- STEP 7: Ownership -->
+                        <!-- STEP 7: Issues -->
                         <div class="wizard-step" data-step="7" id="step7">
-                            <h3>How long have you owned this product?</h3>
-                            <p class="step-description">This helps us assess the product's provenance.</p>
-                            <div class="option-grid" id="ownershipOptions">
-                                <div class="option-card" data-value="under_1_month"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="badge-plus"></i></span>
-                                    <span class="option-label">Just got it</span>
-                                    <span class="option-desc">Less than 1 month</span>
-                                </div>
-                                <div class="option-card" data-value="1_6_months"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="calendar"></i></span>
-                                    <span class="option-label">1 to 6 Months</span>
-                                </div>
-                                <div class="option-card" data-value="6_12_months"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="calendar-range"></i></span>
-                                    <span class="option-label">6 to 12 Months</span>
-                                </div>
-                                <div class="option-card" data-value="1_2_years"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="hourglass"></i></span>
-                                    <span class="option-label">1 to 2 Years</span>
-                                </div>
-                                <div class="option-card" data-value="2_5_years"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="clock-3"></i></span>
-                                    <span class="option-label">2 to 5 Years</span>
-                                </div>
-                                <div class="option-card" data-value="5_plus_years"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="home"></i></span>
-                                    <span class="option-label">5+ Years</span>
-                                </div>
-                                <div class="option-card" data-value="not_original_owner"
-                                    onclick="selectOption(this, 'ownership')">
-                                    <span class="option-icon"><i data-lucide="repeat"></i></span>
-                                    <span class="option-label">Not original owner</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- STEP 8: Issues -->
-                        <div class="wizard-step" data-step="8" id="step8">
                             <h3>Any specific issues or damage?</h3>
                             <p class="step-description">Describe any problems: dents, scratches, missing parts, strange
                                 noises. The
@@ -765,8 +761,8 @@
                             </button>
                         </div>
 
-                        <!-- STEP 9: Seller Details -->
-                        <div class="wizard-step" data-step="9" id="step9">
+                        <!-- STEP 8: Seller Details -->
+                        <div class="wizard-step" data-step="8" id="step8">
                             <h3>Your Contact Details</h3>
                             <p class="step-description">We need your details to process the trade-in and contact you about pickup or drop-off.</p>
                             <div class="form-group">
@@ -782,7 +778,7 @@
                                 <label class="form-label">Your Phone Number <span style="color:var(--red);">*</span></label>
                                 <input type="tel" class="form-input" id="sellerPhoneInput"
                                     placeholder="e.g. 0712 345 678" required aria-required="true"
-                                    autocomplete="tel" inputmode="tel"
+                                    autocomplete="tel" inputmode="tel" maxlength="30"
                                     oninput="updateAnswer('sellerPhone', this.value)">
                                 <p class="form-hint" id="phoneError" style="display:none;color:var(--red);">
                                     Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>
@@ -792,8 +788,8 @@
                             </div>
                         </div>
 
-                        <!-- STEP 10: Photos -->
-                        <div class="wizard-step" data-step="10" id="step10">
+                        <!-- STEP 9: Photos -->
+                        <div class="wizard-step" data-step="9" id="step9">
                             <h3>Upload photos of your appliance</h3>
                             <p class="step-description">We need at least <strong>5 clear photos</strong>: front view,
                                 back/side, model
@@ -835,8 +831,8 @@
                             </div>
                         </div>
 
-                        <!-- STEP 11: Price -->
-                        <div class="wizard-step" data-step="11" id="step11">
+                        <!-- STEP 10: Price -->
+                        <div class="wizard-step" data-step="10" id="step10">
                             <h3>What price are you hoping to get? <span class="step-optional-badge">Optional</span></h3>
                             <p class="step-description">Tell us your ideal selling price in KES, or let us make the
                                 first offer.</p>
@@ -916,9 +912,9 @@
                     <div class="logo">
                         <img src="greenbay-logo.png" alt="GreenBay Market" class="logo-img footer-logo-img">
                     </div>
-                    <p>Kenya's marketplace for pre-loved appliances. AI-powered valuations with free pickup and same-day
-                        M-Pesa
-                        payment.</p>
+                    <p>Kenya's marketplace for pre-loved appliances. AI-powered valuations with free pickup, settled
+                        by our
+                        sourcing team.</p>
                 </div>
                 <div class="footer-col">
                     <h4>Quick Links</h4>
@@ -986,7 +982,7 @@
             }
         } catch(e) { localStorage.removeItem('gb_eval_state'); }
     </script>
-    <script src="app.js?v=20260311"></script>
+    <script src="app.js?v=20260921"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();

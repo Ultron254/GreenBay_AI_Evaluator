@@ -14,7 +14,10 @@ Exposed via GET /tradein/health/services (key-gated in the router).
 
 from __future__ import annotations
 
+import os
+import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from loguru import logger
@@ -43,18 +46,33 @@ def _probe_anthropic() -> tuple[bool, str]:
     if not s.anthropic_api_key:
         return False, "ANTHROPIC_API_KEY not configured"
     import requests
-    # Minimal models list call — cheap, validates the key without spending tokens.
-    resp = requests.get(
-        "https://api.anthropic.com/v1/models",
+    # A models-list call only proves the key exists — it still returns 200 on an
+    # account with no credit. Spend one token on a real completion so an
+    # exhausted balance (the failure that silently broke pricing) shows up here.
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
         headers={
             "x-api-key": s.anthropic_api_key,
             "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
         },
-        timeout=10,
+        json={
+            "model": s.anthropic_primary_model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        timeout=20,
     )
     if resp.status_code == 200:
-        return True, f"OK (model configured: {s.anthropic_primary_model})"
-    return False, f"HTTP {resp.status_code}: {resp.text[:160]}"
+        return True, f"OK (billable call succeeded on {s.anthropic_primary_model})"
+    body = resp.text[:200]
+    if resp.status_code in (400, 402) and "credit" in body.lower():
+        return False, f"OUT OF CREDIT — top up billing. HTTP {resp.status_code}: {body}"
+    if resp.status_code == 401:
+        return False, f"Key rejected (revoked or wrong). HTTP 401: {body}"
+    if resp.status_code == 429:
+        return False, f"Rate limited / quota exhausted. HTTP 429: {body}"
+    return False, f"HTTP {resp.status_code}: {body}"
 
 
 def _probe_vertex_gemini() -> tuple[bool, str]:
@@ -92,15 +110,29 @@ def _probe_vertex_gemini() -> tuple[bool, str]:
     return False, f"HTTP {resp.status_code}: {resp.text[:160]}"
 
 
+# The probes price one well-known product and pass its size, exactly as a real
+# evaluation does: both prompts insist on a size match, so a probe with no size
+# nudges the model towards answering "no price".
+_PROBE_PRODUCT = dict(
+    brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
+    size_value=43, size_unit="inch",
+)
+
+
 def _probe_gemini_search_grounding() -> tuple[bool, str]:
-    """Probe the exact path used for the NEW-PRICE lookup (googleSearch tool)."""
-    from greenbay_ai_evaluator.services.market_price_service import search_internet_price
-    res = search_internet_price(
-        brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
-    )
+    """Probe the Gemini half of the NEW-PRICE lookup (googleSearch tool).
+
+    Calls Gemini alone. It used to call search_internet_price, which merges
+    Gemini with Sonar, so a working Sonar could mask a dead Gemini (and the
+    Sonar key was billed twice per health-check)."""
+    from greenbay_ai_evaluator.services.market_price_service import gemini_price_research
+    res = gemini_price_research(**_PROBE_PRODUCT)
     if res.launch_price and res.launch_price > 0:
         return True, f"OK — grounded price KES {res.launch_price:,.0f} from {len(res.sources)} sources"
-    return False, "Gemini search grounding returned NO price (would silently fall back to a guess)"
+    return False, (
+        f"Gemini search grounding returned NO price [{res.status or 'unknown'}] "
+        f"{res.status_detail} (would silently fall back to a guess)"
+    )
 
 
 def _probe_perplexity_sonar() -> tuple[bool, str]:
@@ -109,23 +141,26 @@ def _probe_perplexity_sonar() -> tuple[bool, str]:
     Optional dependency: when PERPLEXITY_API_KEY is not set the system runs
     Gemini-only by design, so 'not configured' reports ok=True and simply says
     so. When the key IS set, run a real product lookup end to end (auth, JSON
-    parsing, sanity band) — a wrong/expired key must show up here loudly."""
+    parsing, sanity band) — a wrong/expired key must show up here loudly.
+
+    The detail names the cause (Sep 2026): the HTTP status and Perplexity's own
+    error message, a timeout, an empty answer, a parse failure, or a price
+    outside the sanity band. It never contains the key."""
     from app.config import get_settings
     api_key = getattr(get_settings(), "perplexity_api_key", None) or ""
-    if not api_key:
+    if not api_key.strip():
         return True, "PERPLEXITY_API_KEY not set — running Gemini-only (optional)"
     from greenbay_ai_evaluator.services.market_price_service import sonar_price_research
-    res = sonar_price_research(
-        brand="Samsung", model="UA43T5300", category="tv_monitor", country="KE",
-    )
+    res = sonar_price_research(**_PROBE_PRODUCT)
     if res.launch_price and res.launch_price > 0:
         return True, (
             f"OK — Sonar grounded price KES {res.launch_price:,.0f} "
             f"({len(res.sources)} citations); dual-source cross-check ACTIVE"
         )
+    # Cause first: consumers (Pulse's Sentinel) keep the first 300 characters.
     return False, (
-        "Sonar returned NO price — check the key/credits "
-        "(evaluations still work Gemini-only)"
+        f"Sonar returned NO price [{res.status or 'unknown'}] {res.status_detail} "
+        f"(evaluations still work Gemini-only)"
     )
 
 
@@ -276,11 +311,82 @@ _PROBES: dict[str, Callable[[], tuple[bool, str]]] = {
 }
 
 
-def run_live_healthcheck() -> dict[str, Any]:
-    """Run every probe and return a structured report."""
+# ---------------------------------------------------------------------------
+# Paid probes (Sep 2026)
+# ---------------------------------------------------------------------------
+# These two probes run a real, BILLED web-search lookup. The service monitor
+# calls run_live_healthcheck every MONITOR_INTERVAL_MIN (default 10 minutes),
+# so from 13 Jul 2026 monitoring alone made 288 Perplexity requests a day (the
+# Gemini probe called Sonar too) against a prepaid credit balance, before one
+# customer was priced. Their result is now reused between runs.
+_PAID_PROBES = frozenset({"gemini_search_newprice", "perplexity_sonar"})
+_PAID_PROBE_FAILURE_RECHECK_S = 30 * 60   # a failure is re-probed sooner
+_PAID_PROBE_FRESH_FLOOR_S = 60            # ?fresh=true never re-runs sooner
+_paid_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_paid_probe_lock = threading.Lock()
+
+
+def _paid_probe_interval_seconds() -> int:
+    """HEALTH_PAID_PROBE_INTERVAL_MIN, default 360 (four lookups a day each).
+    0 restores the old behaviour: a billed lookup on every health-check."""
+    try:
+        return max(0, int(float(os.environ.get("HEALTH_PAID_PROBE_INTERVAL_MIN", "360")) * 60))
+    except (TypeError, ValueError):
+        return 360 * 60
+
+
+def _run_paid_probe(name: str, fn: Callable[[], tuple[bool, str]], fresh: bool) -> dict[str, Any]:
+    # The lock guards the cache only, never the lookup: a grounded search can
+    # take over a minute, and the monitor thread must not make an API request
+    # to /health/services wait behind it. Two overlapping checks can therefore
+    # both run a lookup; that is rare and costs one extra request.
+    interval = _paid_probe_interval_seconds()
+    if fresh or interval > 0:
+        with _paid_probe_lock:
+            cached = _paid_probe_cache.get(name)
+        if cached:
+            checked_at, result = cached
+            age = time.time() - checked_at
+            if fresh:
+                # The read-only key can pass fresh=true; without a floor a loop
+                # of requests would spend the prepaid balance.
+                limit = _PAID_PROBE_FRESH_FLOOR_S
+            else:
+                limit = interval if result["ok"] else min(interval, _PAID_PROBE_FAILURE_RECHECK_S)
+            if 0 <= age < limit:
+                return {
+                    **result,
+                    "cached": True,
+                    "age_s": int(age),
+                    "checked_at": datetime.fromtimestamp(checked_at, timezone.utc).isoformat(),
+                }
+    result = _timed(fn)
+    now = time.time()
+    with _paid_probe_lock:
+        _paid_probe_cache[name] = (now, result)
+    return {
+        **result,
+        "cached": False,
+        "age_s": 0,
+        "checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+    }
+
+
+def run_live_healthcheck(fresh: bool = False) -> dict[str, Any]:
+    """Run every probe and return a structured report.
+
+    The two billed price-lookup probes reuse their last result for
+    HEALTH_PAID_PROBE_INTERVAL_MIN (a failure for at most 30 minutes); their
+    entries say so with ``cached`` / ``age_s`` / ``checked_at``. Pass
+    ``fresh=True`` (``?fresh=true`` on the endpoint) to force a real lookup,
+    e.g. right after topping up credits; a result less than a minute old is
+    still reused, so the flag cannot be looped to spend credits."""
     results: dict[str, Any] = {}
     for name, fn in _PROBES.items():
-        results[name] = _timed(fn)
+        if name in _PAID_PROBES:
+            results[name] = _run_paid_probe(name, fn, fresh)
+        else:
+            results[name] = _timed(fn)
         status = "OK" if results[name]["ok"] else "FAIL"
         logger.info(f"Live health-check [{name}]: {status} — {results[name]['detail']}")
 

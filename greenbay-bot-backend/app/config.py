@@ -34,6 +34,16 @@ class Settings(BaseSettings):
 
     # Perplexity Sonar (second grounded new-price source, cross-checks Gemini)
     perplexity_api_key: Optional[str] = Field(default=None, env="PERPLEXITY_API_KEY", repr=False)
+    # Model name sent to Perplexity. A setting so that a model retirement is an
+    # environment change, not a code change and a deploy.
+    perplexity_model: str = Field(default="sonar", env="PERPLEXITY_MODEL")
+    # Confidence honesty (Sep 2026). False (default, the safer behaviour): the
+    # confidence score is computed exactly as before. True: when a price source
+    # was DOWN (infrastructure failure, not "no data"), the price-verification
+    # tiers are scaled to the sources that could answer. See offer_engine.
+    confidence_renormalise_unavailable_sources: bool = Field(
+        default=False, env="CONFIDENCE_RENORMALISE_UNAVAILABLE_SOURCES",
+    )
     
     # Google Cloud Vision API (for Google Lens product identification)
     google_cloud_api_key: Optional[str] = Field(default=None, env="GOOGLE_CLOUD_API_KEY", repr=False)
@@ -58,14 +68,6 @@ class Settings(BaseSettings):
     qdrant_rerank_top_k: int = Field(default=20, env="QDRANT_RERANK_TOP_K")
     qdrant_rerank_model: str = Field(default="cohere-rerank-v3", env="QDRANT_RERANK_MODEL")
     
-    # M-Pesa Daraja API Configuration
-    mpesa_consumer_key: str = Field(default="", env="MPESA_CONSUMER_KEY", repr=False)
-    mpesa_consumer_secret: str = Field(default="", env="MPESA_CONSUMER_SECRET", repr=False)
-    mpesa_shortcode: str = Field(default="", env="MPESA_BUSINESS_SHORTCODE")
-    mpesa_passkey: str = Field(default="", env="MPESA_PASSKEY", repr=False)
-    mpesa_environment: str = Field(default="sandbox", env="MPESA_ENVIRONMENT")
-    mpesa_phone_number: str = Field(default="test_phone", env="MPESA_PHONE_NUMBER")
-    mpesa_callback_url: str = Field(default="https://test.com/callback", env="MPESA_CALLBACK_URL")
     
     # Database Configuration
     database_url: str = Field(default="sqlite:///./greenbay_chatbot.db", env="DATABASE_URL")
@@ -148,7 +150,7 @@ class Settings(BaseSettings):
     ses_region: str = Field(default="", env="SES_REGION")
     ses_sender_email: str = Field(default="", env="SES_SENDER_EMAIL")
     team_notification_emails: str = Field(
-        default="allanmatano@greenbay.market,kelvin@greenbay.market",
+        default="allanmatano@greenbay.market,alexander@greenbay.market",
         env="TEAM_NOTIFICATION_EMAILS",
     )
 

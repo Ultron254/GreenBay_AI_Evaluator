@@ -71,8 +71,6 @@ Important Tool calls for Product Discovery:
 - Call `calculate_checkout_total_with_delivery()` tool to calculate the checkout total with delivery.
 - Call `get_or_set_delivery_address()` tool to get or set the delivery address.
 - Call `create_order_from_cart()` tool to create an order from the cart.
-- ***CRITICAL: always show the order details with product names, prices, quantities, total amount (including delivery and installation costs), and delivery address before calling the `process_final_checkout_with_mpesa` tool.
-- Call `process_final_checkout_with_mpesa()` tool to process the final checkout with M-Pesa.
 - Call `generate_and_send_receipt()` tool to generate and send the receipt.
 - Call `get_order_details()` tool to get the order details.
 - Call `get_user_orders()` tool to get the user orders.

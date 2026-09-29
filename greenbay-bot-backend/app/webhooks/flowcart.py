@@ -370,7 +370,7 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                     f"Grade {eval_result.get('condition_grade', 'B')} | "
                     f"Confidence: {eval_result.get('confidence_score', 0):.0f}%\n\n"
                     f"Valid for 7 days.\n"
-                    f"Free pickup + same-day M-Pesa payment!"
+                    f"Free pickup — our sourcing team settles with you."
                 ),
                 "buttons": [
                     {"type": "reply", "title": "✅ Accept Offer"},
@@ -391,7 +391,7 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                     f"*KES {offer:,.0f}*\n"
                     f"━━━━━━━━━━━━━━━━\n\n"
                     f"Valid for 7 days.\n"
-                    f"Free pickup + same-day M-Pesa payment!"
+                    f"Free pickup — our sourcing team settles with you."
                 ),
                 "buttons": [
                     {"type": "reply", "title": "✅ Accept"},
@@ -425,7 +425,7 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                     f"Amount: {_neg_currency} {offer:,.0f}\n"
                     f"Ref: GB-{session['session_id']}\n\n"
                     "📍 Our team will call within 24 hours to arrange FREE pickup.\n"
-                    "⚡ Payment via M-Pesa — same day.\n\n"
+                    "⚡ Our sourcing team settles with you on collection.\n\n"
                     "Asante sana! 💚"
                 ),
             }
@@ -512,7 +512,7 @@ def process_message(session: dict, text: str, media_url: str | None) -> dict:
                 "text": (
                     f"Our best offer is {_neg_currency} {offer:,.0f} "
                     "based on current market data and product condition.\n\n"
-                    "This includes free pickup and same-day M-Pesa payment.\n\n"
+                    "This includes free pickup, settled by our sourcing team.\n\n"
                     "Reply *Accept* or *Not Happy* for alternatives."
                 ),
                 "buttons": [
@@ -679,7 +679,6 @@ def _call_evaluator(session: dict) -> dict | None:
 #                     "🎉 Deal confirmed!\n"
 #                     f"Ref: GB-{session['session_id']}\n\n"
 #                     "📍 Our team will call within 24 hours for FREE pickup.\n"
-#                     "⚡ M-Pesa payment — same day.\n\n"
 #                     "Asante sana! 💚"
 #                 ),
 #             }

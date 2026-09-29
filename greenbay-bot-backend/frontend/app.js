@@ -9,7 +9,7 @@
  STATE
  ============================================================ */
 const API_BASE = window.location.origin;
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 10;
 
 // v6: Detect country via timezone heuristic (no permissions needed)
 (function detectCountry() {
@@ -31,7 +31,6 @@ const state = {
         age: null,
         condition: null,
         conditionGrade: null,
-        ownership: null,
         issues: '',
         otherDescription: '',
         sellerName: '',
@@ -44,6 +43,92 @@ const state = {
     negotiation: { round: 0, offers: [], counters: [], status: 'idle' },
     chatHistory: [],
 };
+
+/* ============================================================
+ ANALYTICS (GA4, measurement id G-2REFLT805D, loaded in index.html)
+
+ Funnel events sent with gtag('event', name, params). Every event carries
+ the attribution captured on first load (utm_* from the query string,
+ document.referrer, location.href) so campaigns can be attributed. The
+ attribution lives in sessionStorage so it survives the whole wizard.
+
+ Never send names, phones or prices to GA4. The only per-event params are
+ step (integer), decision (accept | negotiate | review | reject) and
+ option (A | B | C). URLs are cleaned with window.gbCleanUrl (index.html)
+ before they are stored or sent: the landing URL keeps only campaign tags and
+ ad-click ids, the referrer keeps no query string at all. trackEvent drops
+ any parameter that is not on GB_EVENT_PARAMS, so a future call site cannot
+ leak a field by accident.
+ ============================================================ */
+const GB_ATTRIBUTION_KEY = 'gb_attribution';
+const GB_ATTRIBUTION_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
+
+// Parameters an event may carry, and the longest value GA4 keeps (100 chars).
+const GB_EVENT_PARAMS = ['step', 'decision', 'option'];
+
+function cleanUrl(url, keepQuery) {
+    try {
+        if (typeof window.gbCleanUrl === 'function') return window.gbCleanUrl(url, keepQuery);
+    } catch (_) { /* fall through */ }
+    return String(url || '').split(/[?#]/)[0];   // no cleaner: keep the path only
+}
+
+function captureAttribution() {
+    let stored = null;
+    try {
+        const raw = sessionStorage.getItem(GB_ATTRIBUTION_KEY);
+        if (raw) stored = JSON.parse(raw);
+    } catch (_) { stored = null; }
+    if (stored) {
+        // A capture made before URL cleaning shipped is cleaned on read.
+        stored.referrer = cleanUrl(stored.referrer, false);
+        stored.landing_url = cleanUrl(stored.landing_url, true);
+    }
+
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch (_) { params = null; }
+    const hasUtm = !!params && GB_ATTRIBUTION_FIELDS.some(f => params.get(f));
+
+    // Keep the first-load capture for the whole session. Only a fresh
+    // campaign link (new utm_* in the query) replaces it.
+    if (stored && stored.landing_url && !hasUtm) return stored;
+
+    const fresh = {
+        utm_source: (params && params.get('utm_source')) || '',
+        utm_medium: (params && params.get('utm_medium')) || '',
+        utm_campaign: (params && params.get('utm_campaign')) || '',
+        utm_content: (params && params.get('utm_content')) || '',
+        referrer: cleanUrl(document.referrer, false).slice(0, 500),
+        landing_url: cleanUrl(window.location.href, true).slice(0, 2000),
+    };
+    try { sessionStorage.setItem(GB_ATTRIBUTION_KEY, JSON.stringify(fresh)); } catch (_) { /* ignore */ }
+    return fresh;
+}
+
+const attribution = captureAttribution();
+
+function trackEvent(name, params) {
+    try {
+        if (typeof window.gtag !== 'function') return;
+        const payload = Object.assign({}, attribution);
+        GB_EVENT_PARAMS.forEach(k => {
+            if (params && params[k] !== undefined && params[k] !== null) {
+                payload[k] = typeof params[k] === 'number' ? params[k] : String(params[k]).slice(0, 100);
+            }
+        });
+        window.gtag('event', name, payload);
+    } catch (_) { /* analytics must never break the wizard */ }
+}
+
+/** Fire an event once per browser session (guarded by sessionStorage). */
+function trackOnce(name, params) {
+    const flag = 'gb_evt_' + name;
+    try {
+        if (sessionStorage.getItem(flag)) return;
+        sessionStorage.setItem(flag, '1');
+    } catch (_) { /* fall through and send anyway */ }
+    trackEvent(name, params);
+}
 
 // Restore from localStorage — auto-reset if previous evaluation was complete
 try {
@@ -81,6 +166,8 @@ function saveState() {
  */
 function startNewEvaluation() {
     try { localStorage.removeItem('gb_eval_state'); } catch (_) { /* ignore */ }
+    // A fresh wizard run counts as a new wizard_start; attribution is kept.
+    try { sessionStorage.removeItem('gb_evt_wizard_start'); } catch (_) { /* ignore */ }
     // Preserve any access key or query params that should persist across reloads.
     window.location.href = window.location.pathname + window.location.hash;
 }
@@ -93,7 +180,7 @@ function resetWizard() {
     state.answers = {
         category: null, brand: null, model: '', modelPhoto: null,
         age: null, condition: null, conditionGrade: null,
-        ownership: null, issues: '', otherDescription: '',
+        issues: '', otherDescription: '',
         sellerName: '', sellerPhone: '',
         photos: [], price: null,
     };
@@ -140,15 +227,14 @@ function resetWizard() {
 const STEP_LABELS = {
     1: 'Category',
     2: 'Brand',
-    3: 'Model Number',
+    3: 'Model & Size',
     4: 'Model Label Photo',
     5: 'Product Age',
     6: 'Condition',
-    7: 'Ownership',
-    8: 'Issues & Damage',
-    9: 'Your Details',
-    10: 'Photos',
-    11: 'Your Price',
+    7: 'Issues & Damage',
+    8: 'Your Details',
+    9: 'Photos',
+    10: 'Your Price',
 };
 
 const CATEGORY_NAMES = {
@@ -261,17 +347,23 @@ function isStepValid(step) {
         case 4: return true; // model photo is now optional
         case 5: return state.answers.age !== null;
         case 6: return !!state.answers.condition;
-        case 7: return !!state.answers.ownership;
-        case 8: return true; // issues can be empty
-        case 9: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
-        case 10: return state.answers.photos.length >= 3;
-        case 11: return true; // price can be null ("make me an offer")
+        case 7: return true; // issues can be empty
+        case 8: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
+        case 9: return state.answers.photos.length >= 3;
+        case 10: return true; // price can be null ("make me an offer")
         default: return true;
     }
 }
 
 function nextStep() {
     if (state.currentStep === TOTAL_STEPS) {
+        // The offer is only shown to a customer we can call back. A session
+        // restored from localStorage can hold a phone saved under older,
+        // looser rules, so check again before submitting.
+        if (!isStepValid(9)) {
+            returnToContactStep();
+            return;
+        }
         startAnalysis();
         return;
     }
@@ -284,6 +376,7 @@ function nextStep() {
     mirrorStepToChat(state.currentStep);
 
     goToStep(next);
+    trackEvent('wizard_step', { step: next });
 
     // Chat prompt for new step
     promptNextStep(next);
@@ -299,9 +392,8 @@ function restoreSelections() {
     const mappings = [
         { step: 1, field: 'category', container: 'categoryOptions' },
         { step: 2, field: 'brand', container: 'brandOptions' },
-        { step: 4, field: 'age', container: 'ageOptions' },
-        { step: 5, field: 'condition', container: 'conditionOptions' },
-        { step: 6, field: 'ownership', container: 'ownershipOptions' },
+        { step: 5, field: 'age', container: 'ageOptions' },
+        { step: 6, field: 'condition', container: 'conditionOptions' },
     ];
 
     mappings.forEach(({ field, container }) => {
@@ -333,6 +425,9 @@ function selectOption(el, field) {
     } else {
         state.answers[field] = value;
     }
+
+    // The first category choice is the start of the wizard.
+    if (field === 'category') trackOnce('wizard_start');
 
     // Enable next button
     document.getElementById('nextBtn').disabled = false;
@@ -380,24 +475,86 @@ function handleCustomBrand(value) {
     if (value.trim().length > 0) {
         // Deselect option cards
         document.querySelectorAll('#brandOptions .option-card').forEach(c => c.classList.remove('selected'));
-        state.answers.brand = value.trim();
+        state.answers.brand = sanitiseText(value.trim());
         document.getElementById('nextBtn').disabled = false;
         saveState();
     }
 }
 
-// Accepts local (0712345678 / 0112345678), bare (712345678) and international
-// (+254712345678) formats once spaces/dashes/parentheses are removed.
+// Seller phone rules. THE SAME RULES LIVE IN normalise_phone() in
+// greenbay_ai_evaluator/api/schemas.py, which rejects (HTTP 422) anything this
+// function rejects. Change both together, or valid customers lose their
+// evaluation. Returns the stored form (country code + national number, digits
+// only, e.g. 254712345678) or null.
+//   Kenya: 0712345678, 0112345678, 712345678, +254712345678, 254712345678,
+//          00254712345678, +254 0712 345 678, with spaces / dashes / dots.
+//   Uganda (256) and Nigeria (234): the same shapes; a number written locally
+//          is read with the detected country (default Kenya).
+//   Anywhere else: international form only, 8 to 15 digits: + or 00 prefix,
+//          or 11+ digits with no leading 0.
+const PHONE_RULES = {
+    KE: ['254', '[17]\\d{8}'],
+    UG: ['256', '[2-9]\\d{8}'],
+    NG: ['234', '[789][01]\\d{8}'],
+};
+
+function normalisePhone(raw, country) {
+    if (raw === null || raw === undefined) return null;
+    // The API refuses more than 30 characters as typed (separators included).
+    const typed = String(raw).replace(/\ufeff/g, '').trim();
+    if (typed.length > 30) return null;
+    let text = typed.replace(/<[^>]+>/g, '').trim().replace(/[\s\-().]/g, '');
+    let international = false;
+    if (text.startsWith('+')) { international = true; text = text.slice(1); }
+    else if (text.startsWith('00')) { international = true; text = text.slice(2); }
+    if (!/^[0-9]+$/.test(text)) return null;
+
+    // A number that carries one of our calling codes must fit that country.
+    for (const key of Object.keys(PHONE_RULES)) {
+        const [code, national] = PHONE_RULES[key];
+        if (text.startsWith(code) && (international || text.length > 10)) {
+            const m = new RegExp(`^${code}0?(${national})$`).exec(text);
+            return m ? code + m[1] : null;
+        }
+    }
+    // 11+ digits with no leading 0 cannot be a local KE/UG/NG number: it is a
+    // full international number written without the "+".
+    if (international || (text.length >= 11 && !text.startsWith('0'))) {
+        return (text.length >= 8 && text.length <= 15 && !text.startsWith('0')) ? text : null;
+    }
+    const rule = PHONE_RULES[String(country || 'KE').toUpperCase().trim()] || PHONE_RULES.KE;
+    const m = new RegExp(`^0?(${rule[1]})$`).exec(text);
+    return m ? rule[0] + m[1] : null;
+}
+
 function isValidPhone(raw) {
-    if (!raw) return false;
-    const cleaned = String(raw).replace(/[\s\-()]/g, '');
-    return /^\+\d{9,15}$/.test(cleaned) ||   // +<country><number>
-           /^0\d{8,11}$/.test(cleaned)  ||   // local, leading 0
-           /^\d{9,12}$/.test(cleaned);       // bare national number
+    return normalisePhone(raw, window.__gbCountry || 'KE') !== null;
+}
+
+// Send the customer back to the contact step with the inline message showing.
+// Used when a restored session holds a phone the current rules reject, and
+// when the backend answers 422 for the phone.
+function returnToContactStep() {
+    document.getElementById('wizardFooter').classList.remove('hidden');
+    goToStep(9);
+    const err = document.getElementById('phoneError');
+    if (err) err.style.display = 'block';
+    const input = document.getElementById('sellerPhoneInput');
+    if (input) {
+        input.value = state.answers.sellerPhone || '';
+        input.focus();
+    }
+}
+
+// Free-text answers are interpolated into innerHTML in many places, so strip
+// HTML-significant characters once here rather than trusting every call site.
+// Mirrors the backend's _strip_tags in api/schemas.py.
+function sanitiseText(value) {
+    return String(value == null ? '' : value).replace(/[<>]/g, '');
 }
 
 function updateAnswer(field, value) {
-    state.answers[field] = value;
+    state.answers[field] = typeof value === 'string' ? sanitiseText(value) : value;
     // Inline validation feedback for the contact step.
     if (field === 'sellerPhone') {
         const err = document.getElementById('phoneError');
@@ -427,6 +584,7 @@ function handlePriceInput(raw) {
 
 function selectCategoryFromLanding(cat) {
     state.answers.category = cat;
+    trackOnce('wizard_start');
     // Scroll to evaluation section
     document.getElementById('evaluate').scrollIntoView({ behavior: 'smooth' });
     setTimeout(() => {
@@ -497,12 +655,14 @@ async function lookupModelFromPhoto(dataUrl) {
         if (response.ok) {
             const result = await response.json();
             if (result.model_verified) {
-                addChatMessage('bot', `Model <strong>${result.model_number || state.answers.model}</strong> verified! ${result.specs_summary || ''}`);
-                // Update model if OCR found a better match
-                if (result.model_number && result.model_number !== state.answers.model) {
-                    state.answers.model = result.model_number;
+                addChatMessage('bot', `Model <strong>${escapeHtml(result.model_number || state.answers.model || '')}</strong> verified! ${escapeHtml(result.specs_summary || '')}`);
+                // OCR output is model-generated text read off a photo, so it is
+                // sanitised like any other free-text answer before it is stored.
+                const ocrModel = sanitiseText(result.model_number || '');
+                if (ocrModel && ocrModel !== state.answers.model) {
+                    state.answers.model = ocrModel;
                     const modelInput = document.getElementById('modelInput');
-                    if (modelInput) modelInput.value = result.model_number;
+                    if (modelInput) modelInput.value = ocrModel;
                     saveState();
                 }
             }
@@ -800,18 +960,17 @@ function mirrorStepToChat(step) {
     const a = state.answers;
     const messages = {
         1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}` : null,
-        2: () => a.brand ? `Brand: <strong>${a.brand}</strong>, nice choice!` : null,
-        3: () => a.model ? `Model: <strong>${a.model}</strong>, got it!` : 'Model number skipped',
+        2: () => a.brand ? `Brand: <strong>${escapeHtml(a.brand)}</strong>, nice choice!` : null,
+        3: () => a.model ? `Model: <strong>${escapeHtml(a.model)}</strong>, got it!` : 'Model number skipped',
         4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : 'Model photo skipped',
         5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
         6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
-        7: () => a.ownership ? `Ownership: <strong>${a.ownership.replace(/_/g, ' ')}</strong>` : null,
-        8: () => a.issues ? (a.issues === 'No issues'
+        7: () => a.issues ? (a.issues === 'No issues'
             ? 'No issues, that\'s great!'
             : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
-        9: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
-        10: () => `${a.photos.length} photos uploaded`,
-        11: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        8: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
+        9: () => `${a.photos.length} photos uploaded`,
+        10: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
     };
 
     const fn = messages[step];
@@ -824,15 +983,14 @@ function mirrorStepToChat(step) {
 function promptNextStep(step) {
     const prompts = {
         2: 'Great choice! Now, what brand is your appliance?',
-        3: 'Next up, the model number. This is optional — skip it if you\'re not sure!',
+        3: 'What size is it? Size drives the price more than anything else. The model number is optional — add it if you know it.',
         4: 'Upload a photo of the model label if you have it. This is optional but helps me look up exact specs!',
         5: 'How old is this product? Younger appliances hold more value!',
         6: 'And what condition is it in? Be honest, it helps me be accurate!',
-        7: 'How long have you personally owned it? This helps with provenance.',
-        8: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
-        9: 'I need your name and phone number so we can reach you about pickup or drop-off.',
-        10: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
-        11: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
+        7: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
+        8: 'I need your name and phone number so we can reach you about pickup or drop-off.',
+        9: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
+        10: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
     };
 
     // Show/hide Other description field based on category
@@ -886,7 +1044,7 @@ async function startAnalysis() {
 
         // Chat updates
         const chatMsgs = [
-            ` Brand verified: <strong>${a.brand}</strong>`,
+            ` Brand verified: <strong>${escapeHtml(a.brand || '')}</strong>`,
             ` Condition: Grade <strong>${a.conditionGrade}</strong> , ${CONDITION_LABELS[a.condition]}`,
             ' Finding you the best offer price based on current market data',
             ' Calculating your offer...',
@@ -974,7 +1132,19 @@ async function callEvaluationAPI() {
         country: window.__gbCountry || 'KE',
         size_value: a.sizeValue || null,
         size_unit: a.sizeUnit || null,
+        // Campaign attribution captured on first load (see ANALYTICS above);
+        // stored on the evaluation record and mirrored to Airtable.
+        attribution: {
+            utm_source: attribution.utm_source || null,
+            utm_medium: attribution.utm_medium || null,
+            utm_campaign: attribution.utm_campaign || null,
+            utm_content: attribution.utm_content || null,
+            referrer: attribution.referrer || null,
+            landing_url: attribution.landing_url || null,
+        },
     };
+
+    trackEvent('evaluate_submit');
 
     try {
         const resp = await fetch(`${API_BASE}/tradein/evaluate`, {
@@ -983,8 +1153,29 @@ async function callEvaluationAPI() {
             body: JSON.stringify(payload),
         });
 
+        if (resp.status === 422) {
+            // The backend refused the request. If it is the phone, ask for it
+            // again; never fall through to a demo offer for a real customer.
+            // Look at where the error is (loc) and what it says (msg), never
+            // at the echoed input: an over-long issues text that happens to
+            // contain the word "phone" is not a phone error.
+            let aboutPhone = false;
+            try {
+                const detail = (await resp.json()).detail;
+                aboutPhone = Array.isArray(detail) && detail.some(e =>
+                    (Array.isArray(e.loc) && e.loc.indexOf('seller_phone') !== -1) ||
+                    /seller_phone/.test(String(e.msg || '')));
+            } catch (_) { /* ignore */ }
+            if (aboutPhone) {
+                addChatMessage('bot', 'I need a valid phone number before I can show your offer, e.g. 0712 345 678.');
+                returnToContactStep();
+                return;
+            }
+        }
         if (!resp.ok) {
-            throw new Error(`API error: ${resp.status}`);
+            let detail = '';
+            try { detail = (await resp.json()).detail || ''; } catch (_) { }
+            throw new Error(detail || `API error: ${resp.status}`);
         }
 
         const data = await resp.json();
@@ -997,54 +1188,37 @@ async function callEvaluationAPI() {
 
     } catch (err) {
         console.error('Evaluation API error:', err);
-        // Show demo results if API unavailable
-        const demo = generateDemoResults(a);
-        state.evaluation = demo;
-        saveState();
-        await sleep(800);
-        showResults(demo);
-        addChatMessage('bot', '<em style="opacity:.7">(Demo mode , connect to the backend API for live valuations)</em>');
+        // Never invent an offer. A fabricated price the backend never issued
+        // cannot be honoured, is recorded nowhere, and nobody is notified.
+        showEvaluationError(err && err.message);
     }
 }
 
-function generateDemoResults(answers) {
-    // Deterministic demo calculation when backend is unavailable
-    const retailPrices = {
-        refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
-        cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
-        other: 30000,
-    };
-    const condMult = { A: 1.0, B: 0.85, C: 0.65, D: 0.45 };
-    const brandPrem = { Samsung: 1.10, LG: 1.05, Sony: 1.08, Bosch: 1.12 };
+function showEvaluationError(detail) {
+    const a = state.answers;
+    const msg = detail && detail.length > 10
+        ? detail
+        : "We couldn't complete your valuation just now.";
+    const wa = 'https://wa.me/254705919099?text=' + encodeURIComponent(
+        `Hi GreenBay, I tried to value my ${a.brand || ''} ${CATEGORY_NAMES[a.category] || 'appliance'} `
+        + `but the valuation could not be completed. Name: ${a.sellerName || ''}. Phone: ${a.sellerPhone || ''}.`
+    );
 
-    const retail = retailPrices[answers.category] || 35000;
-    const age = answers.age || 2;
-    const depr = Math.max(0.05, Math.pow(0.85, age));
-    const condGrade = answers.conditionGrade || 'B';
-    const base = retail * depr * (condMult[condGrade] || 0.75) * (brandPrem[answers.brand] || 1.0);
-    const resale = Math.round(base / 100) * 100;
-    const ceiling = Math.round(resale * 0.70 / 100) * 100;
-    const opening = Math.round(resale * 0.55 / 100) * 100;
-    const walkaway = Math.round(resale * 0.45 / 100) * 100;
-
-    let decision = 'negotiate';
-    if (answers.price && answers.price <= opening) decision = 'accept';
-    else if (answers.price && answers.price > ceiling * 1.5) decision = 'decline';
-
-    return {
-        session_id: 'demo_' + Date.now(),
-        estimated_resale_value: resale,
-        confidence_score: 72,
-        acquisition_ceiling: ceiling,
-        opening_offer: opening,
-        walkaway_limit: walkaway,
-        decision: decision,
-        decision_reason: 'Demo valuation based on category defaults',
-        condition_grade: condGrade,
-        risk_score: 15,
-        comparable_count: 0,
-    };
+    const resultsStep = document.getElementById('stepResults');
+    if (resultsStep) {
+        resultsStep.innerHTML = `
+ <div class="deal-result">
+ <div class="result-icon">⚠️</div>
+ <h3>We couldn't finish your valuation</h3>
+ <p>${escapeHtml(msg)}</p>
+ <p style="margin-top:12px;">Our team has been alerted. Talk to us and we'll value it by hand, or try again in a few minutes.</p>
+ <a href="${wa}" target="_blank" rel="noopener" class="btn btn-whatsapp" style="width:100%;margin-top:20px;">💬 Talk to our team on WhatsApp</a>
+ <button class="btn btn-ghost" style="width:100%;margin-top:12px;" onclick="startNewEvaluation()">Try again</button>
+ </div>`;
+    }
+    addChatMessage('bot', `⚠️ ${escapeHtml(msg)} I have not given you a price, because I could not assess your photos properly. Our team can help on WhatsApp.`);
 }
+
 
 /* ============================================================
  RESULTS DISPLAY
@@ -1054,6 +1228,19 @@ function showResults(data) {
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const gradeClass = `grade-${(data.condition_grade || 'b').toLowerCase()}`;
     const confidence = data.confidence_score || 0;
+
+    // GA4 offer_shown: report the screen the customer actually sees, which is
+    // decided below (reject screen, specialist routing, or the offer card).
+    // Demo results (backend unreachable) are not real evaluations; skip them.
+    const isDemo = String(data.session_id || '').startsWith('demo_');
+    if (!isDemo) {
+        let shownDecision = 'negotiate';
+        if (data.decision === 'reject') shownDecision = 'reject';
+        else if (confidence < 80 || data.decision === 'review') shownDecision = 'review';
+        else if (data.decision === 'accept') shownDecision = 'accept';
+        trackEvent('offer_shown', { decision: shownDecision });
+        if (shownDecision === 'review') trackEvent('human_review_routed');
+    }
 
     // HARD REJECT — product doesn't meet quality standards
     if (data.decision === 'reject') {
@@ -1070,7 +1257,7 @@ function showResults(data) {
  <div class="offer-breakdown">
  <div class="offer-breakdown-row">
  <span class="label">Reason</span>
- <span class="value" style="color:#dc3545;">${data.decision_reason || 'Below quality threshold'}</span>
+ <span class="value" style="color:#dc3545;">${escapeHtml(data.decision_reason || 'Below quality threshold')}</span>
  </div>
  </div>
  <div style="background:var(--warm);border-radius:var(--radius-sm);padding:16px;margin:20px 0;">
@@ -1376,6 +1563,9 @@ function showRejectionOptions() {
     const resultsStep = document.getElementById('stepResults');
     const existing = resultsStep.querySelector('.rejection-options-area');
     if (existing) return;
+    // GA4: the customer turned the offer down. Sent once per offer (the guard
+    // above); the option they then pick is sent as rejection_option.
+    trackEvent('offer_declined');
 
     const optionsDiv = document.createElement('div');
     optionsDiv.className = 'rejection-options-area';
@@ -1429,6 +1619,7 @@ async function selectRejectionOption(option) {
 
     addChatMessage('user', `I'd like Option ${option}`);
     showTypingIndicator();
+    trackEvent('rejection_option', { option: option });
 
     try {
         if (state.sessionId) {
@@ -1610,6 +1801,7 @@ async function acceptOffer(amount) {
     addChatMessage('user', `I accept ${currency} ${formatKES(amount)}`);
 
     showTypingIndicator();
+    trackEvent('offer_accepted');
 
     // v6: Call backend accept-offer endpoint
     try {
@@ -1775,7 +1967,7 @@ async function submitPickupRequest(amount) {
  <strong>PICKUP SUMMARY</strong><br>
  📍 Location: ${escapeHtml(address)}<br>
  📅 Preferred: ${day || 'ASAP'}<br>
- 💰 Payment: KES ${formatKES(amount)} via M-Pesa on pickup<br><br>
+ 💰 Agreed value: KES ${formatKES(amount)} — confirmed and settled by our sourcing team on collection<br><br>
  Our team (Newton) will contact you at <strong>${escapeHtml(a.sellerPhone)}</strong> to confirm the exact time. Thanks for choosing GreenBay!`);
 
     showFinalConfirmation(amount, 'pickup', address, day);
@@ -1790,7 +1982,7 @@ function showDropoffLocations(amount) {
  <div class="deal-result">
  <div class="result-icon">🏬</div>
  <h3>Our Outlet Locations</h3>
- <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location and get paid on the spot!</p>
+ <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location — our sourcing team will inspect it and settle with you directly.</p>
  
  <div style="display:grid;gap:16px;margin:20px 0;">
  <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
@@ -1819,7 +2011,7 @@ function showDropoffLocations(amount) {
  <span>${escapeHtml(a.sellerName)} (${escapeHtml(a.sellerPhone)})</span>
  </div>
  <div class="deal-summary-row total">
- <span>Amount Due on Drop-off</span>
+ <span>Agreed Value on Drop-off</span>
  <span>${curSym()} ${formatKES(amount)}</span>
  </div>
  </div>
@@ -1862,8 +2054,8 @@ function showFinalConfirmation(amount, method, address, day) {
  ${method === 'pickup' ? `<div class="deal-summary-row"><span>Pickup Location</span><span>${escapeHtml(address || '')}</span></div>` : ''}
  ${method === 'pickup' && day ? `<div class="deal-summary-row"><span>Preferred Day</span><span>${day}</span></div>` : ''}
  <div class="deal-summary-row">
- <span>Payment</span>
- <span>M-Pesa on ${method === 'pickup' ? 'pickup' : 'drop-off'}</span>
+ <span>Settlement</span>
+ <span>Arranged by our sourcing team on ${method === 'pickup' ? 'collection' : 'drop-off'}</span>
  </div>
  <div class="deal-summary-row">
  <span>Reference</span>
@@ -1884,7 +2076,7 @@ Start New Evaluation
  <div class="whatsapp-bridge-icon">💬</div>
  <div class="whatsapp-bridge-text">
  <h4>Track on WhatsApp</h4>
- <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and payment confirmation.</p>
+ <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and confirmation from our team.</p>
  </div>
  <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
@@ -1913,11 +2105,11 @@ async function loadRelatedProducts(category) {
                 `<span style="text-decoration:line-through;color:var(--muted);font-size:.78rem;margin-left:6px;">KES ${Math.round(p.compare_at_price).toLocaleString('en-KE')}</span>` : '';
             const imgSrc = p.image_url || '';
             return `
-            <a href="${p.product_url || 'https://greenbay.market'}" target="_blank" style="text-decoration:none;color:inherit;display:block;">
+            <a href="${escapeHtml(p.product_url || 'https://greenbay.market')}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;display:block;">
             <div style="background:var(--surface);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);">
-                ${imgSrc ? `<img src="${imgSrc}" alt="${p.title}" style="width:100%;height:140px;object-fit:cover;" loading="lazy">` : ''}
+                ${imgSrc ? `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(p.title || '')}" style="width:100%;height:140px;object-fit:cover;" loading="lazy">` : ''}
                 <div style="padding:10px;">
-                    <p style="font-size:.82rem;font-weight:600;margin:0 0 4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${p.title}</p>
+                    <p style="font-size:.82rem;font-weight:600;margin:0 0 4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(p.title || '')}</p>
                     <p style="font-size:.85rem;margin:0;color:var(--emerald);font-weight:700;">${priceStr}${savingsStr}</p>
                     <span style="font-size:.72rem;color:var(--muted);">${p.product_type || ''}</span>
                 </div>
@@ -1975,7 +2167,7 @@ function resetEvaluator() {
     state.sessionId = null;
     state.answers = {
         category: null, brand: null, model: '', modelPhoto: null,
-        age: null, condition: null, conditionGrade: null, ownership: null,
+        age: null, condition: null, conditionGrade: null,
         issues: '', otherDescription: '', sellerName: '', sellerPhone: '',
         photos: [], price: null,
     };
