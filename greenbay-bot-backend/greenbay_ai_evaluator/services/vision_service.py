@@ -245,11 +245,14 @@ def analyze_model_label(
         api_key = os.environ.get("ANTHROPIC_API_KEY")
 
     if not HAS_ANTHROPIC or not api_key:
-        logger.info("Anthropic not configured, returning stub model label analysis")
+        logger.warning("Model label analysis unavailable: anthropic not configured")
+        # model_verified must mean "a photo confirmed it". Echoing the typed
+        # value back as verified makes the UI tell the customer their model was
+        # verified when nothing was read.
         return {
-            "model_verified": bool(typed_model),
+            "model_verified": False,
             "model_number": typed_model or None,
-            "specs_summary": f"Model {typed_model} recorded (vision verification unavailable)" if typed_model else None,
+            "specs_summary": None,
             "retail_price": None,
             "release_year": None,
         }
@@ -303,9 +306,9 @@ def analyze_model_label(
     except Exception as e:
         logger.warning(f"Model label analysis failed: {e}")
         return {
-            "model_verified": bool(typed_model),
+            "model_verified": False,
             "model_number": typed_model or None,
-            "specs_summary": f"Model {typed_model} recorded (label analysis failed)" if typed_model else None,
+            "specs_summary": None,
             "retail_price": None,
             "release_year": None,
         }
