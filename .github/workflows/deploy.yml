@@ -234,7 +234,7 @@ jobs:
             fi
 
             echo "=== Seeding pricing policies ==="
-            sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py || true
+            sudo docker exec greenbay-bot python3 scripts/seed_pricing_policy.py < /dev/null || true
 
             echo "=== Verifying HTTP /health ==="
             curl -sf http://localhost:9100/health || (
@@ -275,7 +275,12 @@ jobs:
               SID="$(echo "$SMOKE_RESP" | sed -n 's/.*"session_id"[: ]*"\([^"]*\)".*/\1/p' | cut -c1-8)"
               echo "Smoke OK (session ${SID}); cleaning up probe row..."
               if [ -n "$SID" ]; then
-                ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || true)"
+                # `< /dev/null` on every docker exec: the remote script is fed
+                # to the shell on stdin, so a command that inherits and drains
+                # stdin eats the rest of the script and the shell exits early.
+                # That killed runs 36502480397 and 36504108759 right after the
+                # "cleaning up probe row" echo, and is why `set +e` did nothing.
+                ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY < /dev/null 2>/dev/null || true)"
                 if [ -z "${ADMIN_KEY}" ]; then
                   echo "::warning::DASHBOARD_KEY is not set in the container, so the smoke-test row (ref ${SID}) was NOT deleted and admin routes answer 503. Set the DASHBOARD_KEY secret and redeploy."
                 else
@@ -295,7 +300,7 @@ jobs:
             # Sweep ANY leftover ZZ probe rows (this run's or an earlier failed
             # cleanup's) out of Airtable + the tracker sheet. Idempotent.
             echo "=== Purging leftover test/probe rows ==="
-            ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY 2>/dev/null || true)"
+            ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY < /dev/null 2>/dev/null || true)"
             if [ -n "${ADMIN_KEY}" ]; then
               PURGE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
                 "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true)"

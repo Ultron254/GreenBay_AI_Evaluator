@@ -108,7 +108,32 @@ def _probe_anthropic() -> tuple[bool, str]:
     return False, (
         f"vision DOWN — primary {primary}: {primary_detail} | "
         f"fallback {fallback}: {fallback_detail}"
+        f"{_anthropic_available_models(s.anthropic_api_key)}"
     )
+
+
+def _anthropic_available_models(api_key: str) -> str:
+    """Model IDs this key can actually use, for the DOWN message.
+
+    Without this the operator has to guess replacement IDs, and Anthropic
+    retires dated model names over time.
+    """
+    import requests
+    try:
+        resp = requests.get(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            params={"limit": 50},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return f" | could not list available models: HTTP {resp.status_code}"
+        ids = [m.get("id", "") for m in resp.json().get("data", [])]
+        if not ids:
+            return " | this key has access to NO models at all"
+        return f" | models this key CAN use: {', '.join(ids)}"
+    except Exception as e:  # noqa: BLE001
+        return f" | could not list available models: {e}"
 
 
 def _probe_vertex_gemini() -> tuple[bool, str]:
