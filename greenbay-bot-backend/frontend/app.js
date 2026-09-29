@@ -1025,6 +1025,11 @@ async function startAnalysis() {
     // Chat
     addChatMessage('bot', `Thanks for all that info! Let me analyze your <strong>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</strong>... `);
 
+    // Fire the real request NOW so the animation runs alongside it rather than
+    // in front of it. The animation used to finish in ~7s and the customer then
+    // watched a completed progress bar for the ~30s the call actually takes.
+    const evaluationInFlight = callEvaluationAPI();
+
     // Animate analysis steps
     const steps = ['step-brand', 'step-condition', 'step-market', 'step-valuation'];
     const delays = [1200, 2500, 2000, 1500];
@@ -1042,18 +1047,32 @@ async function startAnalysis() {
             if (next) next.classList.add('active');
         }
 
-        // Chat updates
+        // Progress, not findings. These fire before the backend has answered,
+        // so anything stated as a result here would be invented.
         const chatMsgs = [
-            ` Brand verified: <strong>${escapeHtml(a.brand || '')}</strong>`,
-            ` Condition: Grade <strong>${a.conditionGrade}</strong> , ${CONDITION_LABELS[a.condition]}`,
-            ' Finding you the best offer price based on current market data',
+            ` Reading the details for <strong>${escapeHtml(a.brand || '')}</strong>...`,
+            ' Reviewing your photos and condition report...',
+            ' Checking current market prices...',
             ' Calculating your offer...',
         ];
         addChatMessage('bot', chatMsgs[i]);
     }
 
-    // Call the backend API
-    await callEvaluationAPI();
+    // Keep the last step spinning until the real answer lands.
+    const lastStep = document.getElementById('step-valuation');
+    if (lastStep) {
+        lastStep.classList.remove('complete');
+        lastStep.classList.add('active');
+    }
+    const stillWorking = setTimeout(() => {
+        addChatMessage('bot', ' Still working , checking a few more sources to get this right.');
+    }, 8000);
+
+    try {
+        await evaluationInFlight;
+    } finally {
+        clearTimeout(stillWorking);
+    }
 }
 
 function buildAnalysisProgressHTML() {
