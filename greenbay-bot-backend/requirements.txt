@@ -20,7 +20,11 @@ tavily-python
 # Database
 sqlalchemy>=2.0.0,<3.0
 alembic>=1.14.0,<2.0
-psycopg2-binary  # PostgreSQL adapter
+psycopg2-binary  # PostgreSQL adapter (postgresql:// and postgresql+psycopg2://)
+# The server's DATABASE_URL uses the postgresql+psycopg:// dialect, which needs
+# psycopg 3. It was previously only present via a cached image layer, so the
+# first clean rebuild failed to start with ModuleNotFoundError: psycopg.
+psycopg[binary]>=3.1,<4.0
 
 # Vector Database
 qdrant-client>=1.12.0,<2.0
