@@ -2870,33 +2870,40 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 )
 
             # Priority 2: Pricing matrix match
-            if not reference_resale_value:
-                matrix_result = lookup_matrix(
-                    brand=req.brand, model=req.model, category=req.category,
-                )
-                if matrix_result:
-                    # Capture the matrix NEW price separately — it is a genuine
-                    # new-retail signal, used as a fallback for New Price (Estimate).
-                    _mnp = matrix_result.get("new_price")
-                    try:
-                        if _mnp and float(_mnp) > 0:
-                            v6_matrix_new_price = float(_mnp)
-                    except (TypeError, ValueError):
-                        pass
-                    rec_min = matrix_result.get("recommended_min") or 0
-                    rec_max = matrix_result.get("recommended_max") or 0
-                    if rec_min > 0 and rec_max > 0:
+            # The matrix is consulted even when sales stock already supplied the
+            # resale value: corroboration by both sources is what unlocks the
+            # 97% confidence tier, and gating the lookup on a missing resale
+            # value made that tier unreachable and capped every evaluation at
+            # 85. Sales stock still wins the resale value itself.
+            matrix_result = lookup_matrix(
+                brand=req.brand, model=req.model, category=req.category,
+            )
+            if matrix_result:
+                # Capture the matrix NEW price separately — it is a genuine
+                # new-retail signal, used as a fallback for New Price (Estimate).
+                _mnp = matrix_result.get("new_price")
+                try:
+                    if _mnp and float(_mnp) > 0:
+                        v6_matrix_new_price = float(_mnp)
+                except (TypeError, ValueError):
+                    pass
+                rec_min = matrix_result.get("recommended_min") or 0
+                rec_max = matrix_result.get("recommended_max") or 0
+                if rec_min > 0 and rec_max > 0:
+                    v6_has_matrix_match = True
+                    if not reference_resale_value:
                         reference_resale_value = (rec_min + rec_max) / 2
                         reference_source = "matrix"
-                        v6_has_matrix_match = True
-                    elif matrix_result.get("new_price") and matrix_result["new_price"] > 0:
+                elif matrix_result.get("new_price") and matrix_result["new_price"] > 0:
+                    v6_has_matrix_match = True
+                    if not reference_resale_value:
                         reference_resale_value = matrix_result["new_price"]
                         reference_source = "matrix"
-                        v6_has_matrix_match = True
-                    if reference_resale_value:
-                        logger.info(
-                            f"v6 ref: matrix match — KES {reference_resale_value:,.0f}"
-                        )
+                if v6_has_matrix_match:
+                    logger.info(
+                        f"v6 ref: matrix match (source={reference_source or 'corroboration'}) "
+                        f"— KES {reference_resale_value or 0:,.0f}"
+                    )
 
             # Priority 3: Brand+category match in sales stock
             _cat_median = (sales_result or {}).get("median_selling_price")

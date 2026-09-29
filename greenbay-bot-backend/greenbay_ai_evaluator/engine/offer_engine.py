@@ -75,6 +75,10 @@ CONDITION_FACTORS: dict[str, float] = {
 # Floor/ceiling guardrails: prevent wild outliers relative to team history.
 PRICE_FLOOR_RATIO: float = 0.60
 PRICE_CEILING_RATIO: float = 1.50
+# Hard upper bound on offer / estimated_resale_value. Above this there is no
+# resale margin left; 0.95 leaves the calibrated ratios (max 0.90) untouched
+# and only catches offers a guardrail pushed into loss-making territory.
+MAX_OFFER_TO_RESALE: float = 0.95
 
 # Hard consistency ceiling: a used trade-in offer may never approach the price
 # of a brand-new unit. This is the strongest sanity net — it catches both
@@ -928,6 +932,41 @@ def compute_valuation(
         # Rounding must never push the offer back above what was asked.
         opening_offer = min(_round_price(seller_asking_price, round_step), seller_asking_price)
         walkaway_limit = min(walkaway_limit, opening_offer)
+
+    # -- STEP 11e: Margin backstop -------------------------------------------
+    # Every other guardrail can RAISE the offer (historical floor, new-price
+    # floor, min-offer) and none of them checks the result against what the
+    # item can actually be resold for, so a floor could land the offer at or
+    # above estimated_resale_value — buying at a guaranteed loss. Nothing
+    # downstream would catch it.
+    #
+    # Skipped when the new-price floor fired: that guardrail exists precisely
+    # because estimated_resale_value was under-sourced (a used listing read as
+    # new), so measuring against it would re-collapse the offer to the bad
+    # number. That path already forces human review.
+    if (
+        not new_price_floor_applied
+        and estimated_resale_value > 0
+        and opening_offer > estimated_resale_value * MAX_OFFER_TO_RESALE
+    ):
+        margin_cap = _round_price(estimated_resale_value * MAX_OFFER_TO_RESALE, round_step)
+        margin_note = (
+            f"Margin backstop: offer KES {opening_offer:,.0f} was "
+            f"{opening_offer / estimated_resale_value:.0%} of the estimated resale "
+            f"value (KES {estimated_resale_value:,.0f}), leaving no resale margin. "
+            f"Capped to KES {margin_cap:,.0f} ({MAX_OFFER_TO_RESALE:.0%}) and flagged "
+            f"for review — a guardrail fired on an unreliable input."
+        )
+        logger.warning(margin_note)
+        trace_lines.append(f"GUARDRAIL: {margin_note}")
+        opening_offer = margin_cap
+        acquisition_ceiling = _round_price(opening_offer * 1.3, round_step)
+        walkaway_limit = _round_price(opening_offer * 0.7, round_step)
+        confidence_score = min(confidence_score, 75.0)
+        # The asking-price cap must still hold after this.
+        if seller_asking_price and 0 < seller_asking_price < opening_offer:
+            opening_offer = min(_round_price(seller_asking_price, round_step), seller_asking_price)
+            walkaway_limit = min(walkaway_limit, opening_offer)
 
     trace_lines.append(f"Final offer: KES {opening_offer:,.0f}")
     trace_lines.append(f"Confidence: {confidence_score:.0f}%")
