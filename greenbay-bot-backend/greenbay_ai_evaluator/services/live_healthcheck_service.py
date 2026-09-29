@@ -317,12 +317,46 @@ def _probe_s3() -> tuple[bool, str]:
     return True, f"OK — bucket '{bucket}' reachable in {s.aws_region}"
 
 
+def _probe_smtp() -> tuple[bool, str]:
+    """Connect, STARTTLS and authenticate against the configured SMTP server."""
+    from app.config import get_settings
+    import smtplib
+    s = get_settings()
+    host = getattr(s, "smtp_host", "") or ""
+    port = int(getattr(s, "smtp_port", 587) or 587)
+    user = getattr(s, "smtp_user", "") or ""
+    pwd = getattr(s, "smtp_password", "") or ""
+    sender = getattr(s, "smtp_from", "") or user
+    if not sender:
+        return False, f"SMTP_HOST is {host} but neither SMTP_FROM nor SMTP_USER is set"
+    if not pwd:
+        return False, f"SMTP_HOST is {host} but SMTP_PASSWORD is not set — every send will fail"
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as srv:
+            srv.starttls()
+            srv.login(user, pwd)
+    except smtplib.SMTPAuthenticationError as e:
+        return False, f"SMTP auth rejected by {host}:{port} as {user} — check the app password. {e}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"SMTP {host}:{port} unusable: {type(e).__name__}: {e}"
+    return True, f"OK — authenticated to {host}:{port} as {user}, sending as {sender}"
+
+
 def _probe_ses() -> tuple[bool, str]:
-    """Probe AWS SES (used for the team email notifications, issue #13)."""
+    """Probe whichever transport email_service will actually use.
+
+    email_service._send_ses() prefers SMTP whenever SMTP_HOST is set, so
+    probing SES regardless reported on a path that is never taken. The SES
+    branch also used to return OK with an unverified sender appended to the
+    detail string — SES rejects every one of those sends, so a green tick
+    there meant no email was being delivered at all.
+    """
     from app.config import get_settings
     s = get_settings()
+    if getattr(s, "smtp_host", ""):
+        return _probe_smtp()
     if not (s.aws_access_key_id and s.aws_secret_access_key):
-        return False, "AWS credentials not configured"
+        return False, "no SMTP_HOST and no AWS credentials — email is OFF"
     import boto3
     region = getattr(s, "ses_region", None) or s.aws_region
     client = boto3.client(
@@ -333,13 +367,17 @@ def _probe_ses() -> tuple[bool, str]:
     )
     quota = client.get_send_quota()
     sender = getattr(s, "ses_sender_email", "") or ""
-    verified = ""
-    if sender:
-        ids = client.list_verified_email_addresses().get("VerifiedEmailAddresses", [])
-        verified = " (sender VERIFIED)" if sender in ids else " (sender NOT verified — SES will reject)"
+    if not sender:
+        return False, f"SES reachable in {region} but SES_SENDER_EMAIL is not set — email is OFF"
+    ids = client.list_verified_email_addresses().get("VerifiedEmailAddresses", [])
+    if sender not in ids:
+        return False, (
+            f"SES sender {sender} is NOT verified in {region} — SES rejects every send. "
+            f"Verify the identity, or set SMTP_HOST to use SMTP instead."
+        )
     return True, (
-        f"OK — region {region}, 24h quota {quota.get('Max24HourSend')}, "
-        f"sent {quota.get('SentLast24Hours')}{verified}"
+        f"OK — SES region {region}, sender {sender} verified, "
+        f"24h quota {quota.get('Max24HourSend')}, sent {quota.get('SentLast24Hours')}"
     )
 
 
