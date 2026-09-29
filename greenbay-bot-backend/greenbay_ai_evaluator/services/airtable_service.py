@@ -386,19 +386,35 @@ def list_records_paginated(
 
 
 def patch_record_field(session_id: str, field_name: str, value) -> bool:
-    """Patch a single field on the Airtable record matching a session ID.
+    """Patch a single field on the Airtable record matching a session ID."""
+    return patch_record_fields(session_id, {field_name: value})
+
+
+def patch_record_fields(session_id: str, fields: dict) -> bool:
+    """Patch several fields on the Airtable record matching a session ID.
 
     Finds the record by searching for the session_id in the Notes field
-    (which contains the session ID from the evaluation), then patches the field.
-    Best-effort — never raises.
+    (which contains the session ID from the evaluation), then patches them in
+    one request. Unknown columns are dropped rather than failing the patch, so
+    a base missing a column never costs us the fields it does have.
+    Best-effort -- never raises.
     """
     cfg = _get_config()
-    if cfg is None:
+    if cfg is None or not fields:
         return False
 
     try:
         import requests
         from urllib.parse import quote
+
+        known = _get_known_fields(cfg)
+        if known:
+            dropped = [k for k in fields if k not in known]
+            if dropped:
+                logger.warning(f"Airtable: dropping columns not present on base: {dropped}")
+            fields = {k: v for k, v in fields.items() if k in known}
+            if not fields:
+                return False
 
         table = quote(cfg["table"])
         # Search for a record that has this session_id in Notes
@@ -419,14 +435,14 @@ def patch_record_field(session_id: str, field_name: str, value) -> bool:
             return False
 
         record_id = records[0]["id"]
-        ok, err = _patch_record(cfg, record_id, {field_name: value})
+        ok, err = _patch_record(cfg, record_id, fields)
         if ok:
-            logger.info(f"Airtable: patched {field_name}={value} on {record_id}")
+            logger.info(f"Airtable: patched {sorted(fields)} on {record_id}")
             return True
         logger.warning(f"Airtable PATCH {record_id}: {err}")
         return False
     except Exception as e:
-        logger.warning(f"Airtable patch_record_field failed: {e}")
+        logger.warning(f"Airtable patch_record_fields failed: {e}")
         return False
 
 

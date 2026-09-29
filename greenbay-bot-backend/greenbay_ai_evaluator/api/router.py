@@ -1982,6 +1982,11 @@ def _attribution_columns(req: EvaluateRequest) -> dict[str, Optional[str]]:
     return {name: getattr(attr, name, None) or None for name in _ATTRIBUTION_AIRTABLE_FIELDS}
 
 
+def _channel_for(retail_price_source: str | None) -> str:
+    """Which surface the evaluation came from, for the Airtable Channel column."""
+    return "whatsapp" if (retail_price_source or "").strip().lower() == "whatsapp_category_estimate" else "web"
+
+
 def _pulse_airtable_fields(vs: ValuationSession) -> dict[str, Any]:
     """Extra columns Pulse reads by name (EVALUATOR_CHANGES_REQUIRED.md E3).
 
@@ -2101,6 +2106,10 @@ def _build_airtable_payload(
     # The stored session already carries the attribution columns, so read
     # them from vs rather than the request: one source for both writers.
     payload.update(_pulse_airtable_fields(vs))
+    # Channel needs the request: flowcart.py sends whatsapp_category_estimate
+    # for WhatsApp submissions, and that is the only signal distinguishing them
+    # from the web wizard.
+    payload["Channel"] = _channel_for(getattr(req, "retail_price_source", ""))
     return payload
 
 
@@ -3410,8 +3419,11 @@ def accept_offer(
 
     # Update Airtable record
     try:
-        from greenbay_ai_evaluator.services.airtable_service import patch_record_field
-        patch_record_field(session_id, "Evaluation Status", "accepted")
+        from greenbay_ai_evaluator.services.airtable_service import patch_record_fields
+        patch_record_fields(session_id, {
+            "Evaluation Status": "accepted",
+            "Customer Decision": "accepted",
+        })
     except Exception as e:
         logger.warning(f"Airtable accept-offer patch failed: {e}")
 
@@ -3504,8 +3516,11 @@ def rejection_choice(
 
     # Update Airtable
     try:
-        from greenbay_ai_evaluator.services.airtable_service import patch_record_field
-        patch_record_field(session_id, "Evaluation Status", f"rejected_option_{option}")
+        from greenbay_ai_evaluator.services.airtable_service import patch_record_fields
+        patch_record_fields(session_id, {
+            "Evaluation Status": f"rejected_option_{option}",
+            "Customer Decision": f"rejected_option_{option}",
+        })
     except Exception as e:
         logger.warning(f"Airtable rejection-choice patch failed: {e}")
 
