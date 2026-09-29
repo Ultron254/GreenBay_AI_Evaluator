@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -3405,6 +3405,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 @evaluator_router.post("/{session_id}/accept-offer")
 def accept_offer(
     session_id: str,
+    body: dict | None = Body(default=None),
     db: Session = Depends(get_db),
 ):
     """Customer accepts the AI offer. Updates DB + Airtable + sends notification."""
@@ -3412,9 +3413,33 @@ def accept_offer(
     if not vs:
         raise HTTPException(404, "Valuation session not found")
 
+    # Accepting twice, or flipping a decision after the fact, must not silently
+    # overwrite what the team has already been told. These routes carry no auth,
+    # so anyone holding a session id could otherwise rewrite its outcome.
+    if vs.final_decision and vs.final_decision != "accepted":
+        raise HTTPException(409, f"This evaluation is already {vs.final_decision}.")
+
+    # The customer accepts the figure they were shown, which after a negotiation
+    # is not opening_offer. Clamp it to the ceiling the engine already computed
+    # so an unauthenticated caller cannot name their own price.
+    accepted_amount = None
+    if isinstance(body, dict):
+        try:
+            raw = float(body.get("accepted_amount") or 0)
+            if raw > 0:
+                ceiling = float(vs.acquisition_ceiling or vs.opening_offer or 0)
+                accepted_amount = min(raw, ceiling) if ceiling > 0 else raw
+                if accepted_amount != raw:
+                    logger.warning(
+                        f"accept-offer: clamped {raw:,.0f} to ceiling "
+                        f"{accepted_amount:,.0f} for session {session_id[:8]}"
+                    )
+        except (TypeError, ValueError):
+            accepted_amount = None
+
     vs.decision = "accepted"
     vs.final_decision = "accepted"
-    vs.final_offer = vs.opening_offer
+    vs.final_offer = accepted_amount if accepted_amount else vs.opening_offer
     db.commit()
 
     # Update Airtable record
@@ -3423,6 +3448,7 @@ def accept_offer(
         patch_record_fields(session_id, {
             "Evaluation Status": "accepted",
             "Customer Decision": "accepted",
+            "AI Evaluated Price (KES)": float(vs.final_offer or 0),
         })
     except Exception as e:
         logger.warning(f"Airtable accept-offer patch failed: {e}")
@@ -3459,6 +3485,7 @@ def accept_offer(
     return AcceptOfferResponse(
         session_id=session_id,
         decision="accepted",
+        final_offer=float(vs.final_offer or 0),
         message=(
             "Your offer is accepted. Our sourcing team has been notified and "
             "will contact you to arrange collection and confirm the final "

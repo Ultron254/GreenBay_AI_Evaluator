@@ -1672,9 +1672,15 @@ async function selectRejectionOption(option) {
         console.warn('Rejection choice API failed:', err);
     }
 
-    await sleep(1000);
+    // Reaching here means the choice was NOT recorded. Saying "we've noted your
+    // preference" would be a promise nobody can act on: only 1 rejection exists
+    // across ~380 evaluations, which is what this silent fallthrough produces.
+    await sleep(600);
     hideTypingIndicator();
-    addChatMessage('bot', 'We\'ve noted your preference. Our team will be in touch shortly!');
+    addChatMessage('bot', `I couldn't save that choice just now, so I don't want to tell you it's been noted.<br><br>
+ Please tap your option again, or reach us on
+ <a href="https://wa.me/254741663930" target="_blank" rel="noopener">WhatsApp</a>
+ and we'll pick it up from there.`);
     saveState();
 }
 
@@ -1815,32 +1821,58 @@ function updateOfferCard(newOffer, roundsRemaining) {
 }
 
 async function acceptOffer(amount) {
-    state.negotiation.status = 'accepted';
     const currency = (state.evaluation && state.evaluation.currency_code) || 'KES';
     addChatMessage('user', `I accept ${currency} ${formatKES(amount)}`);
 
     showTypingIndicator();
     trackEvent('offer_accepted');
 
-    // v6: Call backend accept-offer endpoint
+    // The acceptance is only real once the backend has stored it. Confirming a
+    // deal the server never recorded is how a customer ends up believing they
+    // have a price nobody at GreenBay can see.
+    let accepted = false;
+    let failureReason = '';
     try {
-        if (state.sessionId) {
+        if (!state.sessionId) {
+            failureReason = 'no session';
+        } else {
             const resp = await fetch(`${API_BASE}/tradein/${state.sessionId}/accept-offer`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                // Send the amount actually shown to the customer; after a
+                // negotiation it differs from the original opening offer.
+                body: JSON.stringify({ accepted_amount: amount }),
             });
             if (resp.ok) {
                 const data = await resp.json();
                 console.log('Accept offer response:', data);
+                if (typeof data.final_offer === 'number') amount = data.final_offer;
+                accepted = true;
+            } else {
+                failureReason = `HTTP ${resp.status}`;
             }
         }
     } catch (err) {
+        failureReason = err && err.message ? err.message : 'network error';
         console.warn('Accept offer API call failed:', err);
     }
 
-    await sleep(1000);
+    await sleep(600);
     hideTypingIndicator();
 
+    if (!accepted) {
+        console.error('Accept offer not recorded:', failureReason);
+        addChatMessage('bot', `I couldn't confirm that with our system just now, so I don't want to
+ promise you a deal that hasn't been recorded.<br><br>
+ Nothing is lost , please tap Accept again, or message us on
+ <a href="https://wa.me/254741663930" target="_blank" rel="noopener">WhatsApp</a>
+ and we'll complete it for you right away.`);
+        state.negotiation.status = 'pending';
+        saveState();
+        return;
+    }
+
+    state.negotiation.status = 'accepted';
     addChatMessage('bot', `Wonderful! Deal confirmed at <strong>${currency} ${formatKES(amount)}</strong>!<br><br>
  Now, how would you like to proceed?<br><br>
  🚚 <strong>Option 1:</strong> We come to you — FREE pickup in Nairobi<br>

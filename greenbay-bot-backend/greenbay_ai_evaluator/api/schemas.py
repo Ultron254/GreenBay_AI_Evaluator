@@ -347,6 +347,9 @@ class AcceptOfferResponse(BaseModel):
     session_id: str
     decision: str
     message: str
+    # What was actually stored. After a negotiation, or a clamp, this can differ
+    # from the figure the client sent, and the UI must show the stored one.
+    final_offer: float | None = None
 
 
 # ---------------------------------------------------------------------------
