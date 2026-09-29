@@ -73,13 +73,21 @@ jobs:
           # secret is not set, the server's existing .env line is left alone.
           DASHBOARD_KEY: ${{ secrets.DASHBOARD_KEY }}
           READONLY_DASHBOARD_KEY: ${{ secrets.READONLY_DASHBOARD_KEY }}
+          # Outbound email. email_service prefers SMTP whenever SMTP_HOST is
+          # set, which avoids SES sender verification entirely.
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USER: ${{ vars.SMTP_USER }}
+          SMTP_FROM: ${{ vars.SMTP_FROM }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          TEAM_NOTIFICATION_EMAILS: ${{ vars.TEAM_NOTIFICATION_EMAILS }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
-          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY
+          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_FROM,SMTP_PASSWORD,TEAM_NOTIFICATION_EMAILS
           script: |
             set -e
             echo "=== Syncing code to origin/main ==="
@@ -121,6 +129,18 @@ jobs:
               sudo sed -i '/^READONLY_DASHBOARD_KEY=/d' .env
               echo "READONLY_DASHBOARD_KEY=${READONLY_DASHBOARD_KEY}" | sudo tee -a .env > /dev/null
             fi
+            # SMTP settings, same upsert. Only SMTP_PASSWORD is a secret; the
+            # rest are repository variables so they can be read back and
+            # corrected without rotating anything.
+            for _v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_PASSWORD TEAM_NOTIFICATION_EMAILS; do
+              _val=$(eval "printf '%s' \"\${$_v}\"")
+              if [ -n "$_val" ]; then
+                echo "=== Writing ${_v} into .env ==="
+                sudo touch .env
+                sudo sed -i "/^${_v}=/d" .env
+                echo "${_v}=${_val}" | sudo tee -a .env > /dev/null
+              fi
+            done
 
             # Ensure bind-mounted host directories exist and are writable by
             # the non-root appuser inside the container. The Dockerfile chmods
