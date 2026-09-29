@@ -162,7 +162,10 @@ async def analyze_images(
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
                 model=model,
-                max_tokens=2048,
+                # Latency here is token generation, not upload: the same photo
+                # at 70 KB took 33.5s and at 292 KB took 35s. The schema fits
+                # well inside 1024; the spare budget was being spent on prose.
+                max_tokens=1024,
                 system=VISION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": content}],
             )

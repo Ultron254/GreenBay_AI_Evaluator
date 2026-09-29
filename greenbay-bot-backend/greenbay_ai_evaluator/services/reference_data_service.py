@@ -1207,6 +1207,22 @@ def _static_acquisition_ratio(category: str) -> float:
     return DEFAULT_ACQUISITION_RATIO
 
 
+def _sales_stock_median_for(item_text: str, model_text: str, category: str) -> float | None:
+    """Median price this item actually SOLD for, or None when unmatched."""
+    brand = str(item_text or "").strip().split()[0] if item_text else ""
+    if not brand:
+        return None
+    try:
+        res = lookup_sales_stock(brand=brand, model=str(model_text or ""), category=category)
+    except Exception:  # noqa: BLE001
+        return None
+    price = (res or {}).get("median_selling_price")
+    try:
+        return float(price) if price and float(price) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_calibrated_ratios() -> dict[str, Any]:
     """Recompute per-category calibrated acquisition ratios from the tracker.
 
@@ -1236,6 +1252,8 @@ def compute_calibrated_ratios() -> dict[str, Any]:
         return row[i] if i is not None and i < len(row) else ""
 
     samples: dict[str, list[float]] = {}
+    denom_from_sales = 0
+    denom_from_model = 0
     for row in values[hidx + 1:]:
         internal = _safe_float(cell(row, "internal_price")) or _safe_float(cell(row, "final_price"))
         new = _safe_float(cell(row, "new_price"))
@@ -1247,8 +1265,20 @@ def compute_calibrated_ratios() -> dict[str, Any]:
         age = _safe_float(cell(row, "age")) or 2.0
         grade = (str(cell(row, "condition")).strip().upper()[:1]) or "B"
         cond = CONDITION_FACTORS.get(grade, 0.70)
-        depr = depreciation_factor(age, cat)
-        denom = new * depr * cond
+
+        # Prefer what the item ACTUALLY sold for. `new * depreciation * condition`
+        # is a model of resale value, and calibrating against it folds the
+        # model's own error into the learned ratio: on 84 matched rows the team
+        # paid 0.500x new while the model valued the item at 0.549x new, which
+        # pushes r toward (and past) 1.0 even on healthy purchases. Sales stock
+        # carries real selling prices, so use them when the item is matchable.
+        sold = _sales_stock_median_for(cell(row, "item"), cell(row, "model"), cat)
+        if sold and sold > 0:
+            denom = sold
+            denom_from_sales += 1
+        else:
+            denom = new * depreciation_factor(age, cat) * cond
+            denom_from_model += 1
         if denom <= 0:
             continue
         r = internal / denom
@@ -1266,12 +1296,25 @@ def compute_calibrated_ratios() -> dict[str, Any]:
         # converge to the team's observed median.
         blended = (n * raw + _CALIB_SHRINK_K * prior) / (n + _CALIB_SHRINK_K)
         lo, hi = _CALIB_CLAMP
+        clamped = round(min(hi, max(lo, blended)), 3)
         updated[cat] = {
-            "ratio": round(min(hi, max(lo, blended)), 3),
+            "ratio": clamped,
             "raw_median": round(raw, 3),
             "static_prior": prior,
             "n": n,
+            # A category sitting on the clamp is not a calibrated number, it is
+            # a number the safety bound is holding up. Surface it so it cannot
+            # be mistaken for a learned value.
+            "at_clamp": clamped >= hi or clamped <= lo,
+            "denominator": {"sold": denom_from_sales, "modelled": denom_from_model},
         }
+        if clamped >= hi:
+            logger.warning(
+                f"Calibration: {cat} ratio pinned at the {hi} clamp "
+                f"(raw median {raw:.3f}) — the team is paying at or above the "
+                f"item's resale value; only the clamp is preventing a "
+                f"loss-making quote."
+            )
 
     # Atomic swap: rebind instead of clear()+update() so concurrent evaluation
     # threads iterating the dict never see it mid-mutation (RuntimeError) or
