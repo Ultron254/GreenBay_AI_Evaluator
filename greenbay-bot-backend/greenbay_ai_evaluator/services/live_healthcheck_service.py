@@ -77,7 +77,7 @@ def _anthropic_model_call(api_key: str, model: str) -> tuple[bool, str]:
 
 
 def _probe_anthropic() -> tuple[bool, str]:
-    """Probe vision the way analyze_appliance_images() actually calls it.
+    """Probe vision the way analyze_images() actually calls it.
 
     That function loops over [primary, fallback] and succeeds if EITHER model
     answers, so probing the primary alone gives the wrong verdict twice over:
