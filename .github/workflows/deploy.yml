@@ -81,13 +81,18 @@ jobs:
           SMTP_FROM: ${{ vars.SMTP_FROM }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           TEAM_NOTIFICATION_EMAILS: ${{ vars.TEAM_NOTIFICATION_EMAILS }}
+          # Vision model IDs. Anthropic retires dated IDs, and a stale value
+          # pinned in the server .env silently takes vision down (404), so the
+          # deploy owns these rather than leaving them to drift.
+          ANTHROPIC_PRIMARY_MODEL: ${{ vars.ANTHROPIC_PRIMARY_MODEL }}
+          ANTHROPIC_FALLBACK_MODEL: ${{ vars.ANTHROPIC_FALLBACK_MODEL }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 25m
           script_stop: true
-          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_FROM,SMTP_PASSWORD,TEAM_NOTIFICATION_EMAILS
+          envs: GH_TOKEN,PERPLEXITY_API_KEY,DASHBOARD_KEY,READONLY_DASHBOARD_KEY,SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_FROM,SMTP_PASSWORD,TEAM_NOTIFICATION_EMAILS,ANTHROPIC_PRIMARY_MODEL,ANTHROPIC_FALLBACK_MODEL
           script: |
             set -e
             echo "=== Syncing code to origin/main ==="
@@ -132,7 +137,7 @@ jobs:
             # SMTP settings, same upsert. Only SMTP_PASSWORD is a secret; the
             # rest are repository variables so they can be read back and
             # corrected without rotating anything.
-            for _v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_PASSWORD TEAM_NOTIFICATION_EMAILS; do
+            for _v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_PASSWORD TEAM_NOTIFICATION_EMAILS ANTHROPIC_PRIMARY_MODEL ANTHROPIC_FALLBACK_MODEL; do
               _val=$(eval "printf '%s' \"\${$_v}\"")
               if [ -n "$_val" ]; then
                 echo "=== Writing ${_v} into .env ==="
@@ -243,26 +248,36 @@ jobs:
               exit 1
             )
 
+            echo ""
+            echo "=== Deploy successful ==="
+            sudo docker ps --format '{{.Names}} {{.Status}}'
+
+      # Smoke test and probe-row cleanup live in their own step, marked
+      # continue-on-error, so they can never turn a good release red. Three
+      # consecutive runs (36502480397, 36504108759, 36505482525) had already
+      # passed the build, migrations, the health gate AND this smoke test, then
+      # died ~90ms into cleanup with no error output; neither `set +e` nor
+      # redirecting docker exec's stdin stopped it. Chasing that further is not
+      # worth another failed-looking deploy: the gate above is what must be
+      # fatal, and best-effort cleanup simply is not.
+      - name: Post-deploy smoke test and probe-row cleanup
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            cd /opt/greenbay/greenbay-bot-backend
+
             echo "=== Post-deploy smoke test (real evaluation) ==="
-            # Run one full evaluation against the live container, assert it returns
-            # a priced result, then delete the probe row from Airtable + the
-            # tracker sheet so no test data is left behind. Catches runtime wiring
-            # regressions unit tests can't (DB/Airtable/Gemini).
-            #
-            # NON-BLOCKING by design: the first heavy (Gemini-grounded) request
-            # right after a cold start can transiently reset, and Gemini itself can
-            # rate-limit. A failure here emits a ::warning:: annotation (visible)
-            # but does NOT fail the deploy — the unit-test gate already blocks
-            # logic regressions, and health + migrations have already passed.
-            #
-            # That intent was previously only a comment: the script runs under
-            # `set -e`, so any stray non-zero exit in this block still failed
-            # the whole deploy. A release that passed health, migrations and
-            # the smoke test was reported red, which fires the failure
-            # notification and teaches everyone to ignore red builds. Disable
-            # errexit for the block and restore it once cleanup is done.
-            set +e
-            sleep 8  # let the freshly-started worker warm up
+            # One full evaluation against the live container, asserting a priced
+            # result, then delete the probe row from Airtable + the tracker
+            # sheet. Catches runtime wiring regressions unit tests can't
+            # (DB/Airtable/Gemini). The first heavy Gemini-grounded request
+            # after a cold start can transiently reset, hence the retries.
+            sleep 8
             SMOKE_PAYLOAD='{"category":"tv_monitor","brand":"Samsung","model":"ZZSMOKE-CI","age_years":2,"condition_grade":"B","condition_score":70,"retail_price":50000,"retail_price_source":"category_default","seller_name":"ZZSMOKE CI","seller_phone":"+254700000000","country":"KE"}'
             SMOKE_RESP=""
             for n in 1 2 3; do
@@ -273,49 +288,26 @@ jobs:
             done
             if echo "$SMOKE_RESP" | grep -q 'opening_offer'; then
               SID="$(echo "$SMOKE_RESP" | sed -n 's/.*"session_id"[: ]*"\([^"]*\)".*/\1/p' | cut -c1-8)"
-              echo "Smoke OK (session ${SID}); cleaning up probe row..."
-              if [ -n "$SID" ]; then
-                # `< /dev/null` on every docker exec: the remote script is fed
-                # to the shell on stdin, so a command that inherits and drains
-                # stdin eats the rest of the script and the shell exits early.
-                # That killed runs 36502480397 and 36504108759 right after the
-                # "cleaning up probe row" echo, and is why `set +e` did nothing.
-                ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY < /dev/null 2>/dev/null || true)"
-                if [ -z "${ADMIN_KEY}" ]; then
-                  echo "::warning::DASHBOARD_KEY is not set in the container, so the smoke-test row (ref ${SID}) was NOT deleted and admin routes answer 503. Set the DASHBOARD_KEY secret and redeploy."
-                else
-                  # A key the app refuses (a committed value gets 503, a wrong
-                  # one 403) must not fail silently, or ZZSMOKE rows pile up.
-                  DEL_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
-                    "http://localhost:9100/tradein/admin/delete-eval-record?ref=${SID}" || true)"
-                  if [ "${DEL_CODE}" != "200" ]; then
-                    echo "::warning::Smoke-test row (ref ${SID}) was NOT deleted: the admin route answered HTTP ${DEL_CODE}. 503 means DASHBOARD_KEY is a committed value; set the DASHBOARD_KEY secret and redeploy."
-                  fi
-                fi
-              fi
+              echo "Smoke OK (session ${SID})"
             else
-              echo "::warning::Post-deploy smoke test did not return a priced result after 3 tries (likely transient Gemini/cold-start). Last response: $(echo "$SMOKE_RESP" | head -c 300)"
+              echo "::warning::Post-deploy smoke test did not return a priced result after 3 tries. Last response: $(echo "$SMOKE_RESP" | head -c 300)"
             fi
 
             # Sweep ANY leftover ZZ probe rows (this run's or an earlier failed
-            # cleanup's) out of Airtable + the tracker sheet. Idempotent.
+            # cleanup's) out of Airtable + the tracker sheet. Idempotent, so it
+            # covers the smoke row without needing the session id.
             echo "=== Purging leftover test/probe rows ==="
             ADMIN_KEY="$(sudo docker exec greenbay-bot printenv DASHBOARD_KEY < /dev/null 2>/dev/null || true)"
             if [ -n "${ADMIN_KEY}" ]; then
               PURGE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 180 -X POST -H "X-Admin-Key: ${ADMIN_KEY}" \
                 "http://localhost:9100/tradein/admin/purge-test-records?dry_run=false" || true)"
+              echo "  purge HTTP ${PURGE_CODE}"
               if [ "${PURGE_CODE}" != "200" ]; then
                 echo "::warning::Probe-row purge answered HTTP ${PURGE_CODE} (503 means DASHBOARD_KEY is a committed value)."
               fi
             else
               echo "::warning::DASHBOARD_KEY is not set in the container; skipped the probe-row purge."
             fi
-            # Cleanup is best-effort only; resume fail-fast for anything after it.
-            set -e
-
-            echo ""
-            echo "=== Deploy successful ==="
-            sudo docker ps --format '{{.Names}} {{.Status}}'
 
       - name: Notify on failure
         if: failure()

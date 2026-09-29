@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     
     # Anthropic (Claude) Configuration — for AI Evaluator vision & chat
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY", repr=False)
-    anthropic_primary_model: str = Field(default="claude-opus-4-20250514", env="ANTHROPIC_PRIMARY_MODEL")
-    anthropic_fallback_model: str = Field(default="claude-sonnet-4-20250514", env="ANTHROPIC_FALLBACK_MODEL")
+    # Dated model IDs get retired. claude-opus-4-20250514 / claude-sonnet-4-20250514
+    # both started returning 404 and took vision down completely; prefer the
+    # rolling aliases and override per-environment via the .env.
+    anthropic_primary_model: str = Field(default="claude-sonnet-5-5", env="ANTHROPIC_PRIMARY_MODEL")
+    anthropic_fallback_model: str = Field(default="claude-sonnet-4-5-20250929", env="ANTHROPIC_FALLBACK_MODEL")
     
     # Flowcart (WhatsApp Integration) Configuration
     flowcart_webhook_secret: Optional[str] = Field(default=None, env="FLOWCART_WEBHOOK_SECRET", repr=False)

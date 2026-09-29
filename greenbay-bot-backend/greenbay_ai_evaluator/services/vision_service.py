@@ -7,8 +7,8 @@ Uses Anthropic's Claude models for computer vision analysis of appliance photos:
 - Safety hazard detection
 - Photo quality assessment
 
-Primary model: claude-opus-4-20250514
-Fallback model: claude-sonnet-4-20250514
+Primary model: claude-sonnet-5-5
+Fallback model: claude-sonnet-4-5-20250929
 """
 
 from __future__ import annotations
@@ -83,8 +83,8 @@ async def analyze_images(
     model_hint: str | None = None,
     age_years: float | None = None,
     api_key: str | None = None,
-    primary_model: str = "claude-opus-4-20250514",
-    fallback_model: str = "claude-sonnet-4-20250514",
+    primary_model: str = "claude-sonnet-5-5",
+    fallback_model: str = "claude-sonnet-4-5-20250929",
 ) -> dict[str, Any]:
     """
     Analyze appliance photos using Claude vision.
@@ -224,7 +224,7 @@ def analyze_model_label(
     category: str = "",
     brand: str = "",
     api_key: str | None = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> dict[str, Any]:
     """
     Analyze a model label photo to extract and verify the model number.
