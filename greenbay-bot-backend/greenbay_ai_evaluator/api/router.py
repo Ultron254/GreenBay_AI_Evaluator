@@ -1403,14 +1403,12 @@ def _backfill_sheet_missing(dry_run: bool) -> dict:
         prog["missing"] += 1
         if dry_run:
             continue
+        # Text, day first, on the Nairobi day (rds.sheet_date_cell); a
+        # record with no date gets today, as before.
         date_str = None
-        raw_date = str(f.get("Date Submitted", ""))[:10]
+        raw_date = str(f.get("Date Submitted", "") or "").strip()
         if raw_date:
-            try:
-                from datetime import datetime as _dt
-                date_str = _dt.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
-            except ValueError:
-                pass
+            date_str = rds.sheet_date_cell(raw_date)
         ok = rds.append_tracker_row(
             item=str(f.get("Product Name", "") or ""),
             model=str(f.get("Model Number", "") or ""),
@@ -1460,6 +1458,20 @@ def backfill_sheet_missing(
 
     threading.Thread(target=_job, daemon=True).start()
     return {"started": True, "note": "Background job launched. GET this path for progress."}
+
+
+def _tracker_date_cell(raw: str) -> str:
+    """The tracker Date cell for an Airtable "Date Submitted" value, or ""
+    when there is none to read (the repair pass then leaves the cell alone)."""
+    from greenbay_ai_evaluator.services import reference_data_service as rds
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    try:
+        datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return rds.sheet_date_cell(s)
 
 
 @evaluator_router.get("/admin/backfill-sheet-missing")
@@ -1636,11 +1648,11 @@ def _sheet_repair(dry_run: bool) -> dict:
             if di is not None:
                 cur_date = row[di] if di < len(row) else ""
                 if not str(cur_date).strip():
-                    raw = str(f.get("Date Submitted", ""))[:10]
-                    try:
-                        d = datetime.strptime(raw, "%Y-%m-%d").strftime("%d/%m/%Y")
-                    except ValueError:
-                        d = ""
+                    raw = str(f.get("Date Submitted", "") or "").strip()
+                    # Text, day first, on the Nairobi day: written as a bare
+                    # DD/MM/YYYY with USER_ENTERED, the month-first sheet
+                    # swapped every day of 12 or under.
+                    d = _tracker_date_cell(raw)
                     if d:
                         prog["dates_fixed"] += 1
                         if not dry_run:

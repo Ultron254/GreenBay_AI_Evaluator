@@ -275,6 +275,14 @@ async def vertex_evaluate(
         import httpx
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             resp = await client.post(endpoint, headers=headers, json=body)
+            # Self-heal, as market_price_service does: an API version or
+            # model that rejects thinkingConfig answers 400 naming it; the
+            # call is made once more without it.
+            if (resp.status_code == 400 and "thinking" in (resp.text or "").lower()
+                    and "thinkingConfig" in body["generationConfig"]):
+                body["generationConfig"].pop("thinkingConfig", None)
+                logger.warning("Vertex AI: thinkingConfig refused; retrying without it")
+                resp = await client.post(endpoint, headers=headers, json=body)
     except Exception as e:
         _bump_counter(success=False, error=f"http: {e}")
         logger.warning(f"Vertex AI request failed: {e}")
@@ -303,14 +311,17 @@ async def vertex_evaluate(
 
     parsed = _extract_json(text)
     if not parsed:
-        finish = ""
+        finish, blocked = "", ""
         try:
             finish = str(((data.get("candidates") or [{}])[0]).get("finishReason") or "")
+            blocked = str((data.get("promptFeedback") or {}).get("blockReason") or "")
         except Exception:  # noqa: BLE001
-            finish = ""
-        _bump_counter(success=False, error=f"parse: empty or invalid JSON (finish {finish or 'unknown'})")
+            finish, blocked = finish or "", ""
+        why = f"finish {finish or 'unknown'}" + (f", blocked {blocked}" if blocked else "")
+        _bump_counter(success=False, error=f"parse: empty or invalid JSON ({why})")
         logger.warning(
-            f"Vertex AI: response had no parseable JSON (finishReason={finish or 'unknown'}). "
+            f"Vertex AI: response had no parseable JSON (finishReason={finish or 'unknown'}"
+            f"{', promptFeedback.blockReason=' + blocked if blocked else ''}). "
             f"Raw text: {text[:500]}"
         )
         return None

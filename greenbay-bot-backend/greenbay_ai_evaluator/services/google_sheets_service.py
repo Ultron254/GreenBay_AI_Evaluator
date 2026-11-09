@@ -98,21 +98,12 @@ def _get_worksheet():
 
 
 def sheet_date_cell(now: datetime | None = None) -> str:
-    """Column A for a new row: the Nairobi day, day first, as TEXT.
-
-    The tracker sheet is set to a month-first locale. Written as "01/11/26"
-    with USER_ENTERED, Sheets parsed every day of 12 or under as a real date
-    with day and month swapped (1 Nov became 11 Jan; 9 Nov became 11 Sep),
-    while a day over 12 stayed text. Anything reading the cell's value (the
-    xlsx export, the Sheets API, GreenBay Pulse) then filed November's
-    evaluations under January to September. The leading apostrophe keeps the
-    cell as the text typed, the same as the rows Sheets could not parse, and
-    read_historical_data and _parse_sheet_date read it day first as before.
-    The day is Nairobi's: datetime.now() on a UTC server dated evaluations
-    made after 21:00 in Nairobi the day before."""
-    from zoneinfo import ZoneInfo
-    now = now or datetime.now(ZoneInfo("Africa/Nairobi"))
-    return "'" + now.strftime("%d/%m/%Y")
+    """The tracker's Date cell; see reference_data_service.sheet_date_cell,
+    the one helper every writer uses."""
+    from greenbay_ai_evaluator.services.reference_data_service import (
+        sheet_date_cell as _cell,
+    )
+    return _cell(now)
 
 
 def append_evaluation_row(
@@ -133,6 +124,10 @@ def append_evaluation_row(
     decision: str = "",
 ) -> bool:
     """Append a new evaluation row to the Google Sheet.
+
+    UNUSED since 2 Jun 2026 (120eaab): /evaluate writes the tracker through
+    reference_data_service.append_tracker_row. Kept for reference; its date
+    goes through the same sheet_date_cell if anything calls it again.
 
     NEVER writes to columns J (Internal Team Price) or K (Final Price Offered).
 

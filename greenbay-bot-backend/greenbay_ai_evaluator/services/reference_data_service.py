@@ -24,7 +24,7 @@ import re
 import statistics
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -904,6 +904,64 @@ def _tracker_dump_fallback(payload: dict) -> None:
         logger.warning(f"Tracker fallback dump failed: {e}")
 
 
+# Nairobi has no daylight saving; a fixed offset needs no tzdata on the host.
+NAIROBI_TZ = timezone(timedelta(hours=3))
+_DMY_TEXT_RE = re.compile(r"^'?\s*(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})\s*$")
+
+
+def sheet_date_cell(when: Any = None) -> str:
+    """The tracker's Date cell: the Nairobi day, day first, as TEXT
+    ("'01/11/2026"). Every writer of that column goes through here.
+
+    The tracker sheet reads dates month first. Written as "01/11/2026" with
+    USER_ENTERED, every day of 12 or under was stored as a real date with day
+    and month swapped (1 Nov became 11 Jan), while a day over 12 stayed text,
+    so anything reading values (the xlsx export, the Sheets API, GreenBay
+    Pulse) filed most evaluations under the wrong month. The leading
+    apostrophe keeps the cell as typed, like the rows Sheets could not parse,
+    and every reader here (read_historical_data, _parse_sheet_date) reads it
+    day first as before.
+
+    `when` is None (now), a datetime (a naive one is taken as UTC), a date,
+    an ISO date or timestamp (Airtable's "Date Submitted"), or a day-first
+    "DD/MM/YYYY" text, with or without the apostrophe. A UTC timestamp is
+    moved to Nairobi's day: an evaluation at 22:30 UTC is the next day there.
+    Anything unreadable falls back to today in Nairobi."""
+    d: date | None = None
+    if when is None or when == "":
+        d = datetime.now(NAIROBI_TZ).date()
+    elif isinstance(when, datetime):
+        aware = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+        d = aware.astimezone(NAIROBI_TZ).date()
+    elif isinstance(when, date):
+        d = when
+    else:
+        s = str(when).strip()
+        m = _DMY_TEXT_RE.match(s)
+        if m:
+            day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if year < 100:
+                year += 2000
+            try:
+                d = date(year, month, day)
+            except ValueError:
+                d = None
+        else:
+            try:
+                if len(s) <= 10:
+                    d = date.fromisoformat(s[:10])
+                else:
+                    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                    aware = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                    d = aware.astimezone(NAIROBI_TZ).date()
+            except ValueError:
+                d = None
+        if d is None:
+            logger.warning(f"Tracker date {s[:40]!r} not readable; using today (Nairobi)")
+            d = datetime.now(NAIROBI_TZ).date()
+    return "'" + d.strftime("%d/%m/%Y")
+
+
 def append_tracker_row(
     *, item: str, model: str = "", new_price: float | None = None,
     ai_price: float | None = None, ai_confidence: float | None = None,
@@ -961,7 +1019,7 @@ def append_tracker_row(
                 if i is not None and i < ncols and val not in (None, ""):
                     row[i] = val
 
-            setc("date", date_str or _dt.now().strftime("%d/%m/%Y"))
+            setc("date", sheet_date_cell(date_str))
             setc("item", item)
             setc("model", model)
             setc("condition", condition)
