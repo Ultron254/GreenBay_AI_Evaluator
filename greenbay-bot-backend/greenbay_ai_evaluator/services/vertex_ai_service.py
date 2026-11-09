@@ -160,6 +160,35 @@ def _extract_json(text: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Generation settings
+# ---------------------------------------------------------------------------
+# Gemini 2.5 models think before they answer, and the thinking is counted
+# against maxOutputTokens. At 512 tokens gemini-2.5-flash (the configured
+# model) often spent the whole budget thinking and answered with no text, or
+# with JSON cut off mid-way (finishReason MAX_TOKENS): the call "succeeded",
+# no price was parsed, and the Vertex AI Price (KES) column was filled on
+# about 4% of evaluations (Pulse Sentinel D06). The answer is six short
+# fields, so thinking is switched off for Flash models (a budget of 0 is
+# allowed there) and the output budget is raised; Pro models cannot switch
+# thinking off, so they get a small budget instead.
+VERTEX_MAX_OUTPUT_TOKENS = 1024
+VERTEX_PRO_THINKING_BUDGET = 128
+
+
+def _generation_config(model: str | None) -> dict[str, Any]:
+    cfg: dict[str, Any] = {
+        "temperature": 0.2,
+        "maxOutputTokens": VERTEX_MAX_OUTPUT_TOKENS,
+        "responseMimeType": "application/json",
+    }
+    name = (model or "").lower()
+    if "gemini-2.5" in name or "gemini-3" in name:
+        budget = 0 if "flash" in name else VERTEX_PRO_THINKING_BUDGET
+        cfg["thinkingConfig"] = {"thinkingBudget": budget}
+    return cfg
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 async def vertex_evaluate(
@@ -233,11 +262,7 @@ async def vertex_evaluate(
                 "parts": [{"text": user_text}] + image_parts,
             }
         ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 512,
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": _generation_config(settings.google_vertex_model),
     }
 
     endpoint = _build_endpoint()
@@ -278,8 +303,16 @@ async def vertex_evaluate(
 
     parsed = _extract_json(text)
     if not parsed:
-        _bump_counter(success=False, error="parse: empty or invalid JSON")
-        logger.warning(f"Vertex AI: response had no parseable JSON. Raw text: {text[:500]}")
+        finish = ""
+        try:
+            finish = str(((data.get("candidates") or [{}])[0]).get("finishReason") or "")
+        except Exception:  # noqa: BLE001
+            finish = ""
+        _bump_counter(success=False, error=f"parse: empty or invalid JSON (finish {finish or 'unknown'})")
+        logger.warning(
+            f"Vertex AI: response had no parseable JSON (finishReason={finish or 'unknown'}). "
+            f"Raw text: {text[:500]}"
+        )
         return None
 
     logger.debug(f"Vertex AI raw parsed JSON: {parsed}")
