@@ -132,11 +132,50 @@ DEFAULT_DEFECT_DEDUCTION: float = 500.0
 # ---------------------------------------------------------------------------
 # Multi-country currency configuration (v6)
 # ---------------------------------------------------------------------------
+# round_step is the price granularity in local units. KES 500 is roughly
+# UGX 14,000 and NGN 6,000, so the Kenyan step would print UGX prices to the
+# shilling; these keep offers to a sensible round figure in each market.
 CURRENCY_CONFIG: dict[str, dict[str, str | int]] = {
     "KE": {"code": "KES", "symbol": "KES", "round_step": 500},
-    "UG": {"code": "UGX", "symbol": "UGX", "round_step": 500},
-    "NG": {"code": "NGN", "symbol": "NGN", "round_step": 500},
+    "UG": {"code": "UGX", "symbol": "UGX", "round_step": 10000},
+    "NG": {"code": "NGN", "symbol": "NGN", "round_step": 5000},
 }
+
+# Approximate KES value of ONE unit of local currency. Used only to carry the
+# KES-denominated constants (defect deductions, category default retail
+# guesses) into a local-currency evaluation. Never shown to a customer and
+# never used to convert a price between markets.
+KES_PER_LOCAL_UNIT: dict[str, float] = {"KES": 1.0, "UGX": 0.0357, "NGN": 0.085}
+
+# Markets whose prices come from GreenBay's own Kenyan data (sales stock,
+# pricing matrix, tracker sheet, expert feedback, DB comparables, Jiji/Jumia
+# Kenya). Every other market is priced from a local new-price lookup plus the
+# shared depreciation/condition/acquisition maths, and always goes to a person
+# until it has local history of its own.
+KES_REFERENCE_MARKETS: frozenset[str] = frozenset({"KE"})
+
+# Highest confidence a market without local reference data may report. Below
+# the 80 review gate on purpose: these offers are preliminary and a person
+# confirms every one.
+LOCAL_PRICING_CONFIDENCE_CAP: float = 60.0
+
+
+def normalise_country(country: str | None) -> str:
+    """Upper-case country code; anything unknown is treated as Kenya."""
+    code = (country or "KE").strip().upper()
+    return code if code in CURRENCY_CONFIG else "KE"
+
+
+def uses_kes_reference_data(country: str | None) -> bool:
+    """True when the evaluation can be priced from GreenBay's Kenyan data."""
+    return normalise_country(country) in KES_REFERENCE_MARKETS
+
+
+def local_units_per_kes(country: str | None) -> float:
+    """How many local currency units one KES is worth (1.0 for Kenya)."""
+    code = str(CURRENCY_CONFIG[normalise_country(country)]["code"])
+    rate = KES_PER_LOCAL_UNIT.get(code, 1.0)
+    return 1.0 / rate if rate else 1.0
 
 PHONE_COUNTRY_PREFIXES: dict[str, str] = {
     "+254": "KE",
@@ -161,7 +200,7 @@ def detect_country_from_phone(phone: str) -> str:
 
 def get_currency_config(country: str = "KE") -> dict:
     """Return currency config for a country code."""
-    return CURRENCY_CONFIG.get(country, CURRENCY_CONFIG["KE"])
+    return CURRENCY_CONFIG[normalise_country(country)]
 
 
 # ---------------------------------------------------------------------------

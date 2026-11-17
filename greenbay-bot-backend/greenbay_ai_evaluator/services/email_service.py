@@ -393,6 +393,14 @@ def qualify_lead(vs: dict[str, Any]) -> tuple[bool, str]:
         floor = float(os.environ.get("LEAD_MIN_OFFER_KES", "5000"))
     except ValueError:
         floor = 5000.0
+    # The floor is in KES; a UGX/NGN offer is compared in its own currency.
+    try:
+        from greenbay_ai_evaluator.config import KES_PER_LOCAL_UNIT
+        rate = KES_PER_LOCAL_UNIT.get(str(vs.get("currency_code") or "KES"), 1.0)
+        if rate and rate != 1.0:
+            floor = floor / rate
+    except Exception:  # noqa: BLE001
+        pass
     if offer < floor:
         return False, f"offer {offer:,.0f} below {floor:,.0f} floor"
 

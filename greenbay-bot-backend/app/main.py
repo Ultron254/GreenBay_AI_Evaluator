@@ -391,6 +391,31 @@ def create_app() -> FastAPI:
     
     # Mount frontend static files
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+
+    # Country portals: /app/ke, /app/ug, /app/ng serve the same wizard, which
+    # reads the market from the path (currency, phone rules, copy, theme).
+    # Registered before the /app mount so they win over the static lookup.
+    # Without a trailing slash the page's relative assets (styles.css, app.js)
+    # resolve to /app/..., so the slash form redirects to the bare path.
+    from fastapi.responses import FileResponse
+
+    def _country_portal(code: str):
+        async def _serve():
+            return FileResponse(
+                str(frontend_dir / "index.html"),
+                media_type="text/html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+
+        async def _redirect():
+            return RedirectResponse(url=f"/app/{code}", status_code=308)
+
+        app.add_api_route(f"/app/{code}", _serve, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"/app/{code}/", _redirect, methods=["GET"], include_in_schema=False)
+
+    for _code in ("ke", "ug", "ng"):
+        _country_portal(_code)
+
     if frontend_dir.is_dir():
         app.mount("/app", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
         logger.info(f"Frontend mounted at /app from {frontend_dir}")

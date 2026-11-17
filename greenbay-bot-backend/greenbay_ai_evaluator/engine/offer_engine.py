@@ -598,6 +598,11 @@ def compute_valuation(
     # only when renormalise_unavailable_sources is True (default False).
     unavailable_sources: list[str] | None = None,
     renormalise_unavailable_sources: bool = False,
+    # Nov 2026: DEFECT_DEDUCTIONS are KES amounts. A Uganda or Nigeria
+    # evaluation is priced in UGX/NGN, so the deductions are multiplied by
+    # local units per KES (1.0 for Kenya leaves every Kenyan price unchanged).
+    defect_scale: float = 1.0,
+    currency: str = "KES",
 ) -> ValuationResult:
     """Deterministic valuation computation (v6 data-driven formula).
 
@@ -690,8 +695,9 @@ def compute_valuation(
     for defect in defects:
         defect_type = defect.get("type", "unknown").lower().replace(" ", "_")
         kes = cat_deductions.get(defect_type, DEFAULT_DEFECT_DEDUCTION)
-        defect_details.append({"type": defect_type, "deduction_kes": kes})
-        defect_total += kes
+        amount = kes * (defect_scale if defect_scale and defect_scale > 0 else 1.0)
+        defect_details.append({"type": defect_type, "deduction_kes": kes, "deduction": amount})
+        defect_total += amount
 
     max_deduction = condition_adjusted_value * 0.60
     defect_total = min(defect_total, max_deduction)
@@ -1028,6 +1034,13 @@ def compute_valuation(
             f"KES {acquisition_ceiling:,.0f}. Opening negotiation at "
             f"KES {opening_offer:,.0f}."
         )
+
+    # The trace and reasons are written with the Kenyan label throughout; a
+    # local-currency evaluation must not tell anyone its UGX/NGN figures are KES.
+    if currency and currency != "KES":
+        pricing_justification = pricing_justification.replace("KES ", f"{currency} ")
+        decision_reason = decision_reason.replace("KES ", f"{currency} ")
+        guardrail_note = guardrail_note.replace("KES ", f"{currency} ")
 
     return ValuationResult(
         estimated_resale_value=estimated_resale_value,

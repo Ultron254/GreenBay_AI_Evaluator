@@ -45,15 +45,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GreenBay AI Evaluator | Instant Appliance Valuations</title>
     <meta name="description"
-        content="Get an instant, AI-powered valuation for your secondhand appliance. Free pickup in Nairobi, settled by our sourcing team.">
+        content="Get an instant, AI-powered valuation for your secondhand appliance in Kenya, Uganda or Nigeria, settled by our sourcing team.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&family=Sora:wght@400;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,700&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com https://*.google-analytics.com https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com;">
-    <link rel="stylesheet" href="styles.css?v=20260319">
+    <!-- Market theme before first paint (app.js applies the copy). Same rule as
+         detectCountry() in app.js: portal path, then timezone, then Kenya. -->
+    <script>
+        (function () {
+            var m = /^\/app\/(ke|ug|ng)\/?$/i.exec(location.pathname), c = m ? m[1].toUpperCase() : '';
+            if (!c) {
+                var tz = '';
+                try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { }
+                c = tz.indexOf('Africa/Kampala') === 0 ? 'UG' : (tz.indexOf('Africa/Lagos') === 0 ? 'NG' : 'KE');
+            }
+            document.documentElement.setAttribute('data-country', c);
+        })();
+    </script>
+    <link rel="stylesheet" href="styles.css?v=20261117">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -64,6 +77,7 @@
 
     <!-- HEADER -->
     <header class="site-header">
+        <div class="header-ribbon" aria-hidden="true"></div>
         <div class="header-inner">
             <a href="#" class="logo">
                 <img src="greenbay-logo.png" alt="GreenBay Market" class="logo-img">
@@ -85,21 +99,22 @@
 
     <!-- HERO -->
     <section class="hero" id="hero">
+        <div class="hero-pattern" aria-hidden="true"></div>
         <div class="container">
             <div class="hero-content">
                 <div class="hero-text">
                     <div class="hero-badge">
-                        <span class="hero-badge-dot"></span> AI-Powered Valuations
+                        <span class="hero-badge-dot"></span> <span data-copy="heroKicker">AI-Powered Valuations</span>
                     </div>
                     <h1>Turn Your Old Appliances into <em>Cash</em></h1>
                     <p class="hero-description">
                         Upload photos of your appliance and get an instant, AI-powered valuation.
-                        Free pickup anywhere in Nairobi, settled by our sourcing team.
+                        <span data-copy="heroPickup">Free pickup anywhere in Nairobi, settled by our sourcing team.</span>
                     </p>
                     <div class="hero-actions">
                         <a href="#evaluate" class="btn btn-primary btn-lg">Get Free Valuation <i
                                 data-lucide="arrow-right" class="btn-icon"></i></a>
-                        <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20want%20to%20sell%20an%20appliance"
+                        <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20want%20to%20sell%20an%20appliance" data-wa="Hi GreenBay, I want to sell an appliance"
                             target="_blank" class="btn btn-whatsapp btn-lg"><i data-lucide="message-circle"
                                 class="btn-icon"></i>
                             Speak to an Agent</a>
@@ -143,13 +158,14 @@
                         </div>
                         <div class="mockup-offer">
                             <div class="mockup-offer-label">Your GreenBay Offer</div>
-                            <div class="mockup-offer-amount">KES 28,500</div>
+                            <div class="mockup-offer-amount" data-copy="mockOffer">KES 28,500</div>
                             <div class="mockup-offer-label">Valid for 7 days</div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+        <div class="pattern-band" aria-hidden="true"></div>
     </section>
 
     <!-- BRAND MARQUEE -->
@@ -159,34 +175,40 @@
             <div class="marquee-item">Samsung</div>
             <div class="marquee-item">LG</div>
             <div class="marquee-item">Hisense</div>
-            <div class="marquee-item">VON</div>
-            <div class="marquee-item">Ramtons</div>
+            <div class="marquee-item only-ke">VON</div>
+            <div class="marquee-item only-ke">Ramtons</div>
             <div class="marquee-item">TCL</div>
             <div class="marquee-item">Haier</div>
-            <div class="marquee-item">ARMCO</div>
+            <div class="marquee-item only-ke">ARMCO</div>
             <div class="marquee-item">Midea</div>
-            <div class="marquee-item">MIKA</div>
+            <div class="marquee-item only-ke">MIKA</div>
             <div class="marquee-item">Kenwood</div>
             <div class="marquee-item">Tefal</div>
             <div class="marquee-item">Toshiba</div>
             <div class="marquee-item">Simfer</div>
             <div class="marquee-item">NUNIX</div>
+            <div class="marquee-item only-ng">Scanfrost</div>
+            <div class="marquee-item only-ng">Thermocool</div>
+            <div class="marquee-item only-ng">Nexus</div>
             <!-- Duplicate for seamless loop -->
             <div class="marquee-item">Samsung</div>
             <div class="marquee-item">LG</div>
             <div class="marquee-item">Hisense</div>
-            <div class="marquee-item">VON</div>
-            <div class="marquee-item">Ramtons</div>
+            <div class="marquee-item only-ke">VON</div>
+            <div class="marquee-item only-ke">Ramtons</div>
             <div class="marquee-item">TCL</div>
             <div class="marquee-item">Haier</div>
-            <div class="marquee-item">ARMCO</div>
+            <div class="marquee-item only-ke">ARMCO</div>
             <div class="marquee-item">Midea</div>
-            <div class="marquee-item">MIKA</div>
+            <div class="marquee-item only-ke">MIKA</div>
             <div class="marquee-item">Kenwood</div>
             <div class="marquee-item">Tefal</div>
             <div class="marquee-item">Toshiba</div>
             <div class="marquee-item">Simfer</div>
             <div class="marquee-item">NUNIX</div>
+            <div class="marquee-item only-ng">Scanfrost</div>
+            <div class="marquee-item only-ng">Thermocool</div>
+            <div class="marquee-item only-ng">Nexus</div>
         </div>
     </section>
 
@@ -210,7 +232,7 @@
                     <div class="step-number">2</div>
                     <div class="step-icon"><i data-lucide="scan-search" class="icon-lg"></i></div>
                     <h3>AI Analysis</h3>
-                    <p>Our AI identifies the brand, model, condition, and searches current Kenya market prices.</p>
+                    <p>Our AI identifies the brand, model, condition, and searches current local market prices.</p>
                 </div>
                 <div class="step-card">
                     <div class="step-number">3</div>
@@ -222,7 +244,7 @@
                     <div class="step-number">4</div>
                     <div class="step-icon"><i data-lucide="banknote" class="icon-lg"></i></div>
                     <h3>Hand It Over</h3>
-                    <p>Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!</p>
+                    <p data-copy="handOver">Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!</p>
                 </div>
             </div>
         </div>
@@ -421,7 +443,7 @@
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="truck" class="icon-md"></i></div>
                     <h4>FREE Pickup</h4>
-                    <p>We collect anywhere in Nairobi</p>
+                    <p data-copy="pickupShort">We collect anywhere in Nairobi</p>
                 </div>
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="smartphone" class="icon-md"></i></div>
@@ -441,7 +463,7 @@
     <section class="whatsapp-cta-section">
         <div class="container" style="text-align: center;">
             <p style="color:var(--muted); margin-bottom: 16px; font-size: 1rem;">Prefer to chat? Get your valuation over WhatsApp</p>
-            <a href="#" id="whatsappEvalBtn" class="btn btn-whatsapp btn-lg">
+            <a href="#" id="whatsappEvalBtn" data-wa="Hi GreenBay, I would like a valuation for my appliance" target="_blank" rel="noopener" class="btn btn-whatsapp btn-lg">
                 <i data-lucide="message-circle" class="btn-icon"></i>
                 Evaluate on WhatsApp
             </a>
@@ -462,401 +484,218 @@
                 <div class="wizard-panel" id="wizardPanel">
                     <div class="wizard-progress">
                         <div class="progress-info">
-                            <span class="progress-step-label" id="progressLabel">Step 1: Category</span>
-                            <span class="progress-count" id="progressCount">1 / 11</span>
+                            <span class="progress-step-label" id="progressLabel">Step 1: Your appliance</span>
+                            <span class="progress-count" id="progressCount">1 / 4</span>
                         </div>
                         <div class="progress-bar">
-                            <div class="progress-fill" id="progressFill" style="width: 11%"></div>
+                            <div class="progress-fill" id="progressFill" style="width: 25%"></div>
                         </div>
                     </div>
 
                     <div class="wizard-body" id="wizardBody">
-                        <!-- STEP 1: Category -->
+                        <!-- STEP 1: The appliance (type, age, condition) -->
                         <div class="wizard-step active" data-step="1" id="step1">
-                            <h3>What type of appliance are you selling?</h3>
-                            <p class="step-description">Select the category that best matches your appliance.</p>
-                            <div class="option-grid" id="categoryOptions">
-                                <div class="option-card has-image" data-value="refrigerator"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://greenbay.market/cdn/shop/files/vn1_d9a078e3-f010-4cb3-9e27-586e2e596da9.jpg?width=200","https://greenbay.market/cdn/shop/files/v1.webp?width=200","https://greenbay.market/cdn/shop/files/m2_b2833f23-5705-47d6-b173-0d62d8e3d355.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://greenbay.market/cdn/shop/files/vn1_d9a078e3-f010-4cb3-9e27-586e2e596da9.jpg?width=200"
-                                            alt="Fridge">
-                                    </div>
-                                    <span class="option-label">Fridges & Freezers</span>
-                                </div>
-                                <div class="option-card has-image" data-value="washing_machine"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://cdn.shopify.com/s/files/1/0933/1635/0228/files/w1_8968bf80-4fd1-4c36-b712-94e7c1b31584.jpg?width=200","https://cdn.shopify.com/s/files/1/0933/1635/0228/files/h1_13c43eb5-012c-4350-bf24-7c7f820bfbc4.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://cdn.shopify.com/s/files/1/0933/1635/0228/files/w1_8968bf80-4fd1-4c36-b712-94e7c1b31584.jpg?width=200"
-                                            alt="Washing Machine">
-                                    </div>
-                                    <span class="option-label">Washing Machines</span>
-                                </div>
-                                <div class="option-card has-image" data-value="tv_monitor"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://greenbay.market/cdn/shop/files/h1_a5110457-6823-48d2-ac20-ec2927d6cd33.webp?width=200","https://greenbay.market/cdn/shop/files/h1_cef504f5-17c2-460a-a94e-7382cb8a420d.jpg?width=200","https://greenbay.market/cdn/shop/files/s1_6a5b5262-fec4-4815-8315-95fe41f0f7b3.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://greenbay.market/cdn/shop/files/h1_a5110457-6823-48d2-ac20-ec2927d6cd33.webp?width=200"
-                                            alt="TV">
-                                    </div>
-                                    <span class="option-label">TV & Entertainment</span>
-                                </div>
-                                <div class="option-card has-image" data-value="cooker_oven"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://greenbay.market/cdn/shop/files/fg1.jpg?width=200","https://greenbay.market/cdn/shop/files/h1.jpg?width=200","https://greenbay.market/cdn/shop/files/e1.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://greenbay.market/cdn/shop/files/fg1.jpg?width=200" alt="Cooker">
-                                    </div>
-                                    <span class="option-label">Cookers & Ovens</span>
-                                </div>
-                                <div class="option-card has-image" data-value="microwave"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://greenbay.market/cdn/shop/files/m1_143229a5-74a5-4b1b-8d0a-9c6440a06feb.jpg?width=200","https://greenbay.market/cdn/shop/files/MMWDSTH2342BF.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://greenbay.market/cdn/shop/files/m1_143229a5-74a5-4b1b-8d0a-9c6440a06feb.jpg?width=200"
-                                            alt="Microwave">
-                                    </div>
-                                    <span class="option-label">Microwaves</span>
-                                </div>
-                                <div class="option-card has-image" data-value="small_kitchen"
-                                    onclick="selectOption(this, 'category')">
-                                    <div class="option-image-carousel"
-                                        data-images='["https://greenbay.market/cdn/shop/files/0272549c-d7a4-4c77-892a-562ed5f07d1d.jpg?width=200","https://greenbay.market/cdn/shop/files/cb16a470-585a-4cd9-bfff-ceeaa0344bd3.jpg?width=200"]'>
-                                        <img class="option-carousel-img active"
-                                            src="https://greenbay.market/cdn/shop/files/0272549c-d7a4-4c77-892a-562ed5f07d1d.jpg?width=200"
-                                            alt="Kitchen">
-                                    </div>
-                                    <span class="option-label">Small Kitchen</span>
-                                </div>
+                            <h3>Tell us about your appliance</h3>
+                            <p class="step-description">Three quick picks. It takes about 20 seconds.</p>
 
+                            <div class="form-group">
+                                <label class="form-label" for="categorySelect">What are you selling?</label>
+                                <select class="form-input form-select" id="categorySelect"
+                                    onchange="selectCategory(this.value)">
+                                    <option value="">Choose a type…</option>
+                                    <option value="refrigerator">Fridge or freezer</option>
+                                    <option value="washing_machine">Washing machine</option>
+                                    <option value="tv_monitor">TV or monitor</option>
+                                    <option value="cooker_oven">Cooker or oven</option>
+                                    <option value="microwave">Microwave</option>
+                                    <option value="small_kitchen">Small kitchen appliance</option>
+                                    <option value="other">Something else</option>
+                                </select>
+                            </div>
 
-                                <div class="option-card" data-value="other" onclick="selectOption(this, 'category')">
-                                    <span class="option-icon"><i data-lucide="package"></i></span>
-                                    <span class="option-label">Other</span>
+                            <div class="form-group" id="otherDescriptionGroup" hidden>
+                                <label class="form-label" for="otherDescription">What is it?</label>
+                                <input type="text" class="form-input" id="otherDescription" maxlength="200"
+                                    placeholder="e.g. Standing fan, water dispenser, heater"
+                                    oninput="updateAnswer('otherDescription', this.value)">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="ageSelect">How old is it?</label>
+                                <select class="form-input form-select" id="ageSelect" onchange="selectAge(this.value)">
+                                    <option value="">Choose an age…</option>
+                                    <option value="0.5">Under 1 year</option>
+                                    <option value="1">1 year</option>
+                                    <option value="2">2 years</option>
+                                    <option value="3">3 years</option>
+                                    <option value="4">4 years</option>
+                                    <option value="6.5">5 to 8 years</option>
+                                    <option value="10">More than 8 years</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <span class="form-label" id="conditionLabel">What condition is it in?</span>
+                                <div class="chip-group" id="conditionOptions" role="radiogroup"
+                                    aria-labelledby="conditionLabel">
+                                    <button type="button" class="chip" role="radio" aria-checked="false"
+                                        data-value="new" data-grade="A" onclick="selectCondition(this)">New / sealed</button>
+                                    <button type="button" class="chip" role="radio" aria-checked="false"
+                                        data-value="like_new" data-grade="A" onclick="selectCondition(this)">Like new</button>
+                                    <button type="button" class="chip" role="radio" aria-checked="false"
+                                        data-value="used_good" data-grade="B" onclick="selectCondition(this)">Used, works well</button>
+                                    <button type="button" class="chip" role="radio" aria-checked="false"
+                                        data-value="wear_faults" data-grade="C" onclick="selectCondition(this)">Noticeable wear or faults</button>
                                 </div>
+                            </div>
+
+                            <div class="form-group defect-group" id="defectGroup" hidden>
+                                <span class="form-label" id="defectLabel">What's wrong with it? <span
+                                        class="step-optional-badge">Tap all that apply</span></span>
+                                <div class="chip-group chip-group-sm" id="defectOptions" aria-labelledby="defectLabel">
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="cosmetic_dent" onclick="toggleDefect(this)">Dents</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="cosmetic_scratch" onclick="toggleDefect(this)">Scratches</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="rust" onclick="toggleDefect(this)">Rust</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="missing_parts" onclick="toggleDefect(this)">Missing parts</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="not_cooling_heating" onclick="toggleDefect(this)">Not cooling / heating</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="noisy" onclick="toggleDefect(this)">Noisy</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="water_leak" onclick="toggleDefect(this)">Leaks</button>
+                                    <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="not_working" onclick="toggleDefect(this)">Doesn't turn on</button>
+                                </div>
+                                <input type="text" class="form-input" id="issuesInput" maxlength="500"
+                                    placeholder="Anything else we should know? (optional)"
+                                    oninput="updateAnswer('issues', this.value)">
                             </div>
                         </div>
 
-                        <!-- STEP 2: Brand -->
+                        <!-- STEP 2: Photos (model label first, the AI reads brand + model) -->
                         <div class="wizard-step" data-step="2" id="step2">
-                            <h3>What brand is it?</h3>
-                            <p class="step-description">Select your appliance brand, or type it if not listed.</p>
-                            <div class="option-grid cols-3" id="brandOptions">
-                                <div class="option-card" data-value="Samsung" onclick="selectOption(this, 'brand')">
-                                    <span class="option-label">Samsung</span>
-                                </div>
-                                <div class="option-card" data-value="LG" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">LG</span></div>
-                                <div class="option-card" data-value="Hisense" onclick="selectOption(this, 'brand')">
-                                    <span class="option-label">Hisense</span>
-                                </div>
-                                <div class="option-card" data-value="VON" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">VON</span></div>
-                                <div class="option-card" data-value="Ramtons" onclick="selectOption(this, 'brand')">
-                                    <span class="option-label">Ramtons</span>
-                                </div>
-                                <div class="option-card" data-value="Haier" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">Haier</span></div>
-                                <div class="option-card" data-value="TCL" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">TCL</span></div>
-                                <div class="option-card" data-value="ARMCO" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">ARMCO</span></div>
-                                <div class="option-card" data-value="Midea" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">Midea</span></div>
-                                <div class="option-card" data-value="MIKA" onclick="selectOption(this, 'brand')"><span
-                                        class="option-label">MIKA</span></div>
-                                <div class="option-card" data-value="Kenwood" onclick="selectOption(this, 'brand')">
-                                    <span class="option-label">Kenwood</span>
-                                </div>
-                                <div class="option-card" data-value="Toshiba" onclick="selectOption(this, 'brand')">
-                                    <span class="option-label">Toshiba</span>
-                                </div>
-                            </div>
-                            <div class="form-group" style="margin-top: 16px;">
-                                <label class="form-label">Or type your brand:</label>
-                                <input type="text" class="form-input" id="brandCustom"
-                                    placeholder="e.g. Tefal, Simfer, NUNIX, Moulinex..."
-                                    oninput="handleCustomBrand(this.value)">
-                            </div>
-                        </div>
+                            <h3>Add photos</h3>
+                            <p class="step-description">Start with the label that shows the brand and model. Our AI reads
+                                it for you. Then add at least 3 photos of the appliance.</p>
 
-                        <!-- STEP 3: Size & Model -->
-                        <div class="wizard-step" data-step="3" id="step3">
-                            <h3>What size is your appliance?</h3>
-                            <p class="step-description">Size affects the price more than any other detail, so this is
-                                the one worth getting right.</p>
-                            <!-- Appliance size (TV inches / washer kg / fridge litres) -->
-                            <div class="form-group" id="sizeGroup" style="display:none;">
-                                <label class="form-label" id="sizeLabel">What is the size?</label>
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <input type="number" min="0" step="1" class="form-input" id="sizeInput"
-                                        style="max-width:160px;"
-                                        placeholder="e.g. 55"
-                                        oninput="updateSize(this.value)">
-                                    <span id="sizeUnitLabel" style="font-weight:600;color:var(--forest);"></span>
+                            <div class="plate-block">
+                                <div class="photo-upload-zone photo-upload-zone--plate" id="modelPhotoZone"
+                                    role="button" tabindex="0"
+                                    onclick="document.getElementById('modelPhotoInput').click()"
+                                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('modelPhotoInput').click();}">
+                                    <input type="file" id="modelPhotoInput" accept="image/*" capture="environment"
+                                        style="display:none" onchange="handleModelPhotoUpload(this.files)">
+                                    <div class="upload-placeholder" id="modelPhotoPlaceholder">
+                                        <i data-lucide="scan-barcode" class="plate-icon"></i>
+                                        <div>
+                                            <p class="plate-title"><strong>1. Photograph the model label</strong></p>
+                                            <p class="form-hint">Usually a sticker on the back, the side, or inside the door.</p>
+                                        </div>
+                                    </div>
+                                    <div id="modelPhotoPreview" hidden>
+                                        <img id="modelPhotoImg" alt="Model label photo">
+                                        <p class="form-hint">Tap to retake</p>
+                                    </div>
                                 </div>
-                                <p class="form-hint" id="sizeHint">
-                                    Size strongly affects the price (a 43" and a 55" TV are very different).
-                                    If you're not sure, leave it blank — we'll estimate it from your photos and model number.
-                                </p>
+                                <div class="plate-status" id="plateStatus" aria-live="polite"></div>
+                                <button type="button" class="link-button" id="noLabelBtn" onclick="showBrandFallback()">No
+                                    label? Choose the brand instead</button>
+                                <div class="form-group brand-fallback" id="brandFallback" hidden>
+                                    <label class="form-label" for="brandSelect">Brand</label>
+                                    <select class="form-input form-select" id="brandSelect" onchange="selectBrand(this.value)">
+                                        <option value="">Choose the brand…</option>
+                                        <option value="Samsung">Samsung</option>
+                                        <option value="LG">LG</option>
+                                        <option value="Hisense">Hisense</option>
+                                        <option value="Haier">Haier</option>
+                                        <option value="TCL">TCL</option>
+                                        <option value="Midea">Midea</option>
+                                        <option value="Sony">Sony</option>
+                                        <option value="Bruhm">Bruhm</option>
+                                        <option value="Kenwood">Kenwood</option>
+                                        <option value="Toshiba">Toshiba</option>
+                                        <option value="VON" data-markets="KE">Von</option>
+                                        <option value="Ramtons" data-markets="KE">Ramtons</option>
+                                        <option value="MIKA" data-markets="KE">Mika</option>
+                                        <option value="ARMCO" data-markets="KE">Armco</option>
+                                        <option value="Scanfrost" data-markets="NG">Scanfrost</option>
+                                        <option value="Thermocool" data-markets="NG">Thermocool</option>
+                                        <option value="Nexus" data-markets="NG">Nexus</option>
+                                        <option value="__other">Another brand</option>
+                                    </select>
+                                    <input type="text" class="form-input" id="brandCustom" hidden maxlength="100"
+                                        placeholder="Type the brand" oninput="handleCustomBrand(this.value)">
+                                </div>
                             </div>
-                            <div class="form-group" style="margin-top:16px;">
-                                <label class="form-label">Model number <span class="step-optional-badge">Optional</span></label>
-                                <input type="text" class="form-input" id="modelInput"
-                                    placeholder="e.g. RT34K5532S8, WF-T7000"
-                                    oninput="updateAnswer('model', this.value)">
-                                <p class="form-hint"><i data-lucide="camera"
-                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
-                                    Check the sticker or plate on the back or inside door. You'll upload a photo of the
-                                    label in the next step for verification.</p>
-                            </div>
-                            <!-- Other category description -->
-                            <div class="form-group" id="otherDescriptionGroup" style="display:none; margin-top: 16px;">
-                                <label class="form-label">Describe your appliance</label>
-                                <textarea class="form-input" id="otherDescription" rows="3"
-                                    placeholder="e.g. Standing fan, gas cylinder, heater, air purifier..."
-                                    oninput="updateAnswer('otherDescription', this.value)"></textarea>
-                                <p class="form-hint">Since you selected "Other", please describe what you're selling so
-                                    we can give an accurate valuation.</p>
-                            </div>
-                        </div>
 
-                        <!-- STEP 4: Model Label Photo (MANDATORY) -->
-                        <div class="wizard-step" data-step="4" id="step4">
-                            <h3>Upload a photo of the model label <span class="step-optional-badge">Optional</span></h3>
-                            <p class="step-description">Take a clear photo of the model number sticker/plate on your
-                                appliance. This helps us verify the exact model, look up specifications, original retail
-                                price, and release date for accurate pricing.</p>
-                            <div class="photo-upload-zone" id="modelPhotoZone"
-                                onclick="document.getElementById('modelPhotoInput').click()">
-                                <input type="file" id="modelPhotoInput" accept="image/*" capture="environment"
-                                    style="display:none" onchange="handleModelPhotoUpload(this.files)">
-                                <div class="upload-placeholder" id="modelPhotoPlaceholder">
-                                    <i data-lucide="scan-barcode"
-                                        style="width:48px;height:48px;color:var(--forest);opacity:0.6;"></i>
-                                    <p><strong>Tap to photograph the model label</strong></p>
-                                    <p class="form-hint">Look for a sticker on the back, side, or inside the door of
-                                        your appliance</p>
-                                </div>
-                                <div id="modelPhotoPreview" style="display:none;">
-                                    <img id="modelPhotoImg" alt="Model label photo"
-                                        style="max-width:100%;max-height:300px;border-radius:8px;">
-                                    <p class="form-hint" style="margin-top:8px;"><i data-lucide="check-circle"
-                                            style="width:14px;height:14px;color:var(--jade);vertical-align:middle;margin-right:4px;"></i>
-                                        Model label photo captured. You can retake by clicking the image.</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- STEP 5: Age -->
-                        <div class="wizard-step" data-step="5" id="step5">
-                            <h3>How old is the product?</h3>
-                            <p class="step-description">Select the approximate age of your appliance.</p>
-                            <div class="option-grid" id="ageOptions">
-                                <div class="option-card" data-value="0" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="sparkles"></i></span>
-                                    <span class="option-label">Brand New</span>
-                                    <span class="option-desc">Unused</span>
-                                </div>
-                                <div class="option-card" data-value="0.5" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="star"></i></span>
-                                    <span class="option-label">Under 1 Year</span>
-                                </div>
-                                <div class="option-card" data-value="1.5" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="calendar"></i></span>
-                                    <span class="option-label">1 to 2 Years</span>
-                                </div>
-                                <div class="option-card" data-value="2.5" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="calendar-range"></i></span>
-                                    <span class="option-label">2 to 3 Years</span>
-                                </div>
-                                <div class="option-card" data-value="4" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="hourglass"></i></span>
-                                    <span class="option-label">3 to 5 Years</span>
-                                </div>
-                                <div class="option-card" data-value="6.5" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="clock-3"></i></span>
-                                    <span class="option-label">5 to 8 Years</span>
-                                </div>
-                                <div class="option-card" data-value="10" onclick="selectOption(this, 'age')">
-                                    <span class="option-icon"><i data-lucide="history"></i></span>
-                                    <span class="option-label">8+ Years</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- STEP 6: Condition -->
-                        <div class="wizard-step" data-step="6" id="step6">
-                            <h3>What condition is the product in?</h3>
-                            <p class="step-description">Be honest, it helps us give you the most accurate price!</p>
-                            <div class="option-grid cols-1" id="conditionOptions">
-                                <div class="option-card" data-value="new" data-grade="A"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="sparkles"></i></span>
-                                    <span class="option-label">New: Sealed, never used</span>
-                                </div>
-                                <div class="option-card" data-value="like_new" data-grade="A"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="star"></i></span>
-                                    <span class="option-label">Like New: Barely used, no visible wear</span>
-                                </div>
-                                <div class="option-card" data-value="open_box" data-grade="A"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="package-open"></i></span>
-                                    <span class="option-label">Open Box: Unboxed, minimal use</span>
-                                </div>
-                                <div class="option-card" data-value="slightly_used" data-grade="B"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="thumbs-up"></i></span>
-                                    <span class="option-label">Slightly Used: Minor cosmetic wear, fully
-                                        functional</span>
-                                </div>
-                                <div class="option-card" data-value="used" data-grade="B"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="check-circle"></i></span>
-                                    <span class="option-label">Used: Noticeable wear, fully functional</span>
-                                </div>
-                                <div class="option-card" data-value="working_issues" data-grade="C"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="alert-triangle"></i></span>
-                                    <span class="option-label">Working with Issues: Functions but has problems</span>
-                                </div>
-                                <div class="option-card" data-value="partially_working" data-grade="D"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="wrench"></i></span>
-                                    <span class="option-label">Partially Working: Some features broken</span>
-                                </div>
-                                <div class="option-card" data-value="not_working" data-grade="D"
-                                    onclick="selectOption(this, 'condition')">
-                                    <span class="option-icon"><i data-lucide="x-circle"></i></span>
-                                    <span class="option-label">Not Working: Does not turn on</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- STEP 7: Issues -->
-                        <div class="wizard-step" data-step="7" id="step7">
-                            <h3>Any specific issues or damage?</h3>
-                            <p class="step-description">Describe any problems: dents, scratches, missing parts, strange
-                                noises. The
-                                more detail, the better your offer.</p>
-                            <div class="form-group">
-                                <textarea class="form-input" id="issuesInput"
-                                    placeholder="e.g. Small dent on left side, one shelf missing, compressor makes slight noise..."
-                                    oninput="updateAnswer('issues', this.value)"></textarea>
-                            </div>
-                            <button class="btn btn-secondary btn-sm"
-                                onclick="updateAnswer('issues', 'No issues'); document.getElementById('issuesInput').value = 'No issues';"
-                                style="margin-top: 8px;">
-                                <i data-lucide="check"
-                                    style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i> No
-                                issues at all
-                            </button>
-                        </div>
-
-                        <!-- STEP 8: Seller Details -->
-                        <div class="wizard-step" data-step="8" id="step8">
-                            <h3>Your Contact Details</h3>
-                            <p class="step-description">We need your details to process the trade-in and contact you about pickup or drop-off.</p>
-                            <div class="form-group">
-                                <label class="form-label">Your Full Name <span style="color:var(--red);">*</span></label>
-                                <input type="text" class="form-input" id="sellerNameInput"
-                                    placeholder="e.g. John Maina" required aria-required="true"
-                                    autocomplete="name"
-                                    oninput="updateAnswer('sellerName', this.value)">
-                                <p class="form-hint" id="nameError" style="display:none;color:var(--red);">
-                                    Please enter your full name.</p>
-                            </div>
-                            <div class="form-group" style="margin-top: 16px;">
-                                <label class="form-label">Your Phone Number <span style="color:var(--red);">*</span></label>
-                                <input type="tel" class="form-input" id="sellerPhoneInput"
-                                    placeholder="e.g. 0712 345 678" required aria-required="true"
-                                    autocomplete="tel" inputmode="tel" maxlength="30"
-                                    oninput="updateAnswer('sellerPhone', this.value)">
-                                <p class="form-hint" id="phoneError" style="display:none;color:var(--red);">
-                                    Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>
-                                <p class="form-hint"><i data-lucide="lock"
-                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
-                                    Your details are kept confidential and used only for this trade-in.</p>
-                            </div>
-                        </div>
-
-                        <!-- STEP 9: Photos -->
-                        <div class="wizard-step" data-step="9" id="step9">
-                            <h3>Upload photos of your appliance</h3>
-                            <p class="step-description">We need at least <strong>5 clear photos</strong>: front view,
-                                back/side, model
-                                label (close-up), interior, and any damage areas.</p>
                             <div class="photo-upload-zone" id="photoUploadZone">
                                 <div class="upload-icon"><i data-lucide="image-plus" class="icon-xl"></i></div>
-                                <h4>Drag & drop photos here</h4>
-                                <p>or click to browse. JPEG/PNG, Max 10MB each</p>
+                                <h4>2. Add photos of the appliance</h4>
+                                <p>Front, side, inside and any damage. JPEG or PNG, max 10MB each.</p>
                                 <input type="file" id="photoFileInput" accept="image/*" multiple
                                     onchange="handlePhotoUpload(this.files)">
                             </div>
                             <div class="photo-grid" id="photoGrid"></div>
                             <div class="photo-count" id="photoCount">
-                                <span class="count-num">0</span> / 3 minimum photos (5 HD ideal)
+                                <span class="count-num">0</span> / 3 minimum photos (5 is ideal)
                             </div>
 
-                            <!-- Optional video upload -->
-                            <div class="video-upload-block" style="margin-top:1.5rem; padding:1.25rem; border-radius:var(--radius); background:var(--warm); border:1px dashed rgba(13,159,79,0.35);">
-                                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-                                    <div>
-                                        <h4 style="margin:0; color:var(--forest); font-size:0.98rem;">
-                                            <i data-lucide="video" style="width:16px;height:16px;vertical-align:-3px;"></i>
-                                            Short video (optional)
-                                        </h4>
-                                        <p style="margin:4px 0 0; color:var(--muted); font-size:0.82rem;">
-                                            10-20s walk-around of the appliance. MP4 or MOV, up to 45 MB.
-                                            We'll sample 5 frames and add them to the analysis.
-                                        </p>
-                                    </div>
-                                    <label class="btn btn-secondary btn-sm" for="videoFileInput" style="cursor:pointer;">
-                                        <i data-lucide="upload" style="width:14px;height:14px;margin-right:4px;"></i>
-                                        Choose video
-                                    </label>
-                                    <input type="file" id="videoFileInput" accept="video/mp4,video/quicktime,video/webm,video/*"
-                                        style="display:none;" onchange="handleVideoUpload(this.files)">
-                                </div>
+                            <details class="video-upload-block">
+                                <summary><i data-lucide="video" class="inline-icon"></i> Add a short video
+                                    <span class="step-optional-badge">Optional</span></summary>
+                                <p class="form-hint">A 10 to 20 second walk-around, MP4 or MOV up to 45 MB. We pull 5
+                                    frames from it for the assessment.</p>
+                                <label class="btn btn-secondary btn-sm" for="videoFileInput">
+                                    <i data-lucide="upload" class="inline-icon"></i> Choose video
+                                </label>
+                                <input type="file" id="videoFileInput"
+                                    accept="video/mp4,video/quicktime,video/webm,video/*" style="display:none;"
+                                    onchange="handleVideoUpload(this.files)">
                                 <div id="videoStatus" style="display:none; margin-top:12px; font-size:0.85rem;"></div>
                                 <div id="videoKeyframes" class="photo-grid" style="margin-top:8px;"></div>
+                            </details>
+                        </div>
+
+                        <!-- STEP 3: Asking price -->
+                        <div class="wizard-step" data-step="3" id="step3">
+                            <h3>What price are you hoping for? <span class="step-optional-badge">Optional</span></h3>
+                            <p class="step-description">Tell us your ideal price, or let us make the first offer.</p>
+                            <div class="form-group">
+                                <div class="price-input-wrapper">
+                                    <span class="currency-label" data-copy="currency">KES</span>
+                                    <input type="text" class="form-input" id="priceInput" inputmode="decimal"
+                                        placeholder="e.g. 25000" oninput="handlePriceInput(this.value)">
+                                </div>
+                                <p class="form-hint">Type a number. "25k" works too.</p>
+                            </div>
+                            <div class="price-alt-buttons">
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="skipPrice()">
+                                    <i data-lucide="lightbulb" class="inline-icon"></i> Make me an offer
+                                </button>
                             </div>
                         </div>
 
-                        <!-- STEP 10: Price -->
-                        <div class="wizard-step" data-step="10" id="step10">
-                            <h3>What price are you hoping to get? <span class="step-optional-badge">Optional</span></h3>
-                            <p class="step-description">Tell us your ideal selling price in KES, or let us make the
-                                first offer.</p>
+                        <!-- STEP 4: Contact details, then submit -->
+                        <div class="wizard-step" data-step="4" id="step4">
+                            <h3>Where should we send your offer?</h3>
+                            <p class="step-description">Last step. We use these only to contact you about this trade-in.</p>
                             <div class="form-group">
-                                <div class="price-input-wrapper">
-                                    <span class="currency-label">KES</span>
-                                    <input type="text" class="form-input" id="priceInput" placeholder="e.g. 25000"
-                                        oninput="handlePriceInput(this.value)">
-                                </div>
-                                <p class="form-hint">Type a number, or use the buttons below</p>
+                                <label class="form-label" for="sellerNameInput">Your name <span class="req">*</span></label>
+                                <input type="text" class="form-input" id="sellerNameInput"
+                                    placeholder="e.g. John" required aria-required="true" autocomplete="name"
+                                    maxlength="100" data-copy-placeholder="namePlaceholder"
+                                    oninput="updateAnswer('sellerName', this.value)">
+                                <p class="form-hint form-error" id="nameError" style="display:none;">
+                                    Please enter your name.</p>
                             </div>
-                            <div class="price-alt-buttons">
-                                <button class="btn btn-secondary btn-sm"
-                                    onclick="updateAnswer('price', null); document.getElementById('priceInput').value = ''; addChatMessage('bot', `No problem! Based on my analysis, I\\'ll make you the best offer I can.`);">
-                                    <i data-lucide="lightbulb"
-                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>
-                                    Make me an offer
-                                </button>
-                                <button class="btn btn-ghost btn-sm"
-                                    onclick="updateAnswer('price', null); document.getElementById('priceInput').value = ''; addChatMessage('bot', `That\\'s totally fine! I\\'ll calculate a fair market price for you.`);">
-                                    <i data-lucide="help-circle"
-                                        style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i> I'm
-                                    not sure
-                                </button>
+                            <div class="form-group">
+                                <label class="form-label" for="sellerPhoneInput">Your phone number <span class="req">*</span></label>
+                                <input type="tel" class="form-input" id="sellerPhoneInput"
+                                    placeholder="e.g. 0712 345 678" required aria-required="true"
+                                    autocomplete="tel" inputmode="tel" maxlength="30"
+                                    data-copy-placeholder="phonePlaceholder"
+                                    oninput="updateAnswer('sellerPhone', this.value)">
+                                <p class="form-hint form-error" id="phoneError" style="display:none;"
+                                    data-copy="phoneError">
+                                    Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.</p>
+                                <p class="form-hint"><i data-lucide="lock" class="inline-icon"></i>
+                                    Kept confidential and used only for this trade-in.</p>
                             </div>
                         </div>
 
@@ -912,8 +751,7 @@
                     <div class="logo">
                         <img src="greenbay-logo.png" alt="GreenBay Market" class="logo-img footer-logo-img">
                     </div>
-                    <p>Kenya's marketplace for pre-loved appliances. AI-powered valuations with free pickup, settled
-                        by our
+                    <p>The GreenBay marketplace for pre-loved appliances. AI-powered valuations, settled by our
                         sourcing team.</p>
                 </div>
                 <div class="footer-col">
@@ -933,7 +771,7 @@
                 </div>
                 <div class="footer-col">
                     <h4>Contact</h4>
-                    <a href="https://wa.me/254705919099" target="_blank"><i data-lucide="message-circle"
+                    <a href="https://wa.me/254705919099" data-wa="" target="_blank"><i data-lucide="message-circle"
                             style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i> WhatsApp CX Team</a>
                     <a href="tel:+254705919099"><i data-lucide="phone"
                             style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i> +254 705
@@ -945,15 +783,14 @@
             </div>
             <div class="footer-bottom">
                 <span>&copy; 2026 GreenBay Market. All rights reserved.</span>
-                <span>Made with <i data-lucide="heart"
-                        style="width:12px;height:12px;vertical-align:middle;color:#22c55e;fill:#22c55e;"></i> in
-                    Nairobi</span>
+                <span class="footer-made">Made with <i data-lucide="heart" class="footer-heart"></i> for
+                    <span data-copy="footerPlace">Nairobi, Kenya</span></span>
             </div>
         </div>
     </footer>
 
     <!-- Floating WhatsApp CX Button -->
-    <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20need%20help%20with%20my%20trade-in" target="_blank" class="floating-whatsapp" id="floatingWhatsapp" title="Chat with our CX Team">
+    <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20need%20help%20with%20my%20trade-in" data-wa="Hi GreenBay, I need help with my trade-in" target="_blank" class="floating-whatsapp" id="floatingWhatsapp" title="Chat with our CX Team">
         <i data-lucide="message-circle" style="width:28px;height:28px;"></i>
         <span class="floating-wa-label">Need Help?</span>
     </a>
@@ -982,7 +819,7 @@
             }
         } catch(e) { localStorage.removeItem('gb_eval_state'); }
     </script>
-    <script src="app.js?v=20260921"></script>
+    <script src="app.js?v=20261117"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();

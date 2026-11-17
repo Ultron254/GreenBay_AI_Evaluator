@@ -46,6 +46,9 @@ class TestNoSanitiserBypass:
             if not m or m.group(1) not in FREE_TEXT:
                 continue
             value = m.group(2).strip()
+            # Clearing a field to a literal empty value carries no free text.
+            if value in ("null", "''", '""'):
+                continue
             if "sanitiseText(" in value or value in safe_locals:
                 continue
             offenders.append(f"app.js:{line_no}: {line.strip()}")

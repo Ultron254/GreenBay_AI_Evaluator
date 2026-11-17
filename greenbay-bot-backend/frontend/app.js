@@ -9,30 +9,147 @@
  STATE
  ============================================================ */
 const API_BASE = window.location.origin;
-const TOTAL_STEPS = 10;
+const TOTAL_STEPS = 4;
 
-// v6: Detect country via timezone heuristic (no permissions needed)
+/* ============================================================
+ MARKETS
+ Each country portal (/app/ke, /app/ug, /app/ng) serves this same page. The
+ market decides currency, phone rules, copy, WhatsApp line and theme
+ (html[data-country]). Kenya is also the default for /app/.
+
+ Uganda and Nigeria are priced from a local online lookup and always go to a
+ person for now, so their customers never see a confidence score
+ (showConfidence: false); the team sees it in Airtable and the emails.
+ ============================================================ */
+const COUNTRY_CONFIG = {
+    KE: {
+        code: 'KE', name: 'Kenya', currency: 'KES', locale: 'en-KE',
+        whatsapp: '254705919099',
+        greeting: 'Karibu',
+        city: 'Nairobi',
+        showConfidence: true,
+        outlets: [
+            { name: 'Kasarani Outlet', address: 'Delta 40, Kasarani, opposite Safari Park Hotel', map: 'https://maps.app.goo.gl/kasarani-greenbay' },
+            { name: 'Roysambu Outlet', address: 'Roysambu, near TRM Mall', map: 'https://maps.app.goo.gl/roysambu-greenbay' },
+        ],
+        copy: {
+            currency: 'KES',
+            heroKicker: 'Karibu! Kenya’s AI appliance evaluator',
+            heroPickup: 'Free pickup anywhere in Nairobi, settled by our sourcing team.',
+            pickupShort: 'We collect anywhere in Nairobi',
+            pickupLine: 'FREE pickup in Nairobi',
+            handOver: 'Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!',
+            footerPlace: 'Nairobi, Kenya',
+            mockOffer: 'KES 28,500',
+            namePlaceholder: 'e.g. Wanjiku',
+            phonePlaceholder: 'e.g. 0712 345 678',
+            phoneError: 'Enter a valid phone number, e.g. 0712 345 678 or +254 712 345 678.',
+        },
+    },
+    UG: {
+        code: 'UG', name: 'Uganda', currency: 'UGX', locale: 'en-UG',
+        // TODO(Uganda team): replace with the Uganda trade-in WhatsApp line.
+        whatsapp: '254705919099',
+        greeting: 'Tukusanyukidde',
+        city: null, // TODO(Uganda team): pickup city/area once confirmed.
+        showConfidence: false,
+        outlets: [],
+        copy: {
+            currency: 'UGX',
+            heroKicker: 'Tukusanyukidde! GreenBay trade-in, Uganda',
+            heroPickup: 'Serving sellers across Uganda. Our team arranges collection with you.',
+            pickupShort: 'We arrange collection across Uganda',
+            pickupLine: 'Collection arranged by our Uganda team',
+            handOver: 'Our Uganda team inspects the item, arranges collection and settles with you.',
+            footerPlace: 'Uganda',
+            mockOffer: 'UGX 780,000',
+            namePlaceholder: 'e.g. Nakato',
+            phonePlaceholder: 'e.g. 0772 123 456',
+            phoneError: 'Enter a valid phone number, e.g. 0772 123 456 or +256 772 123 456.',
+        },
+    },
+    NG: {
+        code: 'NG', name: 'Nigeria', currency: 'NGN', locale: 'en-NG',
+        // TODO(Nigeria team): replace with the Nigeria trade-in WhatsApp line.
+        whatsapp: '254705919099',
+        greeting: 'Welcome',
+        city: null, // TODO(Nigeria team): pickup city/area once confirmed.
+        showConfidence: false,
+        outlets: [],
+        copy: {
+            currency: 'NGN',
+            heroKicker: 'Welcome! GreenBay trade-in, Nigeria',
+            heroPickup: 'Serving sellers across Nigeria. Our team arranges collection with you.',
+            pickupShort: 'We arrange collection across Nigeria',
+            pickupLine: 'Collection arranged by our Nigeria team',
+            handOver: 'Our Nigeria team inspects the item, arranges collection and settles with you.',
+            footerPlace: 'Nigeria',
+            mockOffer: 'NGN 335,000',
+            namePlaceholder: 'e.g. Chiamaka',
+            phonePlaceholder: 'e.g. 0803 123 4567',
+            phoneError: 'Enter a valid phone number, e.g. 0803 123 4567 or +234 803 123 4567.',
+        },
+    },
+};
+
+// Market: the portal path wins (/app/ug), then the browser timezone, then Kenya.
 (function detectCountry() {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-    if (tz.startsWith('Africa/Nairobi')) window.__gbCountry = 'KE';
-    else if (tz.startsWith('Africa/Kampala')) window.__gbCountry = 'UG';
-    else if (tz.startsWith('Africa/Lagos')) window.__gbCountry = 'NG';
-    else window.__gbCountry = 'KE';
+    let code = null;
+    const m = /^\/app\/(ke|ug|ng)\/?$/i.exec(window.location.pathname || '');
+    if (m) code = m[1].toUpperCase();
+    if (!code) {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        if (tz.startsWith('Africa/Kampala')) code = 'UG';
+        else if (tz.startsWith('Africa/Lagos')) code = 'NG';
+        else code = 'KE';
+    }
+    window.__gbCountry = code;
+    try { document.documentElement.dataset.country = code; } catch (_) { /* ignore */ }
 })();
+
+const MARKET = COUNTRY_CONFIG[window.__gbCountry] || COUNTRY_CONFIG.KE;
+
+/** Fill every [data-copy] / [data-copy-placeholder] node with the market's text. */
+function applyMarketCopy() {
+    document.querySelectorAll('[data-copy]').forEach(el => {
+        const v = MARKET.copy[el.dataset.copy];
+        if (v) el.textContent = v;
+    });
+    document.querySelectorAll('[data-copy-placeholder]').forEach(el => {
+        const v = MARKET.copy[el.dataset.copyPlaceholder];
+        if (v) el.setAttribute('placeholder', v);
+    });
+    document.querySelectorAll('a[data-wa]').forEach(el => {
+        const text = el.dataset.wa ? '?text=' + encodeURIComponent(el.dataset.wa) : '';
+        el.setAttribute('href', `https://wa.me/${MARKET.whatsapp}${text}`);
+    });
+    // Brands sold in one market only (Von, Scanfrost, ...).
+    document.querySelectorAll('#brandSelect option[data-markets]').forEach(opt => {
+        if (opt.dataset.markets.split(',').indexOf(MARKET.code) === -1) opt.remove();
+    });
+    document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
+}
+
+// The storage key carries a version: answers saved by the old 10-step wizard
+// do not fit this one.
+const GB_STATE_KEY = 'gb_eval_state_v2_' + MARKET.code;
 
 const state = {
     currentStep: 1,
     sessionId: null,
     answers: {
         category: null,
-        brand: null,
-        model: '',
-        modelPhoto: null, // { file, dataUrl }
+        otherDescription: '',
         age: null,
         condition: null,
         conditionGrade: null,
+        defects: [], // defect codes from the chips under "Noticeable wear or faults"
         issues: '',
-        otherDescription: '',
+        modelPhoto: null, // { dataUrl }
+        plateRead: 'idle', // idle | reading | done | failed
+        brand: null,
+        brandSource: null, // 'label' (read off the plate) | 'manual'
+        model: '',
         sellerName: '',
         sellerPhone: '',
         photos: [], // { file, dataUrl, id }
@@ -132,19 +249,30 @@ function trackOnce(name, params) {
 
 // Restore from localStorage — auto-reset if previous evaluation was complete
 try {
-    const saved = localStorage.getItem('gb_eval_state');
+    localStorage.removeItem('gb_eval_state'); // the 10-step wizard's state
+    const saved = localStorage.getItem(GB_STATE_KEY);
     if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.currentStep) {
             // If the previous session was completed OR has evaluation results,
             // start fresh. Results can't survive page reload (HTML isn't persisted).
-            if (parsed.currentStep > TOTAL_STEPS || parsed.evaluation) {
-                localStorage.removeItem('gb_eval_state');
+            if (parsed.currentStep > TOTAL_STEPS || parsed.evaluation || typeof parsed.currentStep !== 'number') {
+                localStorage.removeItem(GB_STATE_KEY);
             } else {
                 Object.assign(state, parsed);
-                // Photos can't survive localStorage (blobs), so reset
+                state.answers = Object.assign({}, state.answers, parsed.answers || {});
+                // Photos can't survive localStorage (blobs), so reset them and
+                // anything that depended on the label photo.
                 state.answers.photos = [];
                 state.answers.modelPhoto = null;
+                state.answers.video = null;
+                if (state.answers.brandSource === 'label' || state.answers.plateRead === 'reading') {
+                    state.answers.brand = null;
+                    state.answers.brandSource = null;
+                    state.answers.model = '';
+                }
+                state.answers.plateRead = 'idle';
+                if (!Array.isArray(state.answers.defects)) state.answers.defects = [];
             }
         }
     }
@@ -153,9 +281,9 @@ try {
 function saveState() {
     try {
         // Don't persist completed evaluations — they'll reset on reload
-        if (state.currentStep > TOTAL_STEPS) return;
+        if (state.currentStep > TOTAL_STEPS || typeof state.currentStep !== 'number') return;
         const toSave = { ...state, answers: { ...state.answers, photos: [], modelPhoto: null, video: null } };
-        localStorage.setItem('gb_eval_state', JSON.stringify(toSave));
+        localStorage.setItem(GB_STATE_KEY, JSON.stringify(toSave));
     } catch (_) { /* ignore */ }
 }
 
@@ -165,76 +293,22 @@ function saveState() {
  * the result screens.
  */
 function startNewEvaluation() {
-    try { localStorage.removeItem('gb_eval_state'); } catch (_) { /* ignore */ }
+    try { localStorage.removeItem(GB_STATE_KEY); } catch (_) { /* ignore */ }
     // A fresh wizard run counts as a new wizard_start; attribution is kept.
     try { sessionStorage.removeItem('gb_evt_wizard_start'); } catch (_) { /* ignore */ }
-    // Preserve any access key or query params that should persist across reloads.
+    // Keeps the market path (/app/ug) so the customer stays in their country.
     window.location.href = window.location.pathname + window.location.hash;
 }
 window.startNewEvaluation = startNewEvaluation;
-
-function resetWizard() {
-    // Clear all state
-    state.currentStep = 1;
-    state.sessionId = null;
-    state.answers = {
-        category: null, brand: null, model: '', modelPhoto: null,
-        age: null, condition: null, conditionGrade: null,
-        issues: '', otherDescription: '',
-        sellerName: '', sellerPhone: '',
-        photos: [], price: null,
-    };
-    state.evaluation = null;
-    state.negotiation = { round: 0, offers: [], counters: [], status: 'idle' };
-    state.chatHistory = [];
-
-    // Clear localStorage
-    localStorage.removeItem('gb_eval_state');
-
-    // Reset UI: clear selections, photos, inputs
-    document.querySelectorAll('.option-card.selected').forEach(
-        el => el.classList.remove('selected')
-    );
-    document.querySelectorAll('.wizard-step input, .wizard-step textarea').forEach(
-        el => { el.value = ''; }
-    );
-    const gallery = document.getElementById('photoGallery');
-    if (gallery) gallery.innerHTML = '';
-    const modelPreview = document.getElementById('modelPhotoPreview');
-    if (modelPreview) modelPreview.innerHTML = '';
-
-    // Reset result panels
-    const resultPanel = document.getElementById('resultPanel');
-    if (resultPanel) resultPanel.classList.add('hidden');
-    const negotiationPanel = document.getElementById('negotiationPanel');
-    if (negotiationPanel) negotiationPanel.classList.add('hidden');
-
-    // Show next button again
-    const nextBtn = document.getElementById('nextBtn');
-    if (nextBtn) {
-        nextBtn.classList.remove('hidden');
-        nextBtn.textContent = 'Next ';
-        nextBtn.classList.remove('btn-lg');
-    }
-
-    // Navigate to step 1
-    goToStep(1);
-}
 
 /* ============================================================
  STEP LABELS & CHAT MESSAGES
  ============================================================ */
 const STEP_LABELS = {
-    1: 'Category',
-    2: 'Brand',
-    3: 'Model & Size',
-    4: 'Model Label Photo',
-    5: 'Product Age',
-    6: 'Condition',
-    7: 'Issues & Damage',
-    8: 'Your Details',
-    9: 'Photos',
-    10: 'Your Price',
+    1: 'Your appliance',
+    2: 'Photos',
+    3: 'Your price',
+    4: 'Your details',
 };
 
 const CATEGORY_NAMES = {
@@ -248,24 +322,37 @@ const CATEGORY_NAMES = {
 };
 
 const CONDITION_LABELS = {
-    new: 'New (sealed)',
-    like_new: 'Like New',
-    open_box: 'Open Box',
-    slightly_used: 'Slightly Used',
-    used: 'Used',
-    working_issues: 'Working with Issues',
-    partially_working: 'Partially Working',
-    not_working: 'Not Working',
+    new: 'New / sealed',
+    like_new: 'Like new',
+    used_good: 'Used, works well',
+    wear_faults: 'Noticeable wear or faults',
+    not_working: 'Does not turn on',
+};
+
+// Defect chips under "Noticeable wear or faults". The code is the defect type
+// the engine prices (unknown codes take the default deduction); "rust" keeps
+// the existing hard-reject rule and "not_working" sends the item to the team.
+const DEFECT_LABELS = {
+    cosmetic_dent: 'Dents',
+    cosmetic_scratch: 'Scratches',
+    rust: 'Rust',
+    missing_parts: 'Missing parts',
+    not_cooling_heating: 'Not cooling / heating',
+    noisy: 'Noisy',
+    water_leak: 'Leaks',
+    not_working: "Doesn't turn on",
 };
 
 /* ============================================================
  INITIALIZATION
  ============================================================ */
 document.addEventListener('DOMContentLoaded', () => {
+    applyMarketCopy();
+
     // Greet in chat
-    addChatMessage('bot', 'Hey! I\'m Kay, your GreenBay AI evaluator. Let\'s get your appliance valued , just follow the steps on the left, and I\'ll guide you through!');
+    addChatMessage('bot', `${MARKET.greeting}! I'm Kay, your GreenBay AI evaluator for ${MARKET.name}. Four quick steps on the left and I'll value your appliance.`);
     setTimeout(() => {
-        addChatMessage('bot', 'Start by selecting what type of appliance you\'re selling. ');
+        addChatMessage('bot', 'Start by telling me what you\'re selling, how old it is and its condition.');
     }, 800);
 
     // Set up photo drag & drop
@@ -305,54 +392,64 @@ function goToStep(stepNum) {
     state.currentStep = stepNum;
     updateWizardUI();
     saveState();
+
+    // On a phone the next screen starts below the fold; bring its top into view.
+    const panel = document.getElementById('wizardPanel');
+    if (panel && typeof panel.getBoundingClientRect === 'function' && panel.getBoundingClientRect().top < 0) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 }
 
 function updateWizardUI() {
     const step = state.currentStep;
+    const inWizard = typeof step === 'number' && step <= TOTAL_STEPS;
     const label = STEP_LABELS[step] || 'Results';
-    const fill = step <= TOTAL_STEPS ? ((step / TOTAL_STEPS) * 100) : 100;
+    const fill = inWizard ? ((step / TOTAL_STEPS) * 100) : 100;
 
-    document.getElementById('progressLabel').textContent = step <= TOTAL_STEPS ? `Step ${step}: ${label}` : ' Analysis Complete';
-    document.getElementById('progressCount').textContent = step <= TOTAL_STEPS ? `${step} / ${TOTAL_STEPS}` : 'Done!';
+    document.getElementById('progressLabel').textContent = inWizard ? `Step ${step}: ${label}` : 'Analysis Complete';
+    document.getElementById('progressCount').textContent = inWizard ? `${step} / ${TOTAL_STEPS}` : 'Done!';
     document.getElementById('progressFill').style.width = `${fill}%`;
 
     // Back button
     const prevBtn = document.getElementById('prevBtn');
-    prevBtn.style.visibility = step > 1 && step <= TOTAL_STEPS ? 'visible' : 'hidden';
+    prevBtn.style.visibility = inWizard && step > 1 ? 'visible' : 'hidden';
 
     // Next button
     const nextBtn = document.getElementById('nextBtn');
     if (step === TOTAL_STEPS) {
-        nextBtn.textContent = ' Analyze My Appliance';
+        nextBtn.textContent = 'Get my valuation';
         nextBtn.classList.add('btn-lg');
-    } else if (step > TOTAL_STEPS) {
+    } else if (!inWizard) {
         nextBtn.classList.add('hidden');
     } else {
-        nextBtn.textContent = 'Next ';
+        nextBtn.textContent = 'Next';
         nextBtn.classList.remove('btn-lg');
     }
 
     // Enable/disable next based on current answer
     nextBtn.disabled = !isStepValid(step);
 
-    // Re-apply selected states for option cards (on restoration)
+    // Re-apply selected states (on restoration)
     restoreSelections();
 }
 
 function isStepValid(step) {
+    const a = state.answers;
     switch (step) {
-        case 1: return !!state.answers.category;
-        case 2: return !!state.answers.brand;
-        case 3: return true; // model is now optional
-        case 4: return true; // model photo is now optional
-        case 5: return state.answers.age !== null;
-        case 6: return !!state.answers.condition;
-        case 7: return true; // issues can be empty
-        case 8: return state.answers.sellerName.trim().length >= 2 && isValidPhone(state.answers.sellerPhone);
-        case 9: return state.answers.photos.length >= 3;
-        case 10: return true; // price can be null ("make me an offer")
+        case 1: return !!a.category
+            && (a.category !== 'other' || (a.otherDescription || '').trim().length >= 2)
+            && a.age !== null && a.age !== undefined
+            && !!a.condition;
+        case 2: return a.photos.length >= 3 && !!a.brand && a.plateRead !== 'reading';
+        case 3: return true; // price can be null ("make me an offer")
+        case 4: return (a.sellerName || '').trim().length >= 2 && isValidPhone(a.sellerPhone);
         default: return true;
     }
+}
+
+function refreshNext() {
+    const nextBtn = document.getElementById('nextBtn');
+    if (nextBtn) nextBtn.disabled = !isStepValid(state.currentStep);
 }
 
 function nextStep() {
@@ -360,15 +457,18 @@ function nextStep() {
         // The offer is only shown to a customer we can call back. A session
         // restored from localStorage can hold a phone saved under older,
         // looser rules, so check again before submitting.
-        if (!isStepValid(9)) {
+        if (!isStepValid(TOTAL_STEPS)) {
             returnToContactStep();
             return;
         }
         startAnalysis();
         return;
     }
-    if (state.currentStep >= TOTAL_STEPS) return;
-    if (!isStepValid(state.currentStep)) return;
+    if (typeof state.currentStep !== 'number' || state.currentStep >= TOTAL_STEPS) return;
+    if (!isStepValid(state.currentStep)) {
+        explainWhyNotValid(state.currentStep);
+        return;
+    }
 
     const next = state.currentStep + 1;
 
@@ -382,103 +482,165 @@ function nextStep() {
     promptNextStep(next);
 }
 
+function explainWhyNotValid(step) {
+    const a = state.answers;
+    if (step === 2 && a.plateRead === 'reading') {
+        addChatMessage('bot', 'Still reading your label, one moment…');
+    } else if (step === 2 && !a.brand) {
+        showBrandFallback();
+    }
+}
+
 function prevStep() {
-    if (state.currentStep <= 1) return;
+    if (typeof state.currentStep !== 'number' || state.currentStep <= 1) return;
     goToStep(state.currentStep - 1);
 }
 
 function restoreSelections() {
-    // Restore option card selections
-    const mappings = [
-        { step: 1, field: 'category', container: 'categoryOptions' },
-        { step: 2, field: 'brand', container: 'brandOptions' },
-        { step: 5, field: 'age', container: 'ageOptions' },
-        { step: 6, field: 'condition', container: 'conditionOptions' },
-    ];
+    const a = state.answers;
+    const setSelect = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && value !== null && value !== undefined) el.value = String(value);
+    };
+    setSelect('categorySelect', a.category);
+    setSelect('ageSelect', a.age);
+    const other = document.getElementById('otherDescriptionGroup');
+    if (other) other.hidden = a.category !== 'other';
+    const otherInput = document.getElementById('otherDescription');
+    if (otherInput && !otherInput.value && a.otherDescription) otherInput.value = a.otherDescription;
 
-    mappings.forEach(({ field, container }) => {
-        const val = state.answers[field];
-        if (!val) return;
-        const el = document.getElementById(container);
-        if (!el) return;
-        el.querySelectorAll('.option-card').forEach(card => {
-            card.classList.toggle('selected', card.dataset.value === String(val));
-        });
+    document.querySelectorAll('#conditionOptions .chip').forEach(chip => {
+        const on = chip.dataset.value === a.condition;
+        chip.classList.toggle('selected', on);
+        chip.setAttribute('aria-checked', on ? 'true' : 'false');
     });
+    const defectGroup = document.getElementById('defectGroup');
+    if (defectGroup) defectGroup.hidden = a.condition !== 'wear_faults';
+    document.querySelectorAll('#defectOptions .chip').forEach(chip => {
+        const on = (a.defects || []).indexOf(chip.dataset.defect) !== -1;
+        chip.classList.toggle('selected', on);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const issues = document.getElementById('issuesInput');
+    if (issues && !issues.value && a.issues) issues.value = a.issues;
+
+    if (a.brandSource === 'manual' && a.brand) {
+        const sel = document.getElementById('brandSelect');
+        const fallback = document.getElementById('brandFallback');
+        if (fallback) fallback.hidden = false;
+        if (sel) {
+            const known = Array.from(sel.options).some(o => o.value === a.brand);
+            sel.value = known ? a.brand : '__other';
+            const custom = document.getElementById('brandCustom');
+            if (custom && !known) { custom.hidden = false; if (!custom.value) custom.value = a.brand; }
+        }
+    }
+
+    const nameInput = document.getElementById('sellerNameInput');
+    if (nameInput && !nameInput.value && a.sellerName) nameInput.value = a.sellerName;
+    const phoneInput = document.getElementById('sellerPhoneInput');
+    if (phoneInput && !phoneInput.value && a.sellerPhone) phoneInput.value = a.sellerPhone;
+    const priceInput = document.getElementById('priceInput');
+    if (priceInput && !priceInput.value && a.price) priceInput.value = a.price;
 }
 
 /* ============================================================
- OPTION SELECTION HANDLERS
+ ANSWER HANDLERS (step 1)
  ============================================================ */
-function selectOption(el, field) {
-    // Deselect siblings
-    el.parentElement.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
-    el.classList.add('selected');
-
-    const value = el.dataset.value;
-
-    if (field === 'condition') {
-        state.answers.condition = value;
-        state.answers.conditionGrade = el.dataset.grade || 'B';
-    } else if (field === 'age') {
-        state.answers.age = parseFloat(value);
-    } else {
-        state.answers[field] = value;
-    }
-
+function selectCategory(value) {
+    state.answers.category = value || null;
     // The first category choice is the start of the wizard.
-    if (field === 'category') trackOnce('wizard_start');
-
-    // Enable next button
-    document.getElementById('nextBtn').disabled = false;
+    if (value) trackOnce('wizard_start');
+    const other = document.getElementById('otherDescriptionGroup');
+    if (other) other.hidden = value !== 'other';
+    refreshNext();
     saveState();
 }
 
-/* Appliance size capture (drives accurate per-size pricing) */
-const SIZE_CONFIG = {
-    tv_monitor: { unit: 'inch', label: 'What is the screen size?', unitLabel: 'inches', placeholder: 'e.g. 55' },
-    washing_machine: { unit: 'kg', label: 'What is the load capacity?', unitLabel: 'kg', placeholder: 'e.g. 8' },
-    refrigerator: { unit: 'litre', label: 'What is the capacity?', unitLabel: 'litres', placeholder: 'e.g. 250' },
-    freezer: { unit: 'litre', label: 'What is the capacity?', unitLabel: 'litres', placeholder: 'e.g. 200' },
-};
-
-function configureSizeStep() {
-    const group = document.getElementById('sizeGroup');
-    if (!group) return;
-    const cfg = SIZE_CONFIG[state.answers.category];
-    if (!cfg) {
-        group.style.display = 'none';
-        return;
-    }
-    group.style.display = 'block';
-    document.getElementById('sizeLabel').textContent = cfg.label;
-    document.getElementById('sizeUnitLabel').textContent = cfg.unitLabel;
-    const input = document.getElementById('sizeInput');
-    input.placeholder = cfg.placeholder;
-    if (state.answers.sizeValue) input.value = state.answers.sizeValue;
+function selectAge(value) {
+    const n = parseFloat(value);
+    state.answers.age = isNaN(n) ? null : n;
+    refreshNext();
+    saveState();
 }
 
-function updateSize(value) {
-    const cfg = SIZE_CONFIG[state.answers.category];
-    const num = parseFloat(value);
-    if (cfg && !isNaN(num) && num > 0) {
-        state.answers.sizeValue = num;
-        state.answers.sizeUnit = cfg.unit;
+function selectCondition(el) {
+    const a = state.answers;
+    a.condition = el.dataset.value;
+    a.conditionGrade = el.dataset.grade || 'B';
+    if (a.condition !== 'wear_faults') a.defects = [];
+    restoreSelections();
+    refreshNext();
+    saveState();
+}
+
+function toggleDefect(el) {
+    const code = el.dataset.defect;
+    const list = state.answers.defects || [];
+    const i = list.indexOf(code);
+    if (i === -1) list.push(code); else list.splice(i, 1);
+    state.answers.defects = list;
+    restoreSelections();
+    saveState();
+}
+
+/** Grade and 0-100 score the engine receives, from the condition + defect chips. */
+function conditionForEngine() {
+    const a = state.answers;
+    if ((a.defects || []).indexOf('not_working') !== -1) return { grade: 'D', score: 10 };
+    const scores = { new: 98, like_new: 90, used_good: 70, wear_faults: 45 };
+    return { grade: a.conditionGrade || 'B', score: scores[a.condition] || 60 };
+}
+
+function selectCategoryFromLanding(cat) {
+    trackOnce('wizard_start');
+    // Scroll to evaluation section
+    document.getElementById('evaluate').scrollIntoView({ behavior: 'smooth' });
+    if (typeof state.currentStep === 'number' && state.currentStep !== 1) goToStep(1);
+    selectCategory(cat);
+    const sel = document.getElementById('categorySelect');
+    if (sel) sel.value = cat;
+}
+
+/* ============================================================
+ BRAND (step 2): read from the label, or chosen by hand
+ ============================================================ */
+function showBrandFallback(message) {
+    const fallback = document.getElementById('brandFallback');
+    if (fallback) fallback.hidden = false;
+    const btn = document.getElementById('noLabelBtn');
+    if (btn) btn.hidden = true;
+    if (message) setPlateStatus('warn', message);
+    const sel = document.getElementById('brandSelect');
+    if (sel && !state.answers.brand) setTimeout(() => sel.focus(), 50);
+}
+
+function selectBrand(value) {
+    const custom = document.getElementById('brandCustom');
+    if (value === '__other') {
+        if (custom) { custom.hidden = false; custom.focus(); }
+        state.answers.brand = sanitiseText(custom ? custom.value.trim() : '') || null;
     } else {
-        state.answers.sizeValue = null;
-        state.answers.sizeUnit = null;
+        if (custom) custom.hidden = true;
+        state.answers.brand = sanitiseText(value || '') || null;
     }
+    state.answers.brandSource = state.answers.brand ? 'manual' : null;
+    refreshNext();
     saveState();
 }
 
 function handleCustomBrand(value) {
-    if (value.trim().length > 0) {
-        // Deselect option cards
-        document.querySelectorAll('#brandOptions .option-card').forEach(c => c.classList.remove('selected'));
-        state.answers.brand = sanitiseText(value.trim());
-        document.getElementById('nextBtn').disabled = false;
-        saveState();
-    }
+    state.answers.brand = sanitiseText(String(value || '').trim()) || null;
+    state.answers.brandSource = state.answers.brand ? 'manual' : null;
+    refreshNext();
+    saveState();
+}
+
+function setPlateStatus(kind, html) {
+    const el = document.getElementById('plateStatus');
+    if (!el) return;
+    el.className = 'plate-status' + (kind ? ` plate-status--${kind}` : '');
+    el.innerHTML = html || '';
 }
 
 // Seller phone rules. THE SAME RULES LIVE IN normalise_phone() in
@@ -536,7 +698,7 @@ function isValidPhone(raw) {
 // when the backend answers 422 for the phone.
 function returnToContactStep() {
     document.getElementById('wizardFooter').classList.remove('hidden');
-    goToStep(9);
+    goToStep(TOTAL_STEPS);
     const err = document.getElementById('phoneError');
     if (err) err.style.display = 'block';
     const input = document.getElementById('sellerPhoneInput');
@@ -569,38 +731,24 @@ function updateAnswer(field, value) {
 }
 
 function handlePriceInput(raw) {
-    // Parse Kenyan price expressions: "25k" 25000, "25,000" 25000
-    let cleaned = raw.replace(/[,\s]/g, '').toLowerCase();
-    cleaned = cleaned.replace(/^kes\s*/i, '');
-
-    if (cleaned.endsWith('k')) {
-        const num = parseFloat(cleaned.slice(0, -1));
-        if (!isNaN(num)) { state.answers.price = num * 1000; saveState(); return; }
-    }
-    const num = parseFloat(cleaned);
-    state.answers.price = isNaN(num) ? null : num;
+    state.answers.price = parsePrice(raw);
     saveState();
 }
 
-function selectCategoryFromLanding(cat) {
-    state.answers.category = cat;
-    trackOnce('wizard_start');
-    // Scroll to evaluation section
-    document.getElementById('evaluate').scrollIntoView({ behavior: 'smooth' });
-    setTimeout(() => {
-        // Select the matching option card in the wizard
-        const cards = document.querySelectorAll('#categoryOptions .option-card');
-        cards.forEach(c => {
-            c.classList.toggle('selected', c.dataset.value === cat);
-        });
-        document.getElementById('nextBtn').disabled = false;
-        saveState();
-    }, 500);
+function skipPrice() {
+    state.answers.price = null;
+    const input = document.getElementById('priceInput');
+    if (input) input.value = '';
+    addChatMessage('bot', `No problem! I'll make you the best offer I can.`);
+    saveState();
+    nextStep();
 }
 
 /* ============================================================
- MODEL LABEL PHOTO UPLOAD
+ MODEL LABEL PHOTO: the AI reads brand + model off it
  ============================================================ */
+const PLATE_READ_TIMEOUT_MS = 25000;
+
 function handleModelPhotoUpload(files) {
     const file = files[0];
     if (!file) return;
@@ -616,23 +764,16 @@ function handleModelPhotoUpload(files) {
     const reader = new FileReader();
     reader.onload = (e) => {
         compressImage(e.target.result, 1024, 0.85, (compressedDataUrl) => {
-            state.answers.modelPhoto = { file, dataUrl: compressedDataUrl };
+            state.answers.modelPhoto = { dataUrl: compressedDataUrl };
 
             // Show preview
             const placeholder = document.getElementById('modelPhotoPlaceholder');
             const preview = document.getElementById('modelPhotoPreview');
             const img = document.getElementById('modelPhotoImg');
-            if (placeholder) placeholder.style.display = 'none';
-            if (preview) { preview.style.display = 'block'; }
+            if (placeholder) placeholder.hidden = true;
+            if (preview) preview.hidden = false;
             if (img) img.src = compressedDataUrl;
 
-            document.getElementById('nextBtn').disabled = false;
-            saveState();
-
-            // Chat feedback
-            addChatMessage('bot', 'Model label photo received! I can see the model details. This will help me look up exact specifications and pricing data.');
-
-            // Send to backend for OCR/verification (non-blocking)
             lookupModelFromPhoto(compressedDataUrl);
         });
     };
@@ -640,36 +781,66 @@ function handleModelPhotoUpload(files) {
 }
 
 async function lookupModelFromPhoto(dataUrl) {
-    try {
-        const response = await fetch(`${API_BASE}/api/evaluator/model-lookup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                image_data: dataUrl,
-                typed_model: state.answers.model,
-                category: state.answers.category,
-                brand: state.answers.brand,
-            }),
-        });
+    const a = state.answers;
+    // A brand picked by hand stays; a brand read off an earlier photo is re-read.
+    if (a.brandSource !== 'manual') { a.brand = null; a.brandSource = null; }
+    a.model = '';
+    a.plateRead = 'reading';
+    setPlateStatus('reading', '<span class="spinner-dot"></span> Reading your label…');
+    refreshNext();
 
-        if (response.ok) {
-            const result = await response.json();
-            if (result.model_verified) {
-                addChatMessage('bot', `Model <strong>${escapeHtml(result.model_number || state.answers.model || '')}</strong> verified! ${escapeHtml(result.specs_summary || '')}`);
-                // OCR output is model-generated text read off a photo, so it is
-                // sanitised like any other free-text answer before it is stored.
-                const ocrModel = sanitiseText(result.model_number || '');
-                if (ocrModel && ocrModel !== state.answers.model) {
-                    state.answers.model = ocrModel;
-                    const modelInput = document.getElementById('modelInput');
-                    if (modelInput) modelInput.value = ocrModel;
-                    saveState();
-                }
-            }
+    let result = null;
+    try {
+        const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), PLATE_READ_TIMEOUT_MS) : null;
+        try {
+            const response = await fetch(`${API_BASE}/tradein/model-lookup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_data: dataUrl,
+                    typed_model: '',
+                    category: a.category || '',
+                    brand: a.brandSource === 'manual' ? (a.brand || '') : '',
+                }),
+                signal: ctrl ? ctrl.signal : undefined,
+            });
+            if (response.ok) result = await response.json();
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     } catch (_) {
-        // Non-critical: model lookup is nice-to-have
+        result = null;
     }
+
+    // Model output read off a photo: sanitised like any other free text, and
+    // only what was actually read is used. A failed read is said plainly.
+    const ocrBrand = sanitiseText((result && result.brand) || '').trim();
+    const ocrModel = sanitiseText((result && result.model_number) || '').trim();
+    const model = ocrModel;
+    if (ocrModel) state.answers.model = ocrModel;
+    if (ocrBrand && a.brandSource !== 'manual') {
+        state.answers.brand = ocrBrand;
+        a.brandSource = 'label';
+    }
+
+    if (a.brand && a.brandSource === 'label') {
+        a.plateRead = 'done';
+        setPlateStatus('ok', `<i data-lucide="check-circle" class="inline-icon"></i> Read from your label: <strong>${escapeHtml(a.brand)}</strong>${model ? ' · ' + escapeHtml(model) : ''}
+            <button type="button" class="link-button" onclick="showBrandFallback()">Not right?</button>`);
+        addChatMessage('bot', `I read <strong>${escapeHtml(a.brand)}</strong>${model ? ' ' + escapeHtml(model) : ''} from your label.`);
+    } else if (a.brandSource === 'manual') {
+        a.plateRead = 'done';
+        setPlateStatus('ok', model
+            ? `<i data-lucide="check-circle" class="inline-icon"></i> Model read from your label: <strong>${escapeHtml(model)}</strong>`
+            : 'Label photo saved.');
+    } else {
+        a.plateRead = 'failed';
+        showBrandFallback("We couldn't read the brand from that photo. Pick it below, or tap the photo to retake it.");
+    }
+    if (window.lucide) lucide.createIcons();
+    refreshNext();
+    saveState();
 }
 
 /* ============================================================
@@ -699,7 +870,7 @@ function handlePhotoUpload(files) {
                 state.answers.photos.push({ file, dataUrl: compressedDataUrl, id });
                 renderPhotoGrid();
                 updatePhotoCount();
-                document.getElementById('nextBtn').disabled = !isStepValid(10);
+                refreshNext();
                 saveState();
 
                 // Chat feedback
@@ -852,14 +1023,14 @@ function removePhoto(id) {
     state.answers.photos = state.answers.photos.filter(p => p.id !== id);
     renderPhotoGrid();
     updatePhotoCount();
-    document.getElementById('nextBtn').disabled = !isStepValid(10);
+    refreshNext();
     saveState();
 }
 
 function updatePhotoCount() {
     const count = state.answers.photos.length;
     const el = document.getElementById('photoCount');
-    el.innerHTML = `<span class="count-num">${count}</span> / 3 minimum photos (5 HD ideal)`;
+    el.innerHTML = `<span class="count-num">${count}</span> / 3 minimum photos (5 is ideal)`;
     el.classList.toggle('complete', count >= 3);
 }
 
@@ -918,7 +1089,7 @@ function sendChatMessage() {
         if (parsed) {
             submitCounterOffer(parsed);
         } else {
-            addChatMessage('bot', 'Please type a price in KES (e.g. "25000" or "25k") to make a counter-offer. ');
+            addChatMessage('bot', `Please type a price in ${curSym()} (e.g. "25000" or "25k") to make a counter-offer.`);
         }
         return;
     }
@@ -930,8 +1101,8 @@ function sendChatMessage() {
 }
 
 function parsePrice(text) {
-    let cleaned = text.replace(/[,\s]/g, '').toLowerCase();
-    cleaned = cleaned.replace(/^kes\s*/i, '');
+    let cleaned = String(text || '').replace(/[,\s]/g, '').toLowerCase();
+    cleaned = cleaned.replace(/^(kes|ksh|ugx|ush|ngn|₦)/i, '');
     if (cleaned.endsWith('k')) {
         const num = parseFloat(cleaned.slice(0, -1));
         return isNaN(num) ? null : num * 1000;
@@ -958,19 +1129,16 @@ function toggleChatMobile() {
  ============================================================ */
 function mirrorStepToChat(step) {
     const a = state.answers;
+    const ageText = a.age === null || a.age === undefined ? '' : (a.age < 1 ? 'under 1 year old' : `${a.age} years old`);
     const messages = {
-        1: () => a.category ? `You selected: <strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}` : null,
-        2: () => a.brand ? `Brand: <strong>${escapeHtml(a.brand)}</strong>, nice choice!` : null,
-        3: () => a.model ? `Model: <strong>${escapeHtml(a.model)}</strong>, got it!` : 'Model number skipped',
-        4: () => a.modelPhoto ? 'Model label photo uploaded, verifying...' : 'Model photo skipped',
-        5: () => a.age !== null ? `Age: <strong>${a.age < 1 ? 'Under 1 year' : a.age + ' years'}</strong>` : null,
-        6: () => a.condition ? `Condition: <strong>${CONDITION_LABELS[a.condition] || a.condition}</strong> (Grade ${a.conditionGrade})` : null,
-        7: () => a.issues ? (a.issues === 'No issues'
-            ? 'No issues, that\'s great!'
-            : `Issues noted: <em>${escapeHtml(a.issues)}</em>`) : null,
-        8: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
-        9: () => `${a.photos.length} photos uploaded`,
-        10: () => a.price ? `Your asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You\'d like us to make the first offer!',
+        1: () => a.category
+            ? `<strong>${CATEGORY_NAMES[a.category] || a.category}</strong>${a.category === 'other' && a.otherDescription ? ' (' + escapeHtml(a.otherDescription) + ')' : ''}, ${ageText}, ${CONDITION_LABELS[a.condition] || ''}${(a.defects || []).length ? ': ' + a.defects.map(d => DEFECT_LABELS[d] || d).join(', ') : ''}`
+            : null,
+        2: () => `${a.photos.length} photos`
+            + (a.brand ? ` · Brand: <strong>${escapeHtml(a.brand)}</strong>` : '')
+            + (a.model ? ` · Model: <strong>${escapeHtml(a.model)}</strong>` : ''),
+        3: () => a.price ? `My asking price: <strong>${curSym()} ${formatKES(a.price)}</strong>` : 'You make the first offer.',
+        4: () => a.sellerName ? `Contact: <strong>${escapeHtml(a.sellerName)}</strong> (${escapeHtml(a.sellerPhone)})` : null,
     };
 
     const fn = messages[step];
@@ -982,26 +1150,10 @@ function mirrorStepToChat(step) {
 
 function promptNextStep(step) {
     const prompts = {
-        2: 'Great choice! Now, what brand is your appliance?',
-        3: 'What size is it? Size drives the price more than anything else. The model number is optional — add it if you know it.',
-        4: 'Upload a photo of the model label if you have it. This is optional but helps me look up exact specs!',
-        5: 'How old is this product? Younger appliances hold more value!',
-        6: 'And what condition is it in? Be honest, it helps me be accurate!',
-        7: 'Almost there! Any issues or damage I should know about? Dents, scratches, missing parts?',
-        8: 'I need your name and phone number so we can reach you about pickup or drop-off.',
-        9: 'Now for the important part — photos! I need at least <strong>3 clear photos</strong> (5 HD photos is ideal for the most accurate valuation). Good lighting makes a big difference!',
-        10: 'Last question! What price are you hoping for? This is optional — you can let me make the first offer.',
+        2: 'Now the photos. Start with the model label: I\'ll read the brand and model from it. Then add at least <strong>3 photos</strong> of the appliance (5 is ideal).',
+        3: 'What price are you hoping for? This is optional, I can make the first offer.',
+        4: 'Last step: your name and phone number, so our team can reach you with the offer.',
     };
-
-    // Show/hide Other description field based on category
-    if (step === 3) {
-        const descGroup = document.getElementById('otherDescriptionGroup');
-        if (descGroup) {
-            descGroup.style.display = state.answers.category === 'other' ? 'block' : 'none';
-        }
-        configureSizeStep();
-    }
-
     const msg = prompts[step];
     if (msg) {
         setTimeout(() => addChatMessage('bot', msg), 400);
@@ -1023,7 +1175,7 @@ async function startAnalysis() {
     goToStep('results');
 
     // Chat
-    addChatMessage('bot', `Thanks for all that info! Let me analyze your <strong>${a.brand} ${a.model || CATEGORY_NAMES[a.category]}</strong>... `);
+    addChatMessage('bot', `Thanks! Let me analyse your <strong>${escapeHtml(a.brand || '')} ${escapeHtml(a.model || CATEGORY_NAMES[a.category] || '')}</strong>...`);
 
     // Fire the real request NOW so the animation runs alongside it rather than
     // in front of it. The animation used to finish in ~7s and the customer then
@@ -1102,20 +1254,19 @@ function buildAnalysisProgressHTML() {
 async function callEvaluationAPI() {
     const a = state.answers;
 
-    // Map condition to score (0-100)
-    const conditionScores = {
-        new: 98, like_new: 90, open_box: 85,
-        slightly_used: 75, used: 60,
-        working_issues: 40, partially_working: 25, not_working: 10,
-    };
-
-    // Build defects from free text
-    const defects = [];
-    if (a.issues && a.issues !== 'No issues') {
-        defects.push({ type: 'user_reported', description: a.issues, severity: 'medium' });
+    // Grade + score from the condition picks; defects from the chips and note.
+    const cond = conditionForEngine();
+    const defects = (a.defects || []).map(code => ({
+        type: code, description: DEFECT_LABELS[code] || code, severity: 'medium',
+    }));
+    const note = (a.issues || '').trim();
+    if (note) {
+        defects.push({ type: 'user_reported', description: note.slice(0, 500), severity: 'medium' });
     }
 
-    // Estimate retail price based on category (fallback)
+    // Per-category retail guess in KES. Declared as category_default so the
+    // engine never counts it as a verified price; for Uganda/Nigeria the
+    // backend carries it into the local currency.
     const defaultRetail = {
         refrigerator: 65000, washing_machine: 55000, tv_monitor: 45000,
         cooker_oven: 40000, microwave: 15000, small_kitchen: 12000,
@@ -1135,11 +1286,11 @@ async function callEvaluationAPI() {
 
     const payload = {
         category: a.category,
-        brand: a.brand,
-        model: a.model || 'Unknown',
+        brand: a.brand || 'Unknown',
+        model: a.model || (a.category === 'other' && a.otherDescription ? a.otherDescription.slice(0, 200) : 'Unknown'),
         age_years: a.age || 0,
-        condition_grade: a.conditionGrade || 'B',
-        condition_score: conditionScores[a.condition] || 60,
+        condition_grade: cond.grade,
+        condition_score: cond.score,
         defects: defects,
         seller_asking_price: a.price || null,
         seller_name: a.sellerName || null,
@@ -1148,9 +1299,10 @@ async function callEvaluationAPI() {
         image_data: combinedImageData,
         retail_price: defaultRetail[a.category] || 35000,
         retail_price_source: 'category_default',
-        country: window.__gbCountry || 'KE',
-        size_value: a.sizeValue || null,
-        size_unit: a.sizeUnit || null,
+        country: MARKET.code,
+        // Size is no longer asked; the backend reads it from the label/photos.
+        size_value: null,
+        size_unit: null,
         // Campaign attribution captured on first load (see ANALYTICS above);
         // stored on the evaluation record and mirrored to Airtable.
         attribution: {
@@ -1186,7 +1338,7 @@ async function callEvaluationAPI() {
                     /seller_phone/.test(String(e.msg || '')));
             } catch (_) { /* ignore */ }
             if (aboutPhone) {
-                addChatMessage('bot', 'I need a valid phone number before I can show your offer, e.g. 0712 345 678.');
+                addChatMessage('bot', `I need a valid phone number before I can show your offer, ${MARKET.copy.phonePlaceholder}.`);
                 returnToContactStep();
                 return;
             }
@@ -1218,7 +1370,7 @@ function showEvaluationError(detail) {
     const msg = detail && detail.length > 10
         ? detail
         : "We couldn't complete your valuation just now.";
-    const wa = 'https://wa.me/254705919099?text=' + encodeURIComponent(
+    const wa = `https://wa.me/${MARKET.whatsapp}?text=` + encodeURIComponent(
         `Hi GreenBay, I tried to value my ${a.brand || ''} ${CATEGORY_NAMES[a.category] || 'appliance'} `
         + `but the valuation could not be completed. Name: ${a.sellerName || ''}. Phone: ${a.sellerPhone || ''}.`
     );
@@ -1286,7 +1438,7 @@ function showResults(data) {
  • Browse our marketplace for affordable replacements</p>
  </div>
  <div style="display:grid;gap:8px;">
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20was%20rejected%20for%20trade-in.%20Can%20you%20help%3F" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20was%20rejected%20for%20trade-in.%20Can%20you%20help%3F" 
  target="_blank" class="btn btn-whatsapp" style="width:100%;">
  <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
  Speak to Our Team
@@ -1307,10 +1459,17 @@ Start New Evaluation
     }
 
     // v6: AUTO-REDIRECT to specialist if confidence < 80% OR flagged for review
-    const currency = data.currency_code || 'KES';
+    const currency = data.currency_code || MARKET.currency;
     if (confidence < 80 || data.decision === 'review') {
-        const reviewMessage = data.customer_message ||
-            `Our AI's confidence on this valuation is below 80%. For the most accurate offer, we're connecting you with one of our trade-in specialists who can assess your ${a.brand} ${CATEGORY_NAMES[a.category]} personally.`;
+        const reviewMessage = escapeHtml(data.customer_message || (MARKET.showConfidence
+            ? `Our AI's confidence on this valuation is below 80%. For the most accurate offer, we're connecting you with one of our trade-in specialists who can assess your ${a.brand} ${CATEGORY_NAMES[a.category]} personally.`
+            : `Our ${MARKET.name} team will confirm this offer personally after a quick look at your photos.`));
+        const confidenceHeadline = MARKET.showConfidence
+            ? `<div class="offer-amount" style="font-size:1.2rem;color:var(--gold);">Confidence: ${confidence.toFixed(0)}%</div>`
+            : '';
+        const confidenceRow = MARKET.showConfidence
+            ? `<div class="offer-breakdown-row"><span class="label">Confidence score</span><span class="value">${confidence.toFixed(0)}%</span></div>`
+            : '';
         const resultsStep = document.getElementById('stepResults');
         resultsStep.innerHTML = `
  <div class="offer-card">
@@ -1318,7 +1477,7 @@ Start New Evaluation
  <div class="offer-grade ${gradeClass}">
  Grade ${data.condition_grade} — ${CONDITION_LABELS[a.condition] || a.condition}
  </div>
- <div class="offer-amount" style="font-size:1.2rem;color:var(--gold);">Confidence: ${confidence.toFixed(0)}%</div>
+ ${confidenceHeadline}
  <p style="margin:16px 0;color:var(--muted);font-size:.92rem;">
  ${reviewMessage}
  </p>
@@ -1327,13 +1486,10 @@ Start New Evaluation
  <span class="label">Preliminary estimate</span>
  <span class="value">${currency} ${formatKES(offer)}</span>
  </div>
- <div class="offer-breakdown-row">
- <span class="label">Confidence score</span>
- <span class="value">${confidence.toFixed(0)}%</span>
- </div>
+ ${confidenceRow}
  </div>
  <div style="margin-top:20px;">
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20for%20trade-in.%20AI%20estimate%3A%20${currency}%20${offer}%20(${confidence.toFixed(0)}%25%20confidence).%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20for%20trade-in.%20AI%20estimate%3A%20${currency}%20${offer}${MARKET.showConfidence ? `%20(${confidence.toFixed(0)}%25%20confidence)` : ''}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
  target="_blank" class="btn btn-whatsapp btn-lg" style="width:100%;">
  <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
  Speak to a Trade-In Specialist
@@ -1345,7 +1501,7 @@ Start New Evaluation
  <p style="font-size:.85rem; color:var(--muted); margin-bottom:12px;">Are you an experienced sales agent? Submit your assessed price to help train the AI for better future valuations.</p>
  <div id="expertFeedbackForm">
  <input type="text" id="expertNameInput" class="form-input" placeholder="Your name" style="margin-bottom:8px; font-size:.88rem; padding:10px 12px;">
- <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (KES)" style="margin-bottom:8px; font-size:.88rem; padding:10px 12px;">
+ <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (${currency})" style="margin-bottom:8px; font-size:.88rem; padding:10px 12px;">
  <textarea id="expertReasonInput" class="form-input" placeholder="Why this price? (optional)" style="margin-bottom:10px; font-size:.85rem; padding:10px 12px; min-height:55px;"></textarea>
  <button class="btn btn-primary btn-sm" onclick="submitExpertFeedback()" style="width:100%; padding:10px;">
  ✅ Submit Expert Price
@@ -1385,10 +1541,10 @@ Start New Evaluation
  <span class="label">Estimated resale value</span>
  <span class="value">${currency} ${formatKES(data.estimated_resale_value)}</span>
  </div>
- <div class="offer-breakdown-row">
+ ${MARKET.showConfidence ? `<div class="offer-breakdown-row">
  <span class="label">Confidence score</span>
  <span class="value">${confidence.toFixed(0)}%</span>
- </div>
+ </div>` : ''}
  <div class="offer-breakdown-row">
  <span class="label">Comparable sales found</span>
  <span class="value">${data.comparable_count || 0}</span>
@@ -1407,7 +1563,7 @@ Start New Evaluation
  <h4>Prefer WhatsApp?</h4>
  <p>Continue this conversation on WhatsApp for a more personal experience.</p>
  </div>
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20valued%20at%20KES%20${offer}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20I%20have%20a%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20valued%20at%20${currency}%20${offer}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Phone%3A%20${encodeURIComponent(a.sellerPhone)}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
 
@@ -1432,7 +1588,7 @@ Start New Evaluation
  <p style="font-size:.82rem; color:var(--muted); margin-bottom:10px;">Are you an experienced sales agent? Help train the AI by sharing what you would price this product at.</p>
  <div id="expertFeedbackForm">
  <input type="text" id="expertNameInput" class="form-input" placeholder="Your name" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px;">
- <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (KES)" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px;">
+ <input type="number" id="expertPriceInput" class="form-input" placeholder="Your assessed price (${currency})" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px;">
  <textarea id="expertReasonInput" class="form-input" placeholder="Why this price? (optional)" style="margin-bottom:8px; font-size:.85rem; padding:8px 10px; min-height:50px;"></textarea>
  <button class="btn btn-secondary btn-sm" onclick="submitExpertFeedback()" style="width:100%;">
  Submit Expert Price
@@ -1575,7 +1731,7 @@ function showRejectionOptions() {
     const a = state.answers;
     const data = state.evaluation || {};
     const offer = data.opening_offer || 0;
-    const currency = data.currency_code || 'KES';
+    const currency = data.currency_code || MARKET.currency;
     const upfront = Math.round(offer * 0.10 / 100) * 100;
     const balance = Math.round(offer * 0.90 / 100) * 100;
 
@@ -1633,7 +1789,7 @@ function showRejectionOptions() {
 
 async function selectRejectionOption(option) {
     const data = state.evaluation || {};
-    const currency = data.currency_code || 'KES';
+    const currency = data.currency_code || MARKET.currency;
     const a = state.answers;
 
     addChatMessage('user', `I'd like Option ${option}`);
@@ -1657,7 +1813,7 @@ async function selectRejectionOption(option) {
                     const waMsg = encodeURIComponent(
                         `Hi GreenBay, I'd like to discuss the trade-in offer for my ${a.brand} ${CATEGORY_NAMES[a.category] || a.category}. AI offered ${currency} ${data.opening_offer}. Name: ${a.sellerName}. Phone: ${a.sellerPhone}`
                     );
-                    addChatMessage('bot', `<a href="https://wa.me/254705919099?text=${waMsg}" target="_blank" class="btn btn-whatsapp" style="display:inline-flex;margin-top:8px;">💬 Open WhatsApp</a>`);
+                    addChatMessage('bot', `<a href="https://wa.me/${MARKET.whatsapp}?text=${waMsg}" target="_blank" class="btn btn-whatsapp" style="display:inline-flex;margin-top:8px;">💬 Open WhatsApp</a>`);
                 }
 
                 // Remove the option cards
@@ -1679,7 +1835,7 @@ async function selectRejectionOption(option) {
     hideTypingIndicator();
     addChatMessage('bot', `I couldn't save that choice just now, so I don't want to tell you it's been noted.<br><br>
  Please tap your option again, or reach us on
- <a href="https://wa.me/254741663930" target="_blank" rel="noopener">WhatsApp</a>
+ <a href="https://wa.me/${MARKET.whatsapp}" target="_blank" rel="noopener">WhatsApp</a>
  and we'll pick it up from there.`);
     saveState();
 }
@@ -1689,7 +1845,7 @@ function submitCounterFromInput() {
     if (!input) return;
     const price = parsePrice(input.value);
     if (!price) {
-        addChatMessage('bot', 'Please enter a valid price in KES (e.g. "25000" or "25k"). ');
+        addChatMessage('bot', `Please enter a valid price in ${curSym()} (e.g. "25000" or "25k").`);
         return;
     }
     input.value = '';
@@ -1701,29 +1857,13 @@ async function submitCounterOffer(sellerCounter) {
     state.negotiation.counters.push(sellerCounter);
 
     showTypingIndicator();
-    await sleep(1500); // Simulate thinking
+    await sleep(1200);
     hideTypingIndicator();
 
-    // Try the backend API
-    if (state.sessionId && !state.sessionId.startsWith('demo_')) {
-        try {
-            const resp = await fetch(`${API_BASE}/tradein/${state.sessionId}/counter`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seller_counter: sellerCounter }),
-            });
-
-            if (resp.ok) {
-                const data = await resp.json();
-                handleNegotiationResponse(data);
-                return;
-            }
-        } catch (err) {
-            console.error('Counter API error:', err);
-        }
-    }
-
-    // Fallback: local deterministic negotiation
+    // The server's counter route is paused, so the rounds are worked out here
+    // from the ceiling the engine issued. Nothing is agreed in the browser: an
+    // accepted counter goes through acceptOffer, which records it on the
+    // server (and clamps it to that ceiling) before confirming anything.
     const neg = state.negotiation;
     const lastOffer = neg.offers[neg.offers.length - 1] || state.evaluation.opening_offer;
     const ceiling = neg.ceiling || state.evaluation.acquisition_ceiling;
@@ -1773,9 +1913,11 @@ function handleNegotiationResponse(data) {
     neg.offers.push(data.system_offer);
 
     if (data.decision === 'accept') {
-        neg.status = 'accepted';
-        addChatMessage('bot', `${curSym()} ${formatKES(data.system_offer)} works! You've got a deal!`);
-        showPickupDropoffChoice(data.system_offer);
+        // Not 'accepted' yet: acceptOffer sets that only once the server has
+        // recorded the deal, and says so plainly if it could not.
+        neg.status = 'pending';
+        addChatMessage('bot', `${curSym()} ${formatKES(data.system_offer)} works for us. Let me lock that in…`);
+        acceptOffer(data.system_offer);
 
     } else if (data.decision === 'decline') {
         neg.status = 'declined';
@@ -1865,7 +2007,7 @@ async function acceptOffer(amount) {
         addChatMessage('bot', `I couldn't confirm that with our system just now, so I don't want to
  promise you a deal that hasn't been recorded.<br><br>
  Nothing is lost , please tap Accept again, or message us on
- <a href="https://wa.me/254741663930" target="_blank" rel="noopener">WhatsApp</a>
+ <a href="https://wa.me/${MARKET.whatsapp}" target="_blank" rel="noopener">WhatsApp</a>
  and we'll complete it for you right away.`);
         state.negotiation.status = 'pending';
         saveState();
@@ -1875,8 +2017,8 @@ async function acceptOffer(amount) {
     state.negotiation.status = 'accepted';
     addChatMessage('bot', `Wonderful! Deal confirmed at <strong>${currency} ${formatKES(amount)}</strong>!<br><br>
  Now, how would you like to proceed?<br><br>
- 🚚 <strong>Option 1:</strong> We come to you — FREE pickup in Nairobi<br>
- 🏬 <strong>Option 2:</strong> Drop it off at one of our outlets<br><br>
+ 🚚 <strong>Option 1:</strong> We come to you — ${MARKET.copy.pickupLine}<br>
+ ${MARKET.outlets.length ? '🏬 <strong>Option 2:</strong> Drop it off at one of our outlets<br>' : ''}<br>
  Choose your preferred option below!`);
 
     showPickupDropoffChoice(amount);
@@ -1898,18 +2040,19 @@ function showPickupDropoffChoice(amount) {
  <span style="font-size:2rem;">🚚</span>
  <div>
  <strong style="display:block;font-size:1.05rem;">Schedule a Pickup</strong>
- <span style="color:var(--muted);font-size:.85rem;">We'll send someone to collect it at your location — FREE in Nairobi</span>
+ <span style="color:var(--muted);font-size:.85rem;">We'll send someone to collect it at your location — ${MARKET.copy.pickupLine}</span>
  </div>
  </div>
  </div>
- <div class="option-card" style="cursor:pointer;padding:20px;text-align:left;" onclick="showDropoffLocations(${amount})">
+ ${MARKET.outlets.length ? ` <div class="option-card" style="cursor:pointer;padding:20px;text-align:left;" onclick="showDropoffLocations(${amount})">
  <div style="display:flex;align-items:center;gap:12px;">
  <span style="font-size:2rem;">🏬</span>
  <div>
  <strong style="display:block;font-size:1.05rem;">Drop Off at Our Outlet</strong>
- <span style="color:var(--muted);font-size:.85rem;">Bring it to Kasarani or Roysambu — see our inventory too!</span>
+ <span style="color:var(--muted);font-size:.85rem;">Bring it to ${MARKET.outlets.map(o => o.name.replace(' Outlet', '')).join(' or ')} — see our inventory too!</span>
  </div>
  </div>
+` : ''}
  </div>
  </div>
 
@@ -1946,7 +2089,7 @@ function showPickupForm(amount) {
  <div class="deal-result">
  <div class="result-icon">🚚</div>
  <h3>Schedule Your Pickup</h3>
- <p>Enter your address and we'll arrange a FREE pickup in Nairobi.</p>
+ <p>Enter your address and we'll arrange pickup (${MARKET.copy.pickupLine}).</p>
  
  <div class="form-group" style="margin:20px 0;">
  <label class="form-label">Pickup Address / Location</label>
@@ -1986,7 +2129,7 @@ async function submitPickupRequest(amount) {
     }
 
     // Build notification message for Newton (via WhatsApp deep link)
-    const pickupMsg = `🚚 PICKUP REQUEST\n\nSeller: ${a.sellerName}\nPhone: ${a.sellerPhone}\nAppliance: ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}\nCondition: Grade ${state.evaluation?.condition_grade || 'B'}\nAgreed Price: KES ${formatKES(amount)}\nPickup Address: ${address}\nPreferred Day: ${day || 'ASAP'}\nRef: GB-${state.sessionId || Date.now()}`;
+    const pickupMsg = `🚚 PICKUP REQUEST\n\nSeller: ${a.sellerName}\nPhone: ${a.sellerPhone}\nAppliance: ${a.brand} ${a.model || ''} ${CATEGORY_NAMES[a.category]}\nCondition: Grade ${state.evaluation?.condition_grade || 'B'}\nAgreed Price: ${curSym()} ${formatKES(amount)}\nPickup Address: ${address}\nPreferred Day: ${day || 'ASAP'}\nRef: GB-${state.sessionId || Date.now()}`;
 
     // Save to backend and get WhatsApp deep-link for Newton
     try {
@@ -2018,7 +2161,7 @@ async function submitPickupRequest(amount) {
  <strong>PICKUP SUMMARY</strong><br>
  📍 Location: ${escapeHtml(address)}<br>
  📅 Preferred: ${day || 'ASAP'}<br>
- 💰 Agreed value: KES ${formatKES(amount)} — confirmed and settled by our sourcing team on collection<br><br>
+ 💰 Agreed value: ${curSym()} ${formatKES(amount)} — confirmed and settled by our sourcing team on collection<br><br>
  Our team (Newton) will contact you at <strong>${escapeHtml(a.sellerPhone)}</strong> to confirm the exact time. Thanks for choosing GreenBay!`);
 
     showFinalConfirmation(amount, 'pickup', address, day);
@@ -2036,16 +2179,12 @@ function showDropoffLocations(amount) {
  <p>Drop off your <strong>${a.brand} ${CATEGORY_NAMES[a.category]}</strong> at either location — our sourcing team will inspect it and settle with you directly.</p>
  
  <div style="display:grid;gap:16px;margin:20px 0;">
+ ${MARKET.outlets.map(o => `
  <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
- <h4 style="margin-bottom:8px;">📍 Kasarani Outlet</h4>
- <p style="font-size:.88rem;color:var(--slate);margin-bottom:12px;">Delta 40, Kasarani — Opposite Safari Park Hotel</p>
- <a href="https://maps.app.goo.gl/kasarani-greenbay" target="_blank" style="font-size:.85rem;font-weight:600;">Open in Google Maps →</a>
- </div>
- <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:20px;">
- <h4 style="margin-bottom:8px;">📍 Roysambu Outlet</h4>
- <p style="font-size:.88rem;color:var(--slate);margin-bottom:12px;">Roysambu — Near TRM Mall</p>
- <a href="https://maps.app.goo.gl/roysambu-greenbay" target="_blank" style="font-size:.85rem;font-weight:600;">Open in Google Maps →</a>
- </div>
+ <h4 style="margin-bottom:8px;">📍 ${o.name}</h4>
+ <p style="font-size:.88rem;color:var(--slate);margin-bottom:12px;">${o.address}</p>
+ <a href="${o.map}" target="_blank" rel="noopener" style="font-size:.85rem;font-weight:600;">Open in Google Maps →</a>
+ </div>`).join('')}
  </div>
  
  <div style="background:var(--warm);border-radius:var(--radius-sm);padding:16px;margin-bottom:20px;">
@@ -2073,7 +2212,7 @@ function showDropoffLocations(amount) {
  <h4>Confirm Your Visit</h4>
  <p>Let us know when you're coming so we can prepare!</p>
  </div>
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I'll%20be%20dropping%20off%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20at%20your%20outlet.%20Agreed%20price%3A%20KES%20${amount}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Ref%3A%20GB-${state.sessionId || ''}" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20I'll%20be%20dropping%20off%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}%20at%20your%20outlet.%20Agreed%20price%3A%20${curSym()}%20${amount}.%20Name%3A%20${encodeURIComponent(a.sellerName)}.%20Ref%3A%20GB-${state.sessionId || ''}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Confirm on WhatsApp</a>
  </div>
 
@@ -2129,7 +2268,7 @@ Start New Evaluation
  <h4>Track on WhatsApp</h4>
  <p>Get ${method === 'pickup' ? 'pickup' : 'visit'} updates and confirmation from our team.</p>
  </div>
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20my%20deal%20reference%20is%20GB-${state.sessionId || ''}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
  <div id="relatedProductsSection" style="margin-top:24px;"></div>
@@ -2137,7 +2276,7 @@ Start New Evaluation
  `;
 
     // Load related product suggestions
-    loadRelatedProducts(a.category);
+    if (MARKET.code === 'KE') loadRelatedProducts(a.category);
 }
 
 async function loadRelatedProducts(category) {
@@ -2205,50 +2344,11 @@ function showNoDeal(lastOffer) {
  <h4>Continue on WhatsApp</h4>
  <p>Chat with our team for a more personal experience.</p>
  </div>
- <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20KES%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}" 
+ <a href="https://wa.me/${MARKET.whatsapp}?text=Hi%20GreenBay%2C%20I%20got%20an%20offer%20of%20${curSym()}%20${lastOffer}%20for%20my%20${encodeURIComponent(a.brand)}%20${encodeURIComponent(CATEGORY_NAMES[a.category])}" 
  target="_blank" class="btn btn-whatsapp btn-sm">Open WhatsApp</a>
  </div>
  </div>
  `;
-}
-
-function resetEvaluator() {
-    // Clear state
-    state.currentStep = 1;
-    state.sessionId = null;
-    state.answers = {
-        category: null, brand: null, model: '', modelPhoto: null,
-        age: null, condition: null, conditionGrade: null,
-        issues: '', otherDescription: '', sellerName: '', sellerPhone: '',
-        photos: [], price: null,
-    };
-    state.evaluation = null;
-    state.negotiation = { round: 0, offers: [], counters: [], status: 'idle' };
-    state.chatHistory = [];
-
-    localStorage.removeItem('gb_eval_state');
-
-    // Reset UI
-    document.querySelectorAll('.option-card.selected').forEach(c => c.classList.remove('selected'));
-    document.getElementById('modelInput').value = '';
-    document.getElementById('issuesInput').value = '';
-    document.getElementById('priceInput').value = '';
-    document.getElementById('brandCustom').value = '';
-    const sellerName = document.getElementById('sellerNameInput');
-    if (sellerName) sellerName.value = '';
-    const sellerPhone = document.getElementById('sellerPhoneInput');
-    if (sellerPhone) sellerPhone.value = '';
-    document.getElementById('photoGrid').innerHTML = '';
-    updatePhotoCount();
-
-    // Reset chat
-    document.getElementById('chatMessages').innerHTML = '';
-
-    // Show wizard footer
-    document.getElementById('wizardFooter').classList.remove('hidden');
-
-    goToStep(1);
-    addChatMessage('bot', 'Let\'s start fresh! What type of appliance are you selling?');
 }
 
 /* ============================================================
@@ -2256,13 +2356,13 @@ function resetEvaluator() {
  ============================================================ */
 function formatKES(num) {
     if (!num && num !== 0) return 'N/A';
-    return Math.round(num).toLocaleString('en-KE');
+    return Math.round(num).toLocaleString(MARKET.locale || 'en-KE');
 }
 
 // Current evaluation's display currency (e.g. KES, UGX, NGN). Always falls back
 // to KES so existing single-market behaviour is unchanged.
 function curSym() {
-    return (state.evaluation && state.evaluation.currency_code) || 'KES';
+    return (state.evaluation && state.evaluation.currency_code) || MARKET.currency;
 }
 
 function sleep(ms) {

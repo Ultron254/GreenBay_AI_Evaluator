@@ -290,26 +290,32 @@ jobs:
           script: |
             cd /opt/greenbay/greenbay-bot-backend
 
-            echo "=== Post-deploy smoke test (real evaluation) ==="
-            # One full evaluation against the live container, asserting a priced
-            # result, then delete the probe row from Airtable + the tracker
-            # sheet. Catches runtime wiring regressions unit tests can't
-            # (DB/Airtable/Gemini). The first heavy Gemini-grounded request
-            # after a cold start can transiently reset, hence the retries.
+            echo "=== Post-deploy end-to-end check (portals, KE/UG/NG evaluations, DB, Airtable, services) ==="
+            # scripts/e2e_check.py runs inside the container against the live
+            # stack: the three country portals, one ZZSMOKE evaluation per
+            # market (priced, right currency, UG/NG routed to a person), each
+            # read back from Postgres and found in Airtable, then every live
+            # service probe including the email transport. It never prints a
+            # key or a phone number. The first heavy Gemini-grounded request
+            # after a cold start can transiently reset, so it retries.
             sleep 8
-            SMOKE_PAYLOAD='{"category":"tv_monitor","brand":"Samsung","model":"ZZSMOKE-CI","age_years":2,"condition_grade":"B","condition_score":70,"retail_price":50000,"retail_price_source":"category_default","seller_name":"ZZSMOKE CI","seller_phone":"+254700000000","country":"KE"}'
-            SMOKE_RESP=""
-            for n in 1 2 3; do
-              SMOKE_RESP="$(curl -s --max-time 120 -X POST -H 'Content-Type: application/json' -d "$SMOKE_PAYLOAD" http://localhost:9100/tradein/evaluate || true)"
-              if echo "$SMOKE_RESP" | grep -q 'opening_offer'; then break; fi
-              echo "  smoke attempt $n: no priced result yet, retrying in 8s..."
-              sleep 8
-            done
-            if echo "$SMOKE_RESP" | grep -q 'opening_offer'; then
-              SID="$(echo "$SMOKE_RESP" | sed -n 's/.*"session_id"[: ]*"\([^"]*\)".*/\1/p' | cut -c1-8)"
-              echo "Smoke OK (session ${SID})"
+            E2E_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if sudo docker exec greenbay-bot python scripts/e2e_check.py < /dev/null; then
+              echo "E2E OK"
             else
-              echo "::warning::Post-deploy smoke test did not return a priced result after 3 tries. Last response: $(echo "$SMOKE_RESP" | head -c 300)"
+              echo "::warning::End-to-end check reported failures (see the lines above)."
+            fi
+
+            # Email: the Kenyan smoke evaluation is a qualified lead, so the
+            # lead email must have gone out. Show the transport's own log line.
+            echo "=== Email delivery (container log since the check started) ==="
+            EMAIL_LINES="$(sudo docker logs --since "${E2E_START}" greenbay-bot 2>&1 | grep -E 'Email: (sent|notification sent)|Email: .*(failed|refused|not configured)' | sed -E 's/to \[[^]]*\]/to [team]/' | tail -n 6 || true)"
+            if echo "${EMAIL_LINES}" | grep -qE 'Email: (sent|notification sent)'; then
+              echo "${EMAIL_LINES}"
+              echo "Email OK"
+            else
+              echo "${EMAIL_LINES}"
+              echo "::warning::No 'Email: sent' line after the smoke evaluations; check SMTP_* / SES settings."
             fi
 
             # Sweep ANY leftover ZZ probe rows (this run's or an earlier failed

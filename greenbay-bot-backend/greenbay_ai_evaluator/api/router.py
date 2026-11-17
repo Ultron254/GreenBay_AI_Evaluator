@@ -44,7 +44,14 @@ from greenbay_ai_evaluator.api.schemas import (
     RelatedProductOut,
     SessionDetailResponse,
 )
-from greenbay_ai_evaluator.config import CONDITION_GRADE_MAP
+from greenbay_ai_evaluator.config import (
+    CONDITION_GRADE_MAP,
+    LOCAL_PRICING_CONFIDENCE_CAP,
+    get_currency_config,
+    local_units_per_kes,
+    normalise_country,
+    uses_kes_reference_data,
+)
 # NEGOTIATION PAUSED -- imports kept for future re-enablement
 # from greenbay_ai_evaluator.engine.negotiation_engine import (
 #     NegotiationState,
@@ -69,7 +76,7 @@ from greenbay_ai_evaluator.models.evaluator_models import (
     PricingPolicy,
     ValuationSession,
 )
-from greenbay_ai_evaluator.services.comparables_service import get_comparables
+from greenbay_ai_evaluator.services.comparables_service import ComparablesResult, get_comparables
 from greenbay_ai_evaluator.services.image_quality_service import (
     score_images,
     score_images_with_rejections,
@@ -98,6 +105,21 @@ from greenbay_ai_evaluator.services.airtable_service import (
 )
 
 evaluator_router = APIRouter()
+
+
+class _KesOnlySource(Exception):
+    """Raised inside a price-source block to skip a Kenya-only (KES) source
+    for a Uganda/Nigeria evaluation. Caught before the generic handler so the
+    skip is not recorded as an outage."""
+
+
+# Sources the wizard uses for its per-category retail guess. Anything else is
+# a real price (user, Google Lens, WhatsApp estimate...).
+_CATEGORY_DEFAULT_SOURCES = frozenset({"category_default", "default", ""})
+
+
+def _is_category_default_source(source: str | None) -> bool:
+    return (source or "").strip().lower() in _CATEGORY_DEFAULT_SOURCES
 
 
 # ---------------------------------------------------------------------------
@@ -2359,13 +2381,39 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         # 2. Normalize condition grade
         grade = CONDITION_GRADE_MAP.get(req.condition_grade.lower().strip(), "C")
 
-        # 3. Gather comparables
-        comp_result = get_comparables(
-            category=req.category,
-            brand=req.brand,
-            model=req.model,
-            db_session=db,
-        )
+        # 2b. Market. Every reference source below except the internet new-price
+        # lookup holds Kenyan shilling figures, so a Uganda or Nigeria
+        # evaluation skips them and prices from a local-currency lookup plus
+        # the shared maths. See config.KES_REFERENCE_MARKETS.
+        req_country = normalise_country(getattr(req, "country", "KE"))
+        kes_reference = uses_kes_reference_data(req_country)
+        local_per_kes = local_units_per_kes(req_country)
+        _cc = get_currency_config(req_country)
+        req_currency = str(_cc["code"])
+        round_step = int(_cc["round_step"])
+        if not kes_reference and _is_category_default_source(req.retail_price_source):
+            # The wizard's per-category guess is a KES number; carry it into
+            # the local currency so it is at least the right order of magnitude.
+            req.retail_price = round(req.retail_price * local_per_kes)
+        if not kes_reference:
+            logger.info(
+                f"Local pricing for {req_country}: KES reference data skipped, "
+                f"prices in {req_currency}"
+            )
+
+        # 3. Gather comparables (Kenyan trade-in, Shopify and expert prices)
+        if kes_reference:
+            comp_result = get_comparables(
+                category=req.category,
+                brand=req.brand,
+                model=req.model,
+                db_session=db,
+            )
+        else:
+            comp_result = ComparablesResult(
+                comparables=[], count=0, weighted_average=0.0, confidence=0.0,
+                sources_breakdown={"historical": 0, "shopify": 0, "expert": 0},
+            )
 
         # 3b. Run vision analysis if photos were submitted
         vision_result = None
@@ -2415,7 +2463,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         # analysis pattern above. Never blocks; any failure is logged and
         # `vertex_result` stays None.
         vertex_result = None
-        if req.image_data:
+        # Its price is a KES estimate (Airtable "Vertex AI Price (KES)"), so it
+        # is only asked for in a KES market.
+        if req.image_data and kes_reference:
             try:
                 import asyncio
                 import concurrent.futures
@@ -2472,7 +2522,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     if lens_result.model and not req.model:
                         req.model = lens_result.model
                     # Use Google Lens retail price as a reference if we don't have one
-                    if lens_result.estimated_retail_price_kes and (
+                    # (a KES figure, so never in a local-currency market)
+                    if kes_reference and lens_result.estimated_retail_price_kes and (
                         not req.retail_price or req.retail_price <= 0
                     ):
                         req.retail_price = lens_result.estimated_retail_price_kes
@@ -2601,12 +2652,11 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         unavailable_sources: list[str] = []
 
         # --- Source A: Internet price lookup (v6: Gemini with Google Search grounding) ---
-        _search_country = getattr(req, "country", "KE") or "KE"
         try:
             internet_result = search_internet_price(
                 brand=req.brand, model=req.model,
                 category=req.category, condition=req.condition_grade,
-                country=_search_country,
+                country=req_country,
                 size_value=size_value, size_unit=size_unit,
             )
             internet_price = internet_result.launch_price
@@ -2619,8 +2669,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             logger.warning(f"Internet price lookup failed: {e}")
             unavailable_sources.append("internet_lookup")
 
-        # --- Source B: Live marketplace scraping (Jiji/Jumia) ---
+        # --- Source B: Live marketplace scraping (Jiji/Jumia Kenya) ---
         try:
+            if not kes_reference:
+                raise _KesOnlySource()
             import asyncio
             import concurrent.futures
 
@@ -2640,6 +2692,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 mkt_result = pool.submit(_run_marketplace).result(timeout=15)
             marketplace_avg = mkt_result.avg_price if mkt_result.count > 0 else None
             logger.info(f"Marketplace: avg={marketplace_avg}, count={mkt_result.count}")
+        except _KesOnlySource:
+            pass
         except Exception as e:
             logger.warning(f"Marketplace scraping failed: {e}")
             unavailable_sources.append("marketplace_jiji_jumia")
@@ -2654,6 +2708,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
         # --- Source D: Expert feedback average (learning from past expert prices) ---
         try:
+            if not kes_reference:
+                raise _KesOnlySource()
             from sqlalchemy import func as sqla_func, desc as sqla_desc
             from greenbay_ai_evaluator.services.reference_data_service import (
                 SHEET_INTERNAL_MARKER,
@@ -2702,12 +2758,16 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     logger.info(f"Expert feedback (brand-level): avg={expert_avg}, count={len(brand_prices)}")
                 else:
                     logger.info("Expert feedback: no matching records found")
+        except _KesOnlySource:
+            pass
         except Exception as e:
             logger.warning(f"Expert feedback lookup failed: {e}")
 
         # --- Source E: Google Sheet historical prices (CR-2/CR-4) ---
         historical_avg = None
         try:
+            if not kes_reference:
+                raise _KesOnlySource()
             hist_data = get_historical_price(
                 brand=req.brand,
                 model=req.model,
@@ -2722,6 +2782,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                     f"confidence={hist_data['confidence']}, "
                     f"points={hist_data['data_points']}"
                 )
+        except _KesOnlySource:
+            pass
         except Exception as e:
             logger.warning(f"Historical price lookup failed: {e}")
 
@@ -2872,6 +2934,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         v6_matrix_new_price: float | None = None
 
         try:
+            # Sales stock and the pricing matrix are Kenyan shilling sheets.
+            if not kes_reference:
+                raise _KesOnlySource()
             # Priority 1: Exact model match in sales stock
             sales_result = lookup_sales_stock(
                 brand=req.brand, model=req.model, category=req.category,
@@ -2950,6 +3015,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             if not reference_resale_value:
                 logger.info("v6 ref: no GreenBay data match — using external research")
 
+        except _KesOnlySource:
+            pass
         except Exception as ref_err:
             logger.warning(f"v6 reference data lookup failed: {ref_err}")
 
@@ -2976,7 +3043,29 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             has_sales_stock_match=v6_has_sales_stock_match,
             unavailable_sources=unavailable_sources,
             renormalise_unavailable_sources=_renormalise_unavailable_sources(),
+            round_step=round_step,
+            defect_scale=local_per_kes,
+            currency=req_currency,
         )
+
+        # A market without GreenBay reference data is priced from one online
+        # new-price lookup and Kenyan depreciation maths. That is a preliminary
+        # figure: a person confirms every one until the market has history.
+        if not kes_reference:
+            result.confidence_score = min(result.confidence_score, LOCAL_PRICING_CONFIDENCE_CAP)
+            result.decision = "review"
+            result.decision_reason = (
+                f"AUTO-ROUTED TO HUMAN: {req_country} is priced from a local "
+                f"online new-price lookup only (no GreenBay {req_country} sales "
+                "history yet), so a team member confirms the offer. "
+                + (result.decision_reason or "")
+            ).strip()
+            result.pricing_justification = (
+                f"LOCAL PRICING ({req_country}, {req_currency}) — preliminary. "
+                "Kenyan sales stock, pricing matrix, tracker history, expert "
+                "prices and Jiji/Jumia Kenya were not used.\n\n"
+                + (result.pricing_justification or "")
+            )
 
         # The customer sent photos and nobody could read them, so this price
         # rests entirely on what the seller told us. Never auto-accept it.
@@ -3068,12 +3157,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             result.decision_reason = "Manual review required. " + "; ".join(review_reasons)
             logger.info(f"Flagged for review: {review_reasons}")
 
-        # 7. Persist valuation session
-        # v6: Resolve country + currency
-        req_country = getattr(req, "country", "KE") or "KE"
-        from greenbay_ai_evaluator.config import get_currency_config
-        _cc = get_currency_config(req_country)
-        req_currency = _cc["code"]
+        # 7. Persist valuation session (country + currency resolved in step 2b)
 
         # New Price (Estimate): this column must reflect the genuine NEW-retail
         # price, NOT the blended reconciled figure (which mixes resale/acquisition
@@ -3279,7 +3363,11 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         # CR-4: mirror the evaluation into the tracker Google Sheet (async,
         # non-blocking). Header-aware writer so columns align with the real sheet,
         # and the SAME reconciled new price we send to Airtable (1:1 match).
+        # Kenya only: the tracker is the KES ledger the acquisition ratios and
+        # pricing learner train on, so a UGX/NGN row would corrupt both.
         try:
+            if not kes_reference:
+                raise _KesOnlySource()
             import threading
 
             _sheet_item = " ".join(
@@ -3337,6 +3425,8 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
             threading.Thread(target=_append_sheet, daemon=True).start()
             logger.info("CR-4: tracker sheet append queued (header-aware)")
+        except _KesOnlySource:
+            logger.info(f"CR-4: tracker append skipped ({req_country} is not a KES market)")
         except Exception as e:
             logger.warning(f"CR-4 Google Sheet append failed: {e}")
 
@@ -4287,9 +4377,20 @@ class ModelLookupRequest(PydanticBaseModel):
 class ModelLookupResponse(PydanticBaseModel):
     model_verified: bool = False
     model_number: str | None = None
+    # Brand as printed on the label; None when nothing was read. The wizard
+    # uses it in place of asking the customer to pick a brand.
+    brand: str | None = None
     specs_summary: str | None = None
     retail_price: float | None = None
     release_year: int | None = None
+
+
+def _label_text(value: Any, limit: int = 100) -> str | None:
+    """Model output read off a photo: plain text only, or None for 'nothing'."""
+    if value is None:
+        return None
+    text = str(value).replace("<", "").replace(">", "").strip()[:limit]
+    return None if text.lower() in ("", "null", "none", "unknown", "n/a") else text
 
 
 @evaluator_router.post("/model-lookup", response_model=ModelLookupResponse)
@@ -4317,6 +4418,7 @@ def model_lookup(req: ModelLookupRequest):
         return ModelLookupResponse(
             model_verified=result.get("model_verified", False),
             model_number=result.get("model_number"),
+            brand=_label_text(result.get("brand_from_label")),
             specs_summary=result.get("specs_summary"),
             retail_price=result.get("retail_price"),
             release_year=result.get("release_year"),
