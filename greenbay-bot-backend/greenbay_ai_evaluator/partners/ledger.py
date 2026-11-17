@@ -162,6 +162,12 @@ def _move(
     return credit
 
 
+def _flush(db: Session) -> None:
+    """Production sessions do not autoflush (app/database/db.py); flush after
+    every change so later lookups in the same transaction see it."""
+    db.flush()
+
+
 def record_funnel(
     db: Session,
     partner_id: str,
@@ -269,6 +275,7 @@ def create_offered(db: Session, cfg: PartnerConfig, vs, *, amount: float) -> Par
         credit_id=credit.id, partner_id=credit.partner_id, event_type="offered",
         from_status=None, to_status=OFFERED, amount=credit.offered_amount, actor="system",
     ))
+    _flush(db)
     return credit
 
 
@@ -279,6 +286,7 @@ def accept(db: Session, credit: PartnerCredit, *, amount: float, actor: str = "c
     _move(db, credit, ACCEPTED, actor=_actor(actor), event_type="accepted", amount=credit.offered_amount)
     credit.accepted_at = _now()
     _funnel_from_credit(db, credit, "accept", credit.offered_amount)
+    _flush(db)
     return credit
 
 
@@ -290,6 +298,7 @@ def start_validation(db: Session, credit: PartnerCredit, *, method: str, actor: 
           note=note, data={"method": method})
     credit.validation_method = method
     credit.validation_started_at = _now()
+    _flush(db)
     return credit
 
 
@@ -305,6 +314,7 @@ def validate(db: Session, credit: PartnerCredit, *, actor: str, agreed_amount: f
     credit.agreed_amount = agreed
     credit.validated_at = _now()
     _funnel_from_credit(db, credit, "validated", agreed)
+    _flush(db)
     return credit
 
 
@@ -313,6 +323,7 @@ def reject_inspection(db: Session, credit: PartnerCredit, *, actor: str, note: s
         raise LedgerError("bad_transition", "Only an item awaiting inspection can fail inspection.")
     _move(db, credit, CANCELLED, actor=_actor(actor), event_type="inspection_failed", note=note)
     credit.closed_at = _now()
+    _flush(db)
     return credit
 
 
@@ -331,6 +342,7 @@ def issue(db: Session, credit: PartnerCredit, *, actor: str, now: datetime | Non
     credit.issued_at = now
     credit.expires_at = now + timedelta(days=cfg.credit.expiry_days)
     _funnel_from_credit(db, credit, "issued", amount)
+    _flush(db)
     return credit
 
 
@@ -359,6 +371,7 @@ def redeem(db: Session, *, partner_id: str, voucher_code: str, amount: float, ac
     if to == REDEEMED:
         credit.closed_at = now
     _funnel_from_credit(db, credit, "redeemed", amt)
+    _flush(db)
     return credit
 
 
@@ -367,6 +380,7 @@ def cancel(db: Session, credit: PartnerCredit, *, actor: str, note: str | None =
         raise LedgerError("already_spent", "Part of this credit has been spent; it cannot be cancelled.")
     _move(db, credit, CANCELLED, actor=_actor(actor), event_type="cancelled", note=note)
     credit.closed_at = _now()
+    _flush(db)
     return credit
 
 
@@ -388,6 +402,7 @@ def expire_due(db: Session, *, now: datetime | None = None, partner_id: str | No
         if exp and exp <= now:
             _expire(db, credit)
             n += 1
+    _flush(db)
     return n
 
 

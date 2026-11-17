@@ -32,6 +32,10 @@ CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{1,23}$")
 
 NOTIFY_EVENTS = ("accepted", "needs_validation", "credit_issued", "credit_used")
 
+# Path segments the partner routes use themselves (/tradein/partners/admin/...)
+# or that the site already serves (/app, /q, ...): never a partner slug.
+RESERVED_SLUGS = frozenset({"admin", "app", "q", "tradein", "webhook", "dashboard", "health", "api", "monitoring"})
+
 
 class CreditRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -107,6 +111,8 @@ class PartnerConfig(BaseModel):
     def _slug(cls, v: str) -> str:
         if not SLUG_RE.match(v):
             raise ValueError(f"bad partner slug {v!r}")
+        if v in RESERVED_SLUGS:
+            raise ValueError(f"partner slug {v!r} is reserved")
         return v
 
     @field_validator("countries")

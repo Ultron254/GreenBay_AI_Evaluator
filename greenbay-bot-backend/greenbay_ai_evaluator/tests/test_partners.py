@@ -734,3 +734,287 @@ def normalise_in(cfg, brand) -> bool:
     reads an alias is let through by the server, so the browser must never be
     stricter than the server on the names themselves."""
     return rules.normalise_brand(brand) in {rules.normalise_brand(b) for b in cfg.brands}
+
+
+# ---------------------------------------------------------------------------
+# stage 4: ops routes (admin key) and portal routes for Pulse (read-only key)
+# ---------------------------------------------------------------------------
+from greenbay_ai_evaluator.api.security import verify_admin_key, verify_readonly_or_admin_key  # noqa: E402
+from greenbay_ai_evaluator.partners import data_api, reports  # noqa: E402
+
+_ADMIN = "admin-key-for-tests-0123456789"
+_READONLY = "readonly-key-for-tests-9876543210"
+
+
+def _gates(route) -> set:
+    return {d.call for d in route.dependant.dependencies if d.call in (verify_admin_key, verify_readonly_or_admin_key)}
+
+
+class TestKeyWiring:
+    def test_every_ops_route_is_admin_only(self):
+        for r in data_api.partner_admin_router.routes:
+            assert _gates(r) == {verify_admin_key}, r.path
+
+    def test_portal_routes_are_get_and_readonly(self):
+        for r in data_api.partner_portal_router.routes:
+            assert set(r.methods) == {"GET"}, r.path
+            assert _gates(r) == {verify_readonly_or_admin_key}, r.path
+            assert r.path.startswith("/partners/{slug}/portal/"), r.path
+
+    def test_public_partner_routes_carry_no_data(self):
+        from greenbay_ai_evaluator.partners.api import partner_api_router
+        paths = {(r.path, tuple(sorted(r.methods))) for r in partner_api_router.routes}
+        assert paths == {("/partners/{slug}/config", ("GET",)), ("/partners/{slug}/events", ("POST",))}
+
+    def test_admin_is_a_reserved_slug(self):
+        from greenbay_ai_evaluator.partners.config import PartnerConfig
+        with pytest.raises(Exception):
+            PartnerConfig(slug="admin", name="x", path="/x", ref_prefix="X", voucher_prefix="X",
+                          countries=["KE"], brands=["x"], categories=["refrigerator"])
+
+
+@pytest.fixture
+def ops(db, monkeypatch):  # noqa: F811
+    from app.database.db import get_db
+
+    monkeypatch.setenv("DASHBOARD_KEY", _ADMIN)
+    monkeypatch.setenv("READONLY_DASHBOARD_KEY", _READONLY)
+    app = FastAPI()
+    app.include_router(data_api.partner_admin_router, prefix="/tradein")
+    app.include_router(data_api.partner_portal_router, prefix="/tradein")
+    app.dependency_overrides[get_db] = lambda: db
+    c = TestClient(app)
+    c.admin = {"X-Admin-Key": _ADMIN}
+    c.ro = {"X-Admin-Key": _READONLY}
+    return c
+
+
+def _accepted(db, cfg=MIKA, amount=8000, phone="254712345678", name="Wanjiku Test", **kw):  # noqa: F811
+    vs = _VS(partner=cfg.slug, phone=phone, seller_name=name, **kw)
+    credit = ledger.create_offered(db, cfg, vs, amount=amount)
+    ledger.accept(db, credit, amount=amount)
+    db.commit()
+    return credit
+
+
+class TestOpsFlow:
+    def test_keys(self, ops):
+        assert ops.get("/tradein/partners/admin/overview").status_code == 403
+        assert ops.get("/tradein/partners/admin/overview", headers=ops.ro).status_code == 403
+        assert ops.get("/tradein/partners/admin/overview", headers=ops.admin).status_code == 200
+        assert ops.get("/tradein/partners/mika/portal/summary").status_code == 403
+        assert ops.get("/tradein/partners/mika/portal/summary", headers=ops.ro).status_code == 200
+
+    def test_check_to_settlement(self, ops, db):  # noqa: F811
+        c = _accepted(db, amount=8000)
+        base = f"/tradein/partners/admin/credits/{c.id}"
+        r = ops.post(base + "/start-validation", headers=ops.admin, json={"actor": "Tech Otieno", "method": "technician"})
+        assert r.status_code == 200 and r.json()["status"] == "pending_validation"
+        r = ops.post(base + "/validate", headers=ops.admin, json={"actor": "Tech Otieno", "agreed_amount": 7500,
+                                                                  "note": "Door seal worn"})
+        assert r.json()["agreed_amount"] == 7500
+        r = ops.post(base + "/issue", headers=ops.admin, json={"actor": "CX Achieng"})
+        code = r.json()["voucher_code"]
+        assert code.startswith("MIKA-") and r.json()["balance"] == 7500
+        r = ops.post("/tradein/partners/admin/redeem", headers=ops.admin,
+                     json={"actor": "CX Achieng", "partner": "mika", "voucher_code": code, "amount": 3000,
+                           "note": "Mika receipt 4411"})
+        assert r.json()["balance"] == 4500 and r.json()["status"] == "partially_redeemed"
+        actors = [h["actor"] for h in r.json()["history"]]
+        assert actors == ["system", "customer", "Tech Otieno", "Tech Otieno", "CX Achieng", "CX Achieng"]
+        month = reports.now().strftime("%Y-%m")
+        s = ops.get(f"/tradein/partners/admin/settlement?partner=mika&month={month}", headers=ops.admin).json()
+        assert (s["issued"], s["amount_due"], s["outstanding_at_end"]) == (7500, 3000, 4500)
+        assert s["redemptions"][0]["note"] == "Mika receipt 4411"
+        csv_r = ops.get(f"/tradein/partners/admin/settlement?partner=mika&month={month}&format=csv", headers=ops.admin)
+        assert csv_r.headers["content-type"].startswith("text/csv") and "3000.00" in csv_r.text
+        # Vision Plus owes nothing for Mika's credit.
+        v = ops.get(f"/tradein/partners/admin/settlement?partner=vision-plus&month={month}", headers=ops.admin).json()
+        assert v["amount_due"] == 0 and v["redemptions"] == []
+
+    def test_refusals_are_409_with_a_reason(self, ops, db):  # noqa: F811
+        c = _accepted(db)
+        r = ops.post(f"/tradein/partners/admin/credits/{c.id}/issue", headers=ops.admin, json={"actor": "CX"})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "bad_transition"
+        assert db.query(PartnerCredit).filter_by(id=c.id).one().status == "accepted"
+
+    def test_no_name_no_action(self, ops, db):  # noqa: F811
+        c = _accepted(db)
+        r = ops.post(f"/tradein/partners/admin/credits/{c.id}/start-validation", headers=ops.admin,
+                     json={"method": "technician"})
+        assert r.status_code == 422
+
+    def test_redeem_cannot_cross_partners(self, ops, db):  # noqa: F811
+        c = _issued(db, MIKA, amount=5000)
+        r = ops.post("/tradein/partners/admin/redeem", headers=ops.admin,
+                     json={"actor": "CX", "partner": "vision-plus", "voucher_code": c.voucher_code, "amount": 100})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "not_found"
+
+    def test_search_goes_in_a_header(self, ops, db):  # noqa: F811
+        _issued(db, MIKA, amount=5000, phone="254700111222")
+        r = ops.get("/tradein/partners/admin/credits", headers={**ops.admin, "X-Lookup-Query": "0700 111 222"})
+        assert len(r.json()["items"]) == 1
+        assert "q" not in {p.name for p in next(
+            rt for rt in data_api.partner_admin_router.routes if rt.path == "/partners/admin/credits"
+        ).dependant.query_params}
+
+    def test_review_lead_gets_a_price_from_a_person(self, ops, db, kenya):  # noqa: F811
+        out = router.evaluate_trade_in(_req(partner={"slug": "mika"}), db)
+        assert out.partner["credit_offer"] is None
+        leads = ops.get("/tradein/partners/admin/review-leads", headers=ops.admin).json()["items"]
+        assert [x["session_id"] for x in leads] == [out.session_id]
+        r = ops.post(f"/tradein/partners/admin/review-leads/{out.session_id}/offer", headers=ops.admin,
+                     json={"actor": "Pricing Wairimu", "amount": 6200})
+        assert r.status_code == 200 and r.json()["status"] == "accepted" and r.json()["offered_amount"] == 6200
+        assert ops.get("/tradein/partners/admin/review-leads", headers=ops.admin).json()["items"] == []
+        again = ops.post(f"/tradein/partners/admin/review-leads/{out.session_id}/offer", headers=ops.admin,
+                         json={"actor": "Pricing Wairimu", "amount": 6200})
+        assert again.status_code == 409
+
+
+class TestPortalForPulse:
+    def _seed(self, db, kenya):  # noqa: F811
+        router.evaluate_trade_in(_req(partner={"slug": "mika", "qr_code": "MK-WEB1", "buy_category": "cooker_oven",
+                                               "buy_model": "MST50"}), db)
+        router.evaluate_trade_in(_req(brand="Vision Plus", category="refrigerator",
+                                      partner={"slug": "vision-plus", "qr_code": "VP-WEB1", "buy_category": "tv"}), db)
+        m = _issued(db, MIKA, amount=5000, phone="254711000111")
+        v = _issued(db, VPLUS, amount=7000, phone="254711000111")
+        return m, v
+
+    def test_each_partner_sees_only_its_own(self, ops, db, kenya):  # noqa: F811
+        m, v = self._seed(db, kenya)
+        for path in ("leads", "credits", "demand", "qr", "summary"):
+            mika = ops.get(f"/tradein/partners/mika/portal/{path}", headers=ops.ro).text
+            assert "vision" not in mika.lower() and "VP-" not in mika and v.voucher_code not in mika, path
+            vp = ops.get(f"/tradein/partners/vision-plus/portal/{path}", headers=ops.ro).text
+            assert "MK-" not in vp and m.voucher_code not in vp, path
+
+    def test_lookup_is_header_only_and_scoped(self, ops, db, kenya):  # noqa: F811
+        m, v = self._seed(db, kenya)
+        url = "/tradein/partners/mika/portal/credit-lookup"
+        assert ops.get(url, headers=ops.ro).status_code == 422
+        own = ops.get(url, headers={**ops.ro, "X-Lookup-Query": m.voucher_code}).json()["items"]
+        assert [x["voucher_code"] for x in own] == [m.voucher_code]
+        assert ops.get(url, headers={**ops.ro, "X-Lookup-Query": v.voucher_code}).json()["items"] == []
+        by_phone = ops.get(url, headers={**ops.ro, "X-Lookup-Query": "0711 000 111"}).json()["items"]
+        assert [x["voucher_code"] for x in by_phone] == [m.voucher_code]
+        assert {h["event"] for h in by_phone[0]["history"]} >= {"offered", "issued"}
+
+    def test_payloads_hide_personal_and_staff_details(self, ops, db, kenya):  # noqa: F811
+        self._seed(db, kenya)
+        for path in ("leads", "credits"):
+            body = ops.get(f"/tradein/partners/mika/portal/{path}", headers=ops.ro).text
+            assert "254711000111" not in body and "254712345678" not in body, path
+            assert "Tech Otieno" not in body and "CX Achieng" not in body and "actor" not in body, path
+            assert "Test" not in body, path  # surnames never leave
+        lead = ops.get("/tradein/partners/mika/portal/leads", headers=ops.ro).json()["items"][0]
+        assert lead["customer"] == {"first_name": "Wanjiku", "phone_masked": "0712 *** 678"}
+        assert set(lead) == {"ref", "created_at", "category", "brand", "model", "channel", "shop", "qr_code",
+                             "source", "status", "credit_offer", "buy_intent", "customer"}
+
+    def test_demand_and_qr(self, ops, db, kenya):  # noqa: F811
+        self._seed(db, kenya)
+        d = ops.get("/tradein/partners/mika/portal/demand", headers=ops.ro).json()
+        assert d["total"] == 1 and d["items"][0]["label"] == "Cooker or oven" and d["items"][0]["models"] == ["MST50"]
+        qr = {i["code"]: i for i in ops.get("/tradein/partners/mika/portal/qr", headers=ops.ro).json()["items"]}
+        assert set(qr) == {"MK-WEB1", "MK-WEB2"} and qr["MK-WEB1"]["funnel"]["complete"] == 1
+        assert qr["MK-WEB1"]["url"].endswith("/q/MK-WEB1")
+
+    def test_unknown_partner_is_404(self, ops):
+        assert ops.get("/tradein/partners/nobody/portal/summary", headers=ops.ro).status_code == 404
+
+
+class TestSettlementMaths:
+    def test_lapsed_and_outstanding_by_period(self, db):  # noqa: F811
+        c = _issued(db, MIKA, amount=2000)
+        ledger.redeem(db, partner_id="mika", voucher_code=c.voucher_code, amount=500, actor="CX")
+        db.commit()
+        later = datetime.now(timezone.utc) + timedelta(days=91)
+        ledger.expire_due(db, now=later)
+        db.commit()
+        start = datetime.now(timezone.utc) - timedelta(days=1)
+        rep = reports.settlement(db, "mika", start=start, end=datetime.now(timezone.utc) + timedelta(days=1))
+        assert (rep["issued"], rep["amount_due"], rep["lapsed"], rep["outstanding_at_end"]) == (2000, 500, 1500, 0)
+        before = reports.settlement(db, "mika", start=start - timedelta(days=30), end=start)
+        assert before["issued"] == 0 and before["outstanding_at_end"] == 0
+
+    def test_mask_phone(self):
+        assert reports.mask_phone("254712345678") == "0712 *** 678"
+        assert reports.mask_phone("") is None and reports.mask_phone(None) is None
+
+
+class TestDemoSeed:
+    def _mod(self):
+        import importlib.util
+        path = _Path(__file__).resolve().parents[2] / "scripts" / "seed_partner_demo.py"
+        spec = importlib.util.spec_from_file_location("seed_partner_demo", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_seed_fills_every_state_for_every_partner_and_resets(self, db):  # noqa: F811
+        mod = self._mod()
+        made = mod.seed(db)
+        assert set(made) >= {"mika", "vision-plus"}
+        for cfg in (MIKA, VPLUS):
+            statuses = {c.status for c in db.query(PartnerCredit).filter_by(partner_id=cfg.slug)}
+            assert {"offered", "accepted", "pending_validation", "validated", "issued",
+                    "partially_redeemed", "redeemed", "cancelled"} <= statuses, cfg.slug
+            assert reports.leads(db, cfg.slug, days=90, only_review=True)
+        from greenbay_ai_evaluator.services.reference_data_service import TEST_ROW_PATTERN
+        for vs in db.query(ValuationSession).all():
+            assert TEST_ROW_PATTERN.search(vs.model), vs.model  # purge and Pulse skip demo rows
+        assert mod.reset(db) == db.query(ValuationSession).count() + sum(made.values())
+        assert db.query(PartnerCredit).count() == 0
+
+    def test_refuses_a_real_database(self, monkeypatch):
+        mod = self._mod()
+        monkeypatch.setenv("DATABASE_URL", "postgresql://prod/greenbay")
+        monkeypatch.setattr("sys.argv", ["seed_partner_demo.py"])
+        assert mod.main() == 2
+
+
+def test_ledger_works_on_a_session_that_does_not_autoflush():
+    """app/database/db.py makes sessions with autoflush=False. Issue then
+    redeem in one transaction must still find the new voucher code."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.database.db import Base
+    import app.database.models  # noqa: F401
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine, autoflush=False)()
+    try:
+        c = ledger.create_offered(s, MIKA, _VS(), amount=4000)
+        ledger.accept(s, c, amount=4000)
+        ledger.start_validation(s, c, method="technician", actor="Tech")
+        ledger.validate(s, c, actor="Tech")
+        ledger.issue(s, c, actor="CX")
+        ledger.redeem(s, partner_id="mika", voucher_code=c.voucher_code, amount=1000, actor="CX")
+        assert ledger.find_for_partner(s, "mika", query=c.voucher_code)[0].balance == 3000
+        s.commit()
+    finally:
+        s.close()
+
+
+class TestOpsPage:
+    def test_key_and_searches_never_go_in_a_url(self):
+        js = (_FRONTEND / "partners-ops.js").read_text(encoding="utf-8")
+        assert "key=" not in js and "'X-Admin-Key'" in js
+        assert "sessionStorage" in js  # the key lives for the tab only
+        assert "q=" not in js and "X-Lookup-Query" in js
+
+    def test_page_is_private_and_strict(self):
+        html = (_FRONTEND / "partners-ops.html").read_text(encoding="utf-8")
+        assert 'name="robots" content="noindex, nofollow"' in html
+        csp = _re.search(r'Content-Security-Policy" content="([^"]+)"', html).group(1)
+        assert "script-src 'self';" in csp and "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
+        assert "<script>" not in html  # no inline script at all
+
+    def test_every_action_sends_a_name(self):
+        js = (_FRONTEND / "partners-ops.js").read_text(encoding="utf-8")
+        assert js.count("const who = actor();") >= 3 and "json = { actor: who }" in js

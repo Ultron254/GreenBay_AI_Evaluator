@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Partner swaps | GreenBay ops</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none';">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="partners-ops.css?v=3">
+    <link rel="icon" href="greenbay-logo.png" type="image/png">
+</head>
+
+<body>
+    <header class="o-top">
+        <div class="o-top-inner">
+            <div class="o-brand">
+                <img src="partners/greenbay/greenbay-badge.png" alt="GreenBay" width="32" height="32">
+                <div>
+                    <div class="o-brand-title">Partner swaps</div>
+                    <div class="o-brand-sub">Mika, Vision Plus and future partners</div>
+                </div>
+            </div>
+            <div class="o-me">
+                <label for="oActor">You are</label>
+                <input id="oActor" type="text" maxlength="100" placeholder="Your name" autocomplete="name">
+                <button type="button" class="o-link" id="oSignOut" hidden>Lock</button>
+            </div>
+        </div>
+        <nav class="o-tabs" role="tablist" aria-label="Sections">
+            <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+            <button role="tab" data-tab="inspect" aria-selected="false">Inspections <span class="o-count" id="cInspect"></span></button>
+            <button role="tab" data-tab="review" aria-selected="false">Needs a price <span class="o-count" id="cReview"></span></button>
+            <button role="tab" data-tab="credits" aria-selected="false">Credits</button>
+            <button role="tab" data-tab="redeem" aria-selected="false">Record a redemption</button>
+            <button role="tab" data-tab="settle" aria-selected="false">Settlement</button>
+        </nav>
+    </header>
+
+    <main class="o-main">
+        <!-- key gate: the key is kept for this tab only and sent as a header -->
+        <section class="o-gate" id="oGate" hidden>
+            <h1>Partner swaps</h1>
+            <p>Enter the GreenBay admin key to continue. It stays in this browser tab only and is never put in a link.</p>
+            <form id="oGateForm" class="o-row">
+                <label class="sr" for="oKey">Admin key</label>
+                <input id="oKey" type="password" autocomplete="off" placeholder="Admin key" required>
+                <button class="o-btn" type="submit">Open</button>
+            </form>
+            <p class="o-err" id="oGateErr" hidden></p>
+        </section>
+
+        <section class="o-panel" data-panel="overview" id="pOverview"></section>
+        <section class="o-panel" data-panel="inspect" id="pInspect" hidden></section>
+        <section class="o-panel" data-panel="review" id="pReview" hidden></section>
+        <section class="o-panel" data-panel="credits" id="pCredits" hidden>
+            <form class="o-filters" id="oCreditFilter">
+                <label class="sr" for="fPartner">Partner</label>
+                <select id="fPartner"></select>
+                <label class="sr" for="fStatus">Status</label>
+                <select id="fStatus">
+                    <option value="">Every status</option>
+                    <option value="offered">Offered</option>
+                    <option value="accepted">Accepted</option>
+                    <option value="pending_validation">Awaiting inspection</option>
+                    <option value="validated">Inspected, not issued</option>
+                    <option value="issued,partially_redeemed">Live credit</option>
+                    <option value="redeemed">Fully used</option>
+                    <option value="expired">Expired</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
+                <label class="sr" for="fQuery">Code, reference or phone</label>
+                <input id="fQuery" type="search" maxlength="60" placeholder="Code, reference or phone">
+                <button class="o-btn o-btn--line" type="submit">Find</button>
+            </form>
+            <div id="oCreditList"></div>
+        </section>
+        <section class="o-panel" data-panel="redeem" id="pRedeem" hidden>
+            <h2 class="o-h2">Record a redemption</h2>
+            <p class="o-lede">When a partner tells us a customer used credit, record it here. The amount comes off that customer's balance and goes into the partner's settlement.</p>
+            <form id="oRedeemForm" class="o-form">
+                <label for="rPartner">Partner</label>
+                <select id="rPartner" required></select>
+                <label for="rCode">Voucher code</label>
+                <input id="rCode" type="text" maxlength="24" required placeholder="e.g. MIKA-7K3Q-92" autocomplete="off">
+                <div class="o-hint" id="rLookup" aria-live="polite"></div>
+                <label for="rAmount">Amount used (KES)</label>
+                <input id="rAmount" type="number" min="1" step="1" required inputmode="numeric">
+                <label for="rNote">Partner's receipt or order number</label>
+                <input id="rNote" type="text" maxlength="200" placeholder="So the partner can match it">
+                <button class="o-btn" type="submit">Record redemption</button>
+            </form>
+            <div id="oRedeemResult" aria-live="polite"></div>
+        </section>
+        <section class="o-panel" data-panel="settle" id="pSettle" hidden>
+            <h2 class="o-h2">Settlement</h2>
+            <p class="o-lede">What GreenBay owes a partner for credit customers actually used in a month, plus what was issued, what lapsed and what customers still hold.</p>
+            <form id="oSettleForm" class="o-filters">
+                <label class="sr" for="sPartner">Partner</label>
+                <select id="sPartner" required></select>
+                <label class="sr" for="sMonth">Month</label>
+                <input id="sMonth" type="month" required>
+                <button class="o-btn o-btn--line" type="submit">Show</button>
+                <button class="o-btn o-btn--line" type="button" id="sCsv">Download CSV</button>
+            </form>
+            <div id="oSettle"></div>
+        </section>
+    </main>
+
+    <div class="o-drawer" id="oDrawer" hidden>
+        <div class="o-drawer-card" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+            <button class="o-x" type="button" id="dClose" aria-label="Close">&times;</button>
+            <div id="dBody"></div>
+        </div>
+    </div>
+    <div class="o-toast" id="oToast" role="status" aria-live="polite" hidden></div>
+
+    <script src="partners-ops.js?v=3"></script>
+</body>
+
+</html>

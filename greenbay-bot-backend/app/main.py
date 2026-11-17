@@ -391,6 +391,9 @@ def create_app() -> FastAPI:
     from greenbay_ai_evaluator.partners.api import (
         partner_api_router, partner_page_router, register_partner_pages,
     )
+    from greenbay_ai_evaluator.partners.data_api import partner_admin_router, partner_portal_router
+    app.include_router(partner_admin_router, prefix="/tradein", tags=["Partner Trade-In (ops)"])
+    app.include_router(partner_portal_router, prefix="/tradein", tags=["Partner Trade-In (portal)"])
     app.include_router(partner_api_router, prefix="/tradein", tags=["Partner Trade-In"])
     app.include_router(partner_page_router, tags=["Partner Trade-In"])
     register_partner_pages(app)
