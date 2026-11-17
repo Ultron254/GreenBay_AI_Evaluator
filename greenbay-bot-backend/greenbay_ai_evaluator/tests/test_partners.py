@@ -35,6 +35,17 @@ VPLUS = get_partner("vision-plus")
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def sent_emails(monkeypatch):
+    """No test ever sends an email: partner notifications are recorded here."""
+    import greenbay_ai_evaluator.services.email_service as email
+
+    box: list[tuple[str, str, str, list[str]]] = []
+    monkeypatch.setattr(email, "_send_ses", lambda subject, text, html, recipients=None:
+                        box.append((subject, text, html, list(recipients or []))) or True)
+    return box
+
+
 @pytest.fixture
 def kenya(calls, monkeypatch):  # noqa: F811
     """test_markets' recorder, plus an empty marketplace for the Kenyan path."""
@@ -1018,3 +1029,159 @@ class TestOpsPage:
     def test_every_action_sends_a_name(self):
         js = (_FRONTEND / "partners-ops.js").read_text(encoding="utf-8")
         assert js.count("const who = actor();") >= 3 and "json = { actor: who }" in js
+
+
+# ---------------------------------------------------------------------------
+# stage 5: QR codes, sticker sheets, notifications
+# ---------------------------------------------------------------------------
+from greenbay_ai_evaluator.partners import notify as pnotify, qr as pqr  # noqa: E402
+
+
+@pytest.fixture
+def inline_threads(monkeypatch):
+    import threading
+
+    class _Inline:
+        def __init__(self, target=None, daemon=None, **k):
+            self._t = target
+
+        def start(self):
+            if self._t:
+                self._t()
+
+    monkeypatch.setattr(threading, "Thread", _Inline)
+
+
+class TestQrCodes:
+    def test_codes_name_the_shop_or_channel_and_never_collide(self):
+        assert pqr.new_code(MIKA, channel="shop", shop="roysambu", taken=[]) == "MK-ROY1"
+        assert pqr.new_code(MIKA, channel="shop", shop="roysambu", taken=["MK-ROY1"]) == "MK-ROY2"
+        assert pqr.new_code(VPLUS, channel="website", shop=None, taken=["VP-WEB1", "VP-WEB2"]) == "VP-WEB3"
+        assert pqr.new_code(MIKA, channel="social", shop=None, taken=[]) == "MK-SOC1"
+
+    def test_short_link(self, monkeypatch):
+        monkeypatch.delenv("PARTNER_PUBLIC_BASE", raising=False)
+        assert pqr.short_url("MK-ROY1") == "https://evaluate.greenbay.market/q/MK-ROY1"
+        assert pqr.short_url_display("MK-ROY1") == "evaluate.greenbay.market/q/MK-ROY1"
+
+    def test_single_qr_svg(self):
+        svg = pqr.qr_svg("MK-WEB1")
+        assert svg.startswith("<svg") and "https://evaluate.greenbay.market/q/MK-WEB1" in svg and 'd="M' in svg
+
+    def test_matrix_is_error_correction_q_with_a_quiet_zone(self):
+        import segno
+        q = segno.make(pqr.short_url("MK-WEB1"), error="q", boost_error=False)
+        assert q.error == "Q"
+        m = pqr._matrix(pqr.short_url("MK-WEB1"))
+        assert not any(m[0]) and not any(m[3]) and not any(r[0] for r in m)  # four blank modules round it
+
+    @pytest.mark.parametrize("cfg", [MIKA, VPLUS], ids=lambda c: c.slug)
+    def test_sheet_svg(self, cfg):
+        codes = [{"code": f"{cfg.ref_prefix}-ROY{i}", "label": f"Roysambu <counter> {i}"} for i in range(1, 6)]
+        svg = pqr.sheet_svg(cfg, codes)
+        assert svg.count("data:image/png;base64,") == 2  # each official logo embedded once
+        assert svg.count('href="#pLogo"') == 5 and svg.count('href="#gbMark"') == 5
+        assert 'height="594.0mm"' in svg  # five stickers = two A4 pages
+        assert "Roysambu &lt;counter&gt; 1" in svg and "<counter>" not in svg
+        assert all(f"evaluate.greenbay.market/q/{c['code']}" in svg for c in codes)
+        assert "Valued and bought by GreenBay" in svg and pqr.sticker_text(cfg)[0] in svg
+        assert "—" not in svg
+
+    @pytest.mark.parametrize("cfg", [MIKA, VPLUS], ids=lambda c: c.slug)
+    def test_sheet_pdf(self, cfg):
+        pdf = pqr.sheet_pdf(cfg, [{"code": f"{cfg.ref_prefix}-WEB{i}", "label": "x"} for i in range(1, 6)])
+        assert pdf.startswith(b"%PDF") and pdf.count(b"/Type /Page\n") + pdf.count(b"/Type /Page ") >= 2
+
+    def test_print_logos_are_png_files_in_the_partner_folder(self):
+        for cfg in (MIKA, VPLUS):
+            path = pqr._print_logo(cfg)
+            assert path.endswith(".png") and f"/partners/{cfg.slug}/" in path
+            pqr._png_info(path)  # reads and checks the PNG signature
+
+    def test_assets_cannot_escape_the_frontend_folder(self):
+        with pytest.raises(ValueError):
+            pqr._asset_path("/app/../../app/config.py")
+        with pytest.raises(ValueError):
+            pqr._asset_path("/etc/passwd")
+
+
+class TestQrAdmin:
+    def test_make_list_print_and_turn_off(self, ops, db):  # noqa: F811
+        r = ops.post("/tradein/partners/admin/qr", headers=ops.admin,
+                     json={"actor": "Allan", "partner": "mika", "channel": "shop", "shop": "Roysambu", "placement": "Counter"})
+        assert r.status_code == 200, r.text
+        q = r.json()
+        assert q["code"] == "MK-ROY1" and q["shop"] == "roysambu" and q["placement"] == "counter"
+        assert db.query(PartnerQrCode).filter_by(code="MK-ROY1").one().created_by == "Allan"
+        listed = {x["code"] for x in ops.get("/tradein/partners/admin/qr?partner=mika", headers=ops.admin).json()["items"]}
+        assert listed == {"MK-WEB1", "MK-WEB2", "MK-ROY1"}
+        pdf = ops.get("/tradein/partners/admin/qr-sheet?partner=mika&codes=MK-ROY1,MK-WEB1", headers=ops.admin)
+        assert pdf.headers["content-type"] == "application/pdf" and pdf.content.startswith(b"%PDF")
+        svg = ops.get("/tradein/partners/admin/qr-sheet?partner=mika&format=svg", headers=ops.admin)
+        assert svg.headers["content-type"].startswith("image/svg+xml") and "MK-ROY1" in svg.text
+        one = ops.get("/tradein/partners/admin/qr/MK-ROY1/svg", headers=ops.admin)
+        assert one.status_code == 200 and "/q/MK-ROY1" in one.text
+        off = ops.post("/tradein/partners/admin/qr/MK-ROY1/deactivate", headers=ops.admin, json={"actor": "Allan"})
+        assert off.json()["active"] is False
+        assert ops.get("/tradein/partners/admin/qr-sheet?partner=mika&codes=MK-ROY1", headers=ops.admin).status_code == 404
+
+    def test_refusals(self, ops):
+        base = {"actor": "Allan", "partner": "mika", "placement": "counter"}
+        assert ops.post("/tradein/partners/admin/qr", headers=ops.admin, json={**base, "channel": "shop"}).status_code == 422
+        assert ops.post("/tradein/partners/admin/qr", headers=ops.admin, json={**base, "channel": "radio"}).status_code == 422
+        assert ops.post("/tradein/partners/admin/qr/MK-WEB1/deactivate", headers=ops.admin,
+                        json={"actor": "Allan"}).status_code == 409
+        assert ops.get("/tradein/partners/admin/qr-sheet?partner=mika&codes=VP-WEB1", headers=ops.admin).status_code == 404
+        assert ops.post("/tradein/partners/admin/qr", headers=ops.ro, json={**base, "channel": "website"}).status_code == 403
+
+
+class TestNotifications:
+    def _credit(self, db, **kw):  # noqa: F811
+        c = _issued(db, MIKA, amount=6000, **kw)
+        return c
+
+    @pytest.mark.parametrize("event", ["accepted", "needs_validation", "credit_issued", "credit_used"])
+    def test_every_event_has_a_plain_email(self, db, event):  # noqa: F811
+        c = self._credit(db)
+        subject, text, html = pnotify.build(event, pnotify.snapshot(c, amount=1000, note="R-1", actor="CX Achieng"))
+        assert subject.startswith("[Mika swap]") and c.reference in subject
+        for part in (subject, text, html):
+            assert "—" not in part and "instant" not in part.lower()
+        assert "partners-ops.html" in text and "<script" not in html
+
+    def test_recipients_come_from_config(self):
+        assert pnotify.recipients("credit_used", "mika") == MIKA.notify["credit_used"]
+        assert pnotify.recipients("nonsense", "mika") == [] and pnotify.recipients("accepted", "nobody") == []
+
+    def test_ops_actions_email_the_named_people(self, ops, db, sent_emails, inline_threads):  # noqa: F811
+        c = _accepted(db, amount=8000)
+        base = f"/tradein/partners/admin/credits/{c.id}"
+        ops.post(base + "/start-validation", headers=ops.admin, json={"actor": "Tech", "method": "technician"})
+        ops.post(base + "/validate", headers=ops.admin, json={"actor": "Tech"})
+        code = ops.post(base + "/issue", headers=ops.admin, json={"actor": "CX"}).json()["voucher_code"]
+        ops.post("/tradein/partners/admin/redeem", headers=ops.admin,
+                 json={"actor": "CX", "partner": "mika", "voucher_code": code, "amount": 1000})
+        subjects = [s[0] for s in sent_emails]
+        assert [s.split("]")[1].split(":")[0].strip() for s in subjects] == [
+            "Check booked", "Credit issued, call the customer", "Credit used"]
+        assert all(s[3] == MIKA.notify["credit_used"] for s in sent_emails)
+        assert code in sent_emails[1][1]
+
+    def test_customer_accept_emails_once_and_labels_the_whatsapp_alert(self, db, kenya, sent_emails):  # noqa: F811
+        out = router.evaluate_trade_in(_req(partner={"slug": "mika"}, age_years=13), db)
+        before = len(kenya.get("notify", []))  # the evaluation's own alert
+        router.accept_offer(out.session_id, {"accepted_amount": 500}, db)
+        router.accept_offer(out.session_id, {"accepted_amount": 500}, db)  # double tap
+        accepted = [s for s in sent_emails if "Swap accepted" in s[0]]
+        assert len(accepted) == 1 and "KES 500" in accepted[0][0]
+        assert len(kenya["notify"]) - before == 1  # one WhatsApp alert, not one per tap
+
+    def test_whatsapp_payload_names_the_partner_and_reference(self, db):  # noqa: F811
+        c = _accepted(db, amount=8000)
+        p = pnotify.whatsapp_payload(c, {"outcome": "ACCEPTED", "ai_price": 1})
+        assert p["outcome"] == "ACCEPTED, Mika swap" and p["ai_price"] == 8000 and c.reference in p["extra"]
+
+    def test_test_records_are_never_emailed(self, db, sent_emails, inline_threads):  # noqa: F811
+        c = _accepted(db, amount=8000, model="ZZTEST-DEMO-X")
+        pnotify.notify("accepted", c)
+        assert sent_emails == []

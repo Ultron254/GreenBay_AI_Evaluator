@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="partners-ops.css?v=3">
+    <link rel="stylesheet" href="partners-ops.css?v=5">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
 </head>
 
@@ -37,6 +37,7 @@
             <button role="tab" data-tab="credits" aria-selected="false">Credits</button>
             <button role="tab" data-tab="redeem" aria-selected="false">Record a redemption</button>
             <button role="tab" data-tab="settle" aria-selected="false">Settlement</button>
+            <button role="tab" data-tab="qr" aria-selected="false">QR codes</button>
         </nav>
     </header>
 
@@ -108,6 +109,34 @@
             </form>
             <div id="oSettle"></div>
         </section>
+        <section class="o-panel" data-panel="qr" id="pQr" hidden>
+            <h2 class="o-h2">QR codes and stickers</h2>
+            <p class="o-lede">One code per shop and placement, so every scan shows where it came from. Make a code, tick the ones you want, and download a print-ready A4 sheet (four stickers a page) as PDF for the printer or SVG for a designer.</p>
+            <form id="oQrNew" class="o-filters">
+                <label class="sr" for="qPartner">Partner</label>
+                <select id="qPartner" required></select>
+                <label class="sr" for="qChannel">Where it goes</label>
+                <select id="qChannel">
+                    <option value="shop">Shop sticker</option>
+                    <option value="website">Website</option>
+                    <option value="social">Social post</option>
+                    <option value="print">Flyer or poster</option>
+                    <option value="staff">Sales staff</option>
+                    <option value="event">Event</option>
+                </select>
+                <label class="sr" for="qShop">Shop</label>
+                <input id="qShop" type="text" maxlength="60" placeholder="Shop, e.g. Roysambu">
+                <label class="sr" for="qPlacement">Placement</label>
+                <input id="qPlacement" type="text" maxlength="40" placeholder="Placement, e.g. counter" required>
+                <button class="o-btn" type="submit">Make code</button>
+            </form>
+            <div class="o-filters">
+                <button class="o-btn o-btn--line" type="button" id="qPdf">Stickers PDF</button>
+                <button class="o-btn o-btn--line" type="button" id="qSvg">Stickers SVG</button>
+                <span class="o-hint" id="qPicked">Tick codes below, or leave all unticked for every active code.</span>
+            </div>
+            <div id="oQrList"></div>
+        </section>
     </main>
 
     <div class="o-drawer" id="oDrawer" hidden>
@@ -118,7 +147,7 @@
     </div>
     <div class="o-toast" id="oToast" role="status" aria-live="polite" hidden></div>
 
-    <script src="partners-ops.js?v=3"></script>
+    <script src="partners-ops.js?v=5"></script>
 </body>
 
 </html>

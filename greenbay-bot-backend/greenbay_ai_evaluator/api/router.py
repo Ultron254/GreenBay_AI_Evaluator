@@ -3575,9 +3575,11 @@ def accept_offer(
     # Partner site: the credit (floor and nominal rules applied) is what the
     # customer gets, and their reference is created with it.
     partner_reference = None
+    partner_credit = None
+    partner_newly = False
     partner_result = partner_service.on_accept(db, vs, accepted_amount)
     if partner_result is not None:
-        accepted_amount, partner_reference = partner_result
+        accepted_amount, partner_reference, partner_credit, partner_newly = partner_result
 
     vs.decision = "accepted"
     vs.final_decision = "accepted"
@@ -3599,7 +3601,7 @@ def accept_offer(
     try:
         from greenbay_ai_evaluator.services.internal_notification_service import notify_internal_team
         currency = vs.currency_code or "KES"
-        notify_internal_team({
+        alert = {
             "outcome": "ACCEPTED",
             "product": f"{vs.brand} {vs.model} {vs.category}".strip(),
             "ai_price": vs.opening_offer or 0,
@@ -3608,9 +3610,23 @@ def accept_offer(
             "customer_name": vs.seller_name or "",
             "customer_phone": vs.seller_phone or "",
             "session_id": session_id,
-        })
+        }
+        if partner_credit is not None:
+            # Partner swap: one alert, labelled with the partner and reference.
+            from greenbay_ai_evaluator.partners.notify import whatsapp_payload
+            alert = whatsapp_payload(partner_credit, alert) if partner_newly else None
+        if alert:
+            notify_internal_team(alert)
     except Exception as e:
         logger.warning(f"Accept notification failed: {e}")
+
+    # Partner swap: email the people named for "accepted" in its config.
+    if partner_credit is not None and partner_newly:
+        try:
+            from greenbay_ai_evaluator.partners.notify import notify as partner_notify
+            partner_notify("accepted", partner_credit)
+        except Exception as e:
+            logger.warning(f"Partner accept email failed: {e}")
 
     # Issue #13: email the GreenBay team that the price was accepted.
     # Fail-safe by design: prefers SMTP when SMTP_HOST is configured, falls back

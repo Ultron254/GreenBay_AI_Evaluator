@@ -136,7 +136,8 @@
       "cosign_soft": "#E3EFE6",
       "highlight": "#FFFFFF"
     },
-    "radius_card": "10px"
+    "radius_card": "10px",
+    "logo_on_dark_png": "/app/partners/vision-plus/vision-plus-logo-white.png"
   },
   "copy": {
     "page_title": "Upgrade your Vision Plus | GreenBay x Vision Plus",
@@ -254,6 +255,8 @@
       "A technician visits, or you drop it at a GreenBay shop.",
       "Your Vision Plus credit code is issued and ready to use."
     ],
-    "brand_mismatch": "This label looks like a {brand}. The Vision Plus swap is for Vision Plus products. For other brands, GreenBay can make you a cash offer at evaluate.greenbay.market."
+    "brand_mismatch": "This label looks like a {brand}. The Vision Plus swap is for Vision Plus products. For other brands, GreenBay can make you a cash offer at evaluate.greenbay.market.",
+    "sticker_headline": "Upgrade your Vision Plus",
+    "sticker_sub": "Scan for a fair offer, paid as Vision Plus credit to spend on a new one."
   }
 }

@@ -124,3 +124,5 @@ input[type=text], input[type=search], input[type=number], input[type=password], 
 .o-toast.bad { background: var(--g-red); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.o-table .o-mono { white-space: nowrap; }

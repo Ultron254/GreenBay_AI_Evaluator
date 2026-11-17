@@ -33,7 +33,7 @@ from app.database.db import get_db
 from greenbay_ai_evaluator.api.security import verify_admin_key, verify_readonly_or_admin_key
 from greenbay_ai_evaluator.models.evaluator_models import ValuationSession
 from greenbay_ai_evaluator.models.partner_models import PartnerCredit
-from greenbay_ai_evaluator.partners import ledger, reports, rules
+from greenbay_ai_evaluator.partners import ledger, notify, reports, rules
 from greenbay_ai_evaluator.partners.config import PartnerConfig, all_partners, get_partner
 
 partner_portal_router = APIRouter()
@@ -235,6 +235,7 @@ def admin_start_validation(credit_id: str, body: StartValidation, db: Session = 
                            _: bool = Depends(verify_admin_key)):
     c = _credit(db, credit_id)
     _run(db, ledger.start_validation, db, c, method=body.method, actor=body.actor, note=body.note)
+    notify.notify("needs_validation", c, actor=body.actor)
     return _admin_credit(c, history=True, db=db)
 
 
@@ -258,6 +259,7 @@ def admin_fail_inspection(credit_id: str, body: _Action, db: Session = Depends(g
 def admin_issue(credit_id: str, body: _Action, db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
     c = _credit(db, credit_id)
     _run(db, ledger.issue, db, c, actor=body.actor)
+    notify.notify("credit_issued", c, actor=body.actor)
     return _admin_credit(c, history=True, db=db)
 
 
@@ -273,6 +275,7 @@ def admin_redeem(body: Redeem, db: Session = Depends(get_db), _: bool = Depends(
     cfg = _partner(body.partner)
     c = _run(db, ledger.redeem, db, partner_id=cfg.slug, voucher_code=body.voucher_code,
              amount=body.amount, actor=body.actor, note=body.note)
+    notify.notify("credit_used", c, actor=body.actor, amount=body.amount, note=body.note)
     return _admin_credit(c, history=True, db=db)
 
 
@@ -316,6 +319,7 @@ def admin_offer_from_review(session_id: str, body: FromReview, db: Session = Dep
         return credit
 
     credit = _run(db, _open)
+    notify.notify("accepted", credit, actor=body.actor)
     return _admin_credit(credit, history=True, db=db)
 
 
@@ -370,3 +374,113 @@ def admin_settlement(partner: str = Query(..., max_length=40), month: str = Quer
 def admin_partner_list(_: bool = Depends(verify_admin_key)):
     return {"items": [{"slug": c.slug, "name": c.name, "path": c.path, "currency": c.currency,
                        "expiry_days": c.credit.expiry_days} for c in all_partners()]}
+
+
+# ---------------------------------------------------------------------------
+# QR codes and sticker sheets (admin key)
+# ---------------------------------------------------------------------------
+class NewQr(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    actor: str = Field(..., min_length=2, max_length=100)
+    partner: str = Field(..., max_length=40)
+    channel: str = Field(..., max_length=20, description="shop | website | social | print | staff | event")
+    shop: str | None = Field(None, max_length=60, description="Shop name, for shop stickers")
+    placement: str = Field(..., min_length=2, max_length=40, description="sticker, counter, banner, poster ...")
+    label: str | None = Field(None, max_length=120)
+
+
+def _qr_rows(db: Session, cfg: PartnerConfig, days: int) -> list[dict[str, Any]]:
+    from greenbay_ai_evaluator.partners import qr
+
+    stats = reports.funnel_by_code(db, cfg.slug, days=days)
+    out = []
+    for code in reports.qr_codes(db, cfg):
+        s = stats.get(code["code"], {"funnel": {}, "redeemed_amount": 0.0})
+        out.append({**code, "partner": cfg.slug, "url": qr.short_url(code["code"]),
+                    "funnel": {k: int(s["funnel"].get(k, 0)) for k in reports.FUNNEL},
+                    "redeemed_amount": round(float(s["redeemed_amount"]), 2)})
+    return out
+
+
+@partner_admin_router.get("/partners/admin/qr")
+def admin_qr_list(partner: str = Query("", max_length=40), days: int = Query(90, ge=1, le=3650),
+                  db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    cfgs = [_partner(partner)] if partner else all_partners()
+    return {"items": [row for cfg in cfgs for row in _qr_rows(db, cfg, days)]}
+
+
+@partner_admin_router.post("/partners/admin/qr")
+def admin_qr_create(body: NewQr, db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    from greenbay_ai_evaluator.models.partner_models import PartnerQrCode
+    from greenbay_ai_evaluator.partners import qr
+
+    cfg = _partner(body.partner)
+    channel = qr.slug(body.channel, 20)
+    if channel not in qr.CHANNELS:
+        raise HTTPException(422, f"Channel must be one of {', '.join(qr.CHANNELS)}.")
+    shop = qr.slug(body.shop, 60) or None
+    if channel == "shop" and not shop:
+        raise HTTPException(422, "Name the shop for a shop sticker.")
+    placement = qr.slug(body.placement, 40)
+    taken = [r.code for r in db.query(PartnerQrCode.code).all()] + [p.code for c in all_partners() for p in c.placements]
+    code = qr.new_code(cfg, channel=channel, shop=shop, taken=taken)
+    label = (body.label or " ".join(p for p in ((body.shop or "").strip(), body.placement.strip()) if p)
+             or channel).strip()[:120]
+    row = PartnerQrCode(code=code, partner_id=cfg.slug, channel=channel, shop=shop, placement=placement,
+                        label=label, active=True, created_by=body.actor.strip()[:100])
+    db.add(row)
+    db.commit()
+    return next(r for r in _qr_rows(db, cfg, 90) if r["code"] == code)
+
+
+@partner_admin_router.post("/partners/admin/qr/{code}/deactivate")
+def admin_qr_deactivate(code: str, body: _Action, db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    from greenbay_ai_evaluator.models.partner_models import PartnerQrCode
+
+    row = db.query(PartnerQrCode).filter(PartnerQrCode.code == code.upper()).first()
+    if row is None:
+        raise HTTPException(409, {"code": "config_code", "message": "Codes set in a partner's config file are changed there, not here."})
+    row.active = False
+    db.commit()
+    return {"code": row.code, "active": False, "by": body.actor}
+
+
+def _codes_for(db: Session, cfg: PartnerConfig, codes: str) -> list[dict[str, Any]]:
+    wanted = [c.strip().upper() for c in codes.split(",") if c.strip()]
+    known = {r["code"]: r for r in reports.qr_codes(db, cfg) if r["active"]}
+    if not wanted:
+        return list(known.values())
+    missing = [c for c in wanted if c not in known]
+    if missing:
+        raise HTTPException(404, f"Not active codes for {cfg.name}: {', '.join(missing)}")
+    return [known[c] for c in wanted][:40]
+
+
+@partner_admin_router.get("/partners/admin/qr/{code}/svg")
+def admin_qr_svg(code: str, db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    from greenbay_ai_evaluator.partners import qr
+    from greenbay_ai_evaluator.partners.service import lookup_code
+
+    hit = lookup_code(db, code)
+    if hit is None:
+        raise HTTPException(404, "Unknown or inactive code")
+    cfg = _partner(hit["partner_id"])
+    ink = ((cfg.theme or {}).get("colors") or {}).get("ink", "#111111")
+    return Response(qr.qr_svg(hit["code"], ink=ink), media_type="image/svg+xml",
+                    headers={"Content-Disposition": f'attachment; filename="qr-{hit["code"]}.svg"'})
+
+
+@partner_admin_router.get("/partners/admin/qr-sheet")
+def admin_qr_sheet(partner: str = Query(..., max_length=40), codes: str = Query("", max_length=1000),
+                   format: str = Query("pdf", pattern="^(pdf|svg)$"),
+                   db: Session = Depends(get_db), _: bool = Depends(verify_admin_key)):
+    from greenbay_ai_evaluator.partners import qr
+
+    cfg = _partner(partner)
+    rows = _codes_for(db, cfg, codes)
+    name = f"stickers-{cfg.slug}-{len(rows)}"
+    if format == "svg":
+        return Response(qr.sheet_svg(cfg, rows), media_type="image/svg+xml",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.svg"'})
+    return Response(qr.sheet_pdf(cfg, rows), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})

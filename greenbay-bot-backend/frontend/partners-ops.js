@@ -95,7 +95,7 @@
         $$('.o-tabs [role=tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
         $$('.o-panel').forEach(p => { p.hidden = p.dataset.panel !== tab; });
         store.set('gb_ops_tab', tab, true);
-        ({ overview, inspect, review, credits: loadCredits, redeem: () => {}, settle: () => {} }[tab] || overview)();
+        ({ overview, inspect, review, credits: loadCredits, redeem: () => {}, settle: () => {}, qr: loadQr }[tab] || overview)();
     }
 
     /* ---------------- overview ---------------- */
@@ -386,6 +386,85 @@
         } catch (e) { fail(e); }
     }
 
+    /* ---------------- QR codes ---------------- */
+    const CHANNEL = { shop: 'Shop', website: 'Website', social: 'Social', print: 'Print', staff: 'Staff', event: 'Event', direct: 'Direct' };
+    const bare = (url) => String(url || '').replace(/^https?:\/\//, '');
+
+    async function loadQr() {
+        const el = $('#oQrList');
+        el.innerHTML = '<p class="o-lede">Loading…</p>';
+        try {
+            const d = await api(`/partners/admin/qr?partner=${encodeURIComponent($('#qPartner').value)}&days=90`);
+            if (!d.items.length) { el.innerHTML = '<div class="o-empty">No codes yet.</div>'; return; }
+            el.innerHTML = `<table class="o-table"><thead><tr><th></th><th>Code</th><th>Where</th><th>Scans</th><th>Finished</th><th>Accepted</th><th>Credit used</th><th>Link</th><th></th></tr></thead><tbody>
+                ${d.items.map(q => `<tr data-code="${esc(q.code)}">
+                    <td><input type="checkbox" aria-label="Include ${esc(q.code)} on the sheet" ${q.active ? '' : 'disabled'}></td>
+                    <td class="o-mono">${esc(q.code)}${q.active ? '' : ' <span class="o-badge s-cancelled">Off</span>'}</td>
+                    <td>${esc(q.label || '')}<div class="o-item-sub">${esc(CHANNEL[q.channel] || q.channel)}${q.shop ? ' · ' + esc(q.shop) : ''} · ${esc(q.placement || '')}</div></td>
+                    <td class="o-amount">${q.funnel.scan}</td><td>${q.funnel.complete}</td><td>${q.funnel.accept}</td>
+                    <td>${esc(money(q.redeemed_amount))}</td>
+                    <td><a href="${esc(q.url)}" target="_blank" rel="noopener" class="o-mono">${esc(bare(q.url))}</a></td>
+                    <td class="o-inline">${q.active ? '<button class="o-btn o-btn--line" data-qsvg>QR SVG</button>' : ''}
+                        ${q.active && q.source === 'admin' ? '<button class="o-btn o-btn--warn" data-qoff>Turn off</button>' : ''}</td></tr>`).join('')}
+            </tbody></table>`;
+            $$('[data-qsvg]', el).forEach(b => b.addEventListener('click', () => {
+                const code = b.closest('tr').dataset.code;
+                download(`/partners/admin/qr/${encodeURIComponent(code)}/svg`, `qr-${code}.svg`);
+            }));
+            $$('[data-qoff]', el).forEach(b => b.addEventListener('click', async () => {
+                const who = actor();
+                if (!who) return;
+                const code = b.closest('tr').dataset.code;
+                if (!confirm(`Turn off ${code}? Scans will land on the main evaluator page instead.`)) return;
+                try {
+                    await api(`/partners/admin/qr/${encodeURIComponent(code)}/deactivate`, { json: { actor: who } });
+                    toast(`${code} turned off.`);
+                    loadQr();
+                } catch (e) { fail(e); }
+            }));
+            $$('input[type=checkbox]', el).forEach(cb => cb.addEventListener('change', () => {
+                const n = $$('input[type=checkbox]:checked', el).length;
+                $('#qPicked').textContent = n ? `${n} ticked.` : 'Tick codes below, or leave all unticked for every active code.';
+            }));
+        } catch (e) { fail(e); el.innerHTML = ''; }
+    }
+
+    async function download(path, name) {
+        try {
+            const r = await api(path, { raw: true });
+            const url = URL.createObjectURL(await r.blob());
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = name;
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } catch (e) { fail(e); }
+    }
+
+    function sheet(format) {
+        const partner = $('#qPartner').value;
+        const codes = $$('#oQrList tr[data-code]').filter(tr => $('input:checked', tr)).map(tr => tr.dataset.code);
+        const pick = codes.length ? '&codes=' + encodeURIComponent(codes.join(',')) : '';
+        download(`/partners/admin/qr-sheet?partner=${encodeURIComponent(partner)}&format=${format}${pick}`, `stickers-${partner}.${format}`);
+    }
+
+    async function newQr(ev) {
+        ev.preventDefault();
+        const who = actor();
+        if (!who) return;
+        const json = { actor: who, partner: $('#qPartner').value, channel: $('#qChannel').value,
+            shop: $('#qShop').value.trim() || null, placement: $('#qPlacement').value.trim() };
+        try {
+            const q = await api('/partners/admin/qr', { json });
+            toast(`${q.code} made: ${bare(q.url)}`);
+            $('#qShop').value = '';
+            $('#qPlacement').value = '';
+            loadQr();
+        } catch (e) { fail(e); }
+    }
+
     /* ---------------- start ---------------- */
     async function start() {
         $('#oGate').hidden = true;
@@ -398,6 +477,7 @@
         $('#fPartner').innerHTML = '<option value="">Every partner</option>' + opts;
         $('#rPartner').innerHTML = opts;
         $('#sPartner').innerHTML = opts;
+        $('#qPartner').innerHTML = opts;
         const now = new Date();
         $('#sMonth').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         show(store.get('gb_ops_tab', true) || 'overview');
@@ -420,6 +500,10 @@
         $('#oRedeemForm').addEventListener('submit', redeem);
         $('#oSettleForm').addEventListener('submit', settle);
         $('#sCsv').addEventListener('click', settleCsv);
+        $('#qPartner').addEventListener('change', loadQr);
+        $('#oQrNew').addEventListener('submit', newQr);
+        $('#qPdf').addEventListener('click', () => sheet('pdf'));
+        $('#qSvg').addEventListener('click', () => sheet('svg'));
         $('#dClose').addEventListener('click', () => { $('#oDrawer').hidden = true; });
         $('#oDrawer').addEventListener('click', (e) => { if (e.target.id === 'oDrawer') $('#oDrawer').hidden = true; });
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#oDrawer').hidden = true; });

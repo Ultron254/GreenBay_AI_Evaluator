@@ -157,10 +157,10 @@ def after_evaluation(db: Session, rp: ResolvedPartner | None, vs) -> dict | None
     }
 
 
-def on_accept(db: Session, vs, accepted_amount: float | None) -> tuple[float, str] | None:
-    """The customer accepted on a partner site. Returns (credit, reference),
-    or None for a GreenBay evaluation. Raises 409 when no credit can be
-    offered (a person has to decide first)."""
+def on_accept(db: Session, vs, accepted_amount: float | None):
+    """The customer accepted on a partner site. Returns (amount, reference,
+    credit, newly_accepted), or None for a GreenBay evaluation. Raises 409
+    when no credit can be offered (a person has to decide first)."""
     cfg = get_partner(getattr(vs, "partner_id", None))
     if cfg is None:
         return None
@@ -173,8 +173,9 @@ def on_accept(db: Session, vs, accepted_amount: float | None) -> tuple[float, st
     credit = ledger.for_session(db, vs.id) or ledger.create_offered(db, cfg, vs, amount=offered)
     if credit.status not in (ledger.OFFERED, ledger.ACCEPTED):
         raise HTTPException(409, f"This trade-in is already {credit.status.replace('_', ' ')}.")
+    newly = credit.status == ledger.OFFERED
     ledger.accept(db, credit, amount=amount)
-    return amount, credit.reference
+    return amount, credit.reference, credit, newly
 
 
 def airtable_fields(vs) -> dict[str, Any]:

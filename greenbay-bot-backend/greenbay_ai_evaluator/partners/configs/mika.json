@@ -129,7 +129,8 @@
       "cosign_soft": "#E3EFE6",
       "highlight": "#F4F2ED"
     },
-    "radius_card": "14px"
+    "radius_card": "14px",
+    "logo_on_dark_png": "/app/partners/mika/mika-logo-white.png"
   },
   "copy": {
     "page_title": "Swap your old Mika | GreenBay x Mika",
@@ -243,6 +244,8 @@
     "step1_hint": "Three quick picks. It takes about 20 seconds.",
     "step1_category_label": "Which Mika appliance is it?",
     "step2_hint": "Start with a photo of the label, so we can read the model number. Then add at least 3 photos of the appliance.",
-    "results_label": "Your offer"
+    "results_label": "Your offer",
+    "sticker_headline": "Swap your old Mika",
+    "sticker_sub": "Scan for a fair offer, paid as Mika credit to spend on a new one."
   }
 }
