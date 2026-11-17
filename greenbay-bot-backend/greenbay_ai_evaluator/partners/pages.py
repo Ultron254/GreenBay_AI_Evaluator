@@ -80,6 +80,7 @@ def theme_css(cfg: PartnerConfig) -> str:
     radius = str(t.get("radius_card") or "14px")
     radius = radius if _SAFE_LEN_RE.match(radius) else "14px"
     ink, paper = col("ink", "#111111"), col("paper", "#F4F2ED")
+    band = col("band", ink)
     accent, accent_hover = col("accent", ink), col("accent_hover", "#2B2B2B")
     cosign, cosign_soft = col("cosign", "#0B6E40"), col("cosign_soft", "#E3EFE6")
     line, stone, muted = col("line", "#D6D0C4"), col("stone", "#E8E4DB"), col("muted", "#59554D")
@@ -90,7 +91,7 @@ def theme_css(cfg: PartnerConfig) -> str:
     sel = f'html[data-country][data-partner="{cfg.slug}"]'
     return (
         f"{sel}{{"
-        f"--p-ink:{ink};--p-paper:{paper};--p-stone:{stone};--p-line:{line};--p-muted:{muted};"
+        f"--p-ink:{ink};--p-band:{band};--p-paper:{paper};--p-stone:{stone};--p-line:{line};--p-muted:{muted};"
         f"--p-on-ink:{on_ink};--p-on-ink-muted:{on_ink_muted};--p-accent:{accent};"
         f"--p-accent-hover:{accent_hover};--p-cosign:{cosign};--p-cosign-soft:{cosign_soft};"
         f"--p-font-display:{display};--p-font-body:{body};--p-font-serif:{serif};--p-radius:{radius};"
@@ -106,11 +107,11 @@ def theme_css(cfg: PartnerConfig) -> str:
         f"--radius-card:{radius};--radius-btn:999px;--radius-chip:999px;--radius-input:10px;"
         f"--card-shadow:0 1px 0 {line};--card-shadow-hover:0 1px 0 {line},0 10px 28px rgba(17,17,17,.08);"
         f"--btn-shadow:none;--btn-shadow-hover:0 6px 18px rgba(17,17,17,.18);"
-        f"--chip-sel-bg:{ink};--chip-sel-fg:#FFFFFF;--chip-sel-border:{ink};"
-        f"--progress-track:{stone};--progress-fill:linear-gradient(90deg,{ink} 0%,{ink} 70%,{cosign} 100%);"
+        f"--chip-sel-bg:{accent};--chip-sel-fg:#FFFFFF;--chip-sel-border:{accent};"
+        f"--progress-track:{stone};--progress-fill:linear-gradient(90deg,{accent} 0%,{accent} 70%,{cosign} 100%);"
         f"--step-num-bg:{ink};--step-num-fg:#FFFFFF;--defect-edge:{ink};"
         # the market ornaments (flag ribbon, beadwork) give way to one quiet rule
-        f"--band-thin:{ink};--band:{ink};--band-h:1px;--ribbon:{ink};--ribbon-h:0px;--flag-dot:{ink};"
+        f"--band-thin:{band};--band:{band};--band-h:1px;--ribbon:{band};--ribbon-h:0px;--flag-dot:{band};"
         f"}}"
     )
 
@@ -184,7 +185,7 @@ def _render(slug: str, version: str) -> str:
         "logo_alt": theme.get("logo_alt", cfg.name),
         "fonts_url": theme.get("fonts_url", ""),
         "asset_version": version,
-        "color.ink": colors.get("ink", "#111111"),
+        "color.band": colors.get("band", colors.get("ink", "#111111")),
     }
     raw_values = {
         "theme_css": theme_css(cfg),

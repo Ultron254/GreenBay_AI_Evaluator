@@ -675,6 +675,10 @@ class TestBrandedPage:
             assert _contrast(c[fg], c[bg]) >= 4.5, (fg, bg, round(_contrast(c[fg], c[bg]), 2))
         assert _contrast("#FFFFFF", c["accent"]) >= 4.5
         assert _contrast("#FFFFFF", c["muted"]) >= 4.5  # muted text also sits on white cards
+        band = c.get("band", c["ink"])  # bar, hero, offer header and footer
+        for fg in ("on_ink", "on_ink_muted"):
+            assert _contrast(c[fg], band) >= 4.5, (fg, "band", round(_contrast(c[fg], band), 2))
+        assert _contrast(c["ink"], c["paper"]) >= 7  # body text: AAA on the page
 
 
 class TestPageSafety:
