@@ -1,0 +1,42 @@
+{
+  "slug": "mika",
+  "name": "Mika",
+  "legal_name": "Ideal Appliances Ltd",
+  "path": "/mika",
+  "ref_prefix": "MK",
+  "voucher_prefix": "MIKA",
+  "countries": ["KE"],
+  "currency": "KES",
+  "brands": ["Mika"],
+  "brand_aliases": ["mika", "mikaappliances", "mikaappliance"],
+  "categories": ["refrigerator", "cooker_oven", "microwave", "washing_machine", "small_kitchen"],
+  "bulky_categories": ["refrigerator", "washing_machine"],
+  "buy_categories": [
+    {"id": "refrigerator", "label": "Fridge or freezer"},
+    {"id": "cooker_oven", "label": "Cooker or oven"},
+    {"id": "microwave", "label": "Microwave"},
+    {"id": "washing_machine", "label": "Washing machine"},
+    {"id": "water_dispenser", "label": "Water dispenser"},
+    {"id": "small_kitchen", "label": "Small kitchen appliance"},
+    {"id": "tv", "label": "TV"},
+    {"id": "other", "label": "Something else"}
+  ],
+  "credit": {
+    "floor": 500,
+    "nominal_age_years": 12,
+    "nominal_value": 500,
+    "expiry_days": 90,
+    "max_auto_risk_score": 70
+  },
+  "placements": [
+    {"code": "MK-WEB1", "channel": "website", "placement": "banner", "label": "Mika website banner"},
+    {"code": "MK-WEB2", "channel": "website", "placement": "product-page", "label": "Mika website product pages"}
+  ],
+  "shops": [],
+  "notify": {
+    "accepted": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "needs_validation": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "credit_issued": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "credit_used": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"]
+  }
+}

@@ -107,11 +107,63 @@ const COUNTRY_CONFIG = {
     },
 };
 
-// Market: the portal path wins (/app/ug), then the browser timezone, then Kenya.
+/* ============================================================
+ PARTNER SITES
+ /mika and /vision-plus serve this same page with
+ <meta name="gb-partner" content="<slug>" data-country="KE">. Every
+ evaluation from such a page carries a partner block (slug, QR code, channel)
+ so the backend can check the brand, label the lead and open a credit.
+ A QR scan lands as /<slug>?qr=<CODE>; the code is kept for the whole visit.
+ ============================================================ */
+const GB_PARTNER = (function readPartner() {
+    try {
+        const meta = document.querySelector('meta[name="gb-partner"]');
+        if (!meta || !meta.content) return null;
+        const p = { slug: meta.content, country: (meta.dataset.country || 'KE').toUpperCase() };
+        const key = 'gb_partner_ctx_' + p.slug;
+        let saved = {};
+        try { saved = JSON.parse(sessionStorage.getItem(key) || '{}') || {}; } catch (_) { saved = {}; }
+        const qs = new URLSearchParams(window.location.search || '');
+        const qr = (qs.get('qr') || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 24);
+        if (qr) saved.qr_code = qr;
+        p.qr_code = saved.qr_code || null;
+        try { sessionStorage.setItem(key, JSON.stringify(saved)); } catch (_) { /* ignore */ }
+        return p;
+    } catch (_) { return null; }
+})();
+
+/** The partner block sent with POST /tradein/evaluate (null off partner sites). */
+function partnerPayload() {
+    if (!GB_PARTNER) return null;
+    const a = (typeof state !== 'undefined' && state.answers) || {};
+    return {
+        slug: GB_PARTNER.slug,
+        qr_code: GB_PARTNER.qr_code,
+        channel: GB_PARTNER.qr_code ? null : 'direct',
+        buy_category: a.buyCategory || null,
+        buy_model: a.buyModel || null,
+    };
+}
+
+/** Tell the backend a partner visitor started; once per visit, never blocks. */
+function partnerPing(type) {
+    if (!GB_PARTNER) return;
+    try {
+        fetch(`${window.location.origin}/tradein/partners/${GB_PARTNER.slug}/events`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, qr_code: GB_PARTNER.qr_code }),
+            keepalive: true,
+        }).catch(() => { /* analytics only */ });
+    } catch (_) { /* analytics only */ }
+}
+
+// Market: a partner page's country wins, then the portal path (/app/ug),
+// then the browser timezone, then Kenya.
 (function detectCountry() {
-    let code = null;
+    let code = GB_PARTNER ? GB_PARTNER.country : null;
     const m = /^\/app\/(ke|ug|ng)\/?$/i.exec(window.location.pathname || '');
-    if (m) code = m[1].toUpperCase();
+    if (!code && m) code = m[1].toUpperCase();
     if (!code) {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
         if (tz.startsWith('Africa/Kampala')) code = 'UG';
@@ -156,7 +208,7 @@ try { applyMarketCopy(); } catch (_) { /* re-applied on DOMContentLoaded */ }
 
 // The storage key carries a version: answers saved by the old 10-step wizard
 // do not fit this one.
-const GB_STATE_KEY = 'gb_eval_state_v2_' + MARKET.code;
+const GB_STATE_KEY = 'gb_eval_state_v2_' + MARKET.code + (GB_PARTNER ? '_' + GB_PARTNER.slug : '');
 
 const state = {
     currentStep: 1,
@@ -269,6 +321,7 @@ function trackOnce(name, params) {
         sessionStorage.setItem(flag, '1');
     } catch (_) { /* fall through and send anyway */ }
     trackEvent(name, params);
+    if (name === 'wizard_start') partnerPing('start');
 }
 
 // Restore from localStorage — auto-reset if previous evaluation was complete
@@ -1338,6 +1391,8 @@ async function callEvaluationAPI() {
             landing_url: attribution.landing_url || null,
         },
     };
+    const partner = partnerPayload();
+    if (partner) payload.partner = partner;
 
     trackEvent('evaluate_submit');
 
@@ -1355,6 +1410,16 @@ async function callEvaluationAPI() {
             // at the echoed input: an over-long issues text that happens to
             // contain the word "phone" is not a phone error.
             let aboutPhone = false;
+            let detail422 = null;
+            try { detail422 = (await resp.clone().json()).detail; } catch (_) { /* ignore */ }
+            // A partner site refused the item (wrong brand, category or
+            // country): say why, plainly, and stop. No demo offer.
+            if (detail422 && typeof detail422 === 'object' && !Array.isArray(detail422)
+                && /^partner_/.test(String(detail422.code || ''))) {
+                addChatMessage('bot', String(detail422.message || 'This item is not part of this swap.'));
+                showEvaluationError(String(detail422.message || ''));
+                return;
+            }
             try {
                 const detail = (await resp.json()).detail;
                 aboutPhone = Array.isArray(detail) && detail.some(e =>
@@ -1374,6 +1439,18 @@ async function callEvaluationAPI() {
         }
 
         const data = await resp.json();
+        // Partner site: the customer is offered partner credit (floor and
+        // nominal rules applied server side), not the engine's cash figure.
+        // No credit offer means a person decides first: show the review screen.
+        if (data.partner) {
+            if (typeof data.partner.credit_offer === 'number') {
+                if (data.decision === 'review') data.decision = 'accept';
+                data.opening_offer = data.partner.credit_offer;
+                if (data.acquisition_ceiling < data.opening_offer) data.acquisition_ceiling = data.opening_offer;
+            } else {
+                data.decision = 'review';
+            }
+        }
         state.sessionId = data.session_id;
         state.evaluation = data;
         saveState();
@@ -1423,6 +1500,10 @@ function showResults(data) {
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const gradeClass = `grade-${(data.condition_grade || 'b').toLowerCase()}`;
     const confidence = data.confidence_score || 0;
+    // On a partner site the server already decided: a credit offer (even the
+    // KES 500 nominal one for a very old item) is shown; none means a person.
+    const partnerOffer = !!(data.partner && typeof data.partner.credit_offer === 'number');
+    const needsPerson = partnerOffer ? false : (confidence < 80 || data.decision === 'review');
 
     // GA4 offer_shown: report the screen the customer actually sees, which is
     // decided below (reject screen, specialist routing, or the offer card).
@@ -1431,7 +1512,7 @@ function showResults(data) {
     if (!isDemo) {
         let shownDecision = 'negotiate';
         if (data.decision === 'reject') shownDecision = 'reject';
-        else if (confidence < 80 || data.decision === 'review') shownDecision = 'review';
+        else if (needsPerson) shownDecision = 'review';
         else if (data.decision === 'accept') shownDecision = 'accept';
         trackEvent('offer_shown', { decision: shownDecision });
         if (shownDecision === 'review') trackEvent('human_review_routed');
@@ -1484,7 +1565,7 @@ Start New Evaluation
 
     // v6: AUTO-REDIRECT to specialist if confidence < 80% OR flagged for review
     const currency = data.currency_code || MARKET.currency;
-    if (confidence < 80 || data.decision === 'review') {
+    if (needsPerson) {
         const reviewMessage = escapeHtml(data.customer_message || (MARKET.showConfidence
             ? `Our AI's confidence on this valuation is below 80%. For the most accurate offer, we're connecting you with one of our trade-in specialists who can assess your ${a.brand} ${CATEGORY_NAMES[a.category]} personally.`
             : `Our ${MARKET.name} team will confirm this offer personally after a quick look at your photos.`));
@@ -2013,6 +2094,7 @@ async function acceptOffer(amount) {
                 const data = await resp.json();
                 console.log('Accept offer response:', data);
                 if (typeof data.final_offer === 'number') amount = data.final_offer;
+                if (data.reference) state.partnerReference = data.reference;
                 accepted = true;
             } else {
                 failureReason = `HTTP ${resp.status}`;

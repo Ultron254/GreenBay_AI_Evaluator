@@ -1,0 +1,43 @@
+{
+  "slug": "vision-plus",
+  "name": "Vision Plus",
+  "legal_name": "Kryptonite International Limited",
+  "path": "/vision-plus",
+  "ref_prefix": "VP",
+  "voucher_prefix": "VPLUS",
+  "countries": ["KE"],
+  "currency": "KES",
+  "brands": ["Vision Plus"],
+  "brand_aliases": ["visionplus", "vision+", "visionplusafrica", "vplus"],
+  "categories": ["tv_monitor", "refrigerator", "cooker_oven", "microwave", "washing_machine", "small_kitchen"],
+  "bulky_categories": ["refrigerator", "washing_machine", "tv_monitor"],
+  "bulky_min_size": {"tv_monitor": 50},
+  "buy_categories": [
+    {"id": "tv", "label": "TV"},
+    {"id": "audio", "label": "Soundbar or speaker"},
+    {"id": "refrigerator", "label": "Fridge or freezer"},
+    {"id": "washing_machine", "label": "Washing machine"},
+    {"id": "cooker_oven", "label": "Cooker or oven"},
+    {"id": "microwave", "label": "Microwave"},
+    {"id": "water_dispenser", "label": "Water dispenser"},
+    {"id": "other", "label": "Something else"}
+  ],
+  "credit": {
+    "floor": 500,
+    "nominal_age_years": 12,
+    "nominal_value": 500,
+    "expiry_days": 90,
+    "max_auto_risk_score": 70
+  },
+  "placements": [
+    {"code": "VP-WEB1", "channel": "website", "placement": "banner", "label": "Vision Plus website banner"},
+    {"code": "VP-WEB2", "channel": "website", "placement": "product-page", "label": "Vision Plus website product pages"}
+  ],
+  "shops": [],
+  "notify": {
+    "accepted": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "needs_validation": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "credit_issued": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
+    "credit_used": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"]
+  }
+}

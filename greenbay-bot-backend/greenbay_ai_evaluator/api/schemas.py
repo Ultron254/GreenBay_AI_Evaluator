@@ -224,6 +224,67 @@ class EvaluationAttribution(BaseModel):
         return v or None
 
 
+_PARTNER_TAG_RE = re.compile(r"[^a-z0-9-]+")
+
+PARTNER_FIELD_MAX_LEN = {
+    "slug": 40,
+    "channel": 40,
+    "shop": 60,
+    "placement": 60,
+    "qr_code": 24,
+    "buy_category": 60,
+    "buy_model": 200,
+}
+
+
+class PartnerContext(BaseModel):
+    """Where a partner-site evaluation came from, and what the customer wants
+    to buy from that partner.
+
+    The slug is checked against the partner configs by the evaluate route.
+    Everything else is a label: cleaned and cut, never a reason to reject the
+    evaluation. When qr_code names a known code, the server takes channel,
+    shop and placement from that code rather than from the browser.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    slug: str = Field(..., description="Partner slug, e.g. 'mika'")
+    channel: str | None = Field(None, description="website | shop | staff | social | direct")
+    shop: str | None = Field(None, description="Shop slug for shop QR codes")
+    placement: str | None = Field(None, description="banner | sticker | product-page ...")
+    qr_code: str | None = Field(None, description="QR / short-link code, e.g. MK-WEB1")
+    buy_category: str | None = Field(None, description="What the customer wants to buy (category id)")
+    buy_model: str | None = Field(None, description="Optional model or budget the customer typed")
+
+    @field_validator("slug", "channel", "shop", "placement", "buy_category", mode="before")
+    @classmethod
+    def _tag(cls, v: Any, info: ValidationInfo) -> str | None:
+        if v is None:
+            return None
+        v = _PARTNER_TAG_RE.sub("-", str(v).strip().lower()).strip("-")
+        v = v[:PARTNER_FIELD_MAX_LEN[info.field_name or "channel"]]
+        if not v and info.field_name == "slug":
+            raise ValueError("partner slug is required")
+        return v or None
+
+    @field_validator("qr_code", mode="before")
+    @classmethod
+    def _code(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        v = re.sub(r"[^A-Z0-9-]+", "", str(v).strip().upper())[:24]
+        return v or None
+
+    @field_validator("buy_model", mode="before")
+    @classmethod
+    def _free_text(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        v = (_strip_tags(str(v)) or "").strip()[:200]
+        return v or None
+
+
 class EvaluateRequest(BaseModel):
     """Request body for POST /tradein/evaluate.
 
@@ -284,6 +345,10 @@ class EvaluateRequest(BaseModel):
     attribution: EvaluationAttribution | None = Field(
         None, description="utm_* / referrer / landing_url captured by the frontend on first load",
     )
+    # Partner trade-in (Mika, Vision Plus). Absent on GreenBay's own portals.
+    partner: PartnerContext | None = Field(
+        None, description="Which partner site, channel, shop and QR code this came from",
+    )
 
     @field_validator("category", "brand", "model", "condition_grade", "retail_price_source", "size_unit", mode="before")
     @classmethod
@@ -338,6 +403,9 @@ class EvaluateResponse(BaseModel):
     redirect_info: dict | None = None
     # CR-1: Video analysis results
     video_analysis: dict | None = None
+    # Partner trade-in: {slug, credit_offer, currency, nominal}. credit_offer
+    # is None when a person must decide (review or high risk).
+    partner: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +418,8 @@ class AcceptOfferResponse(BaseModel):
     # What was actually stored. After a negotiation, or a clamp, this can differ
     # from the figure the client sent, and the UI must show the stored one.
     final_offer: float | None = None
+    # Partner trade-in only: the customer's reference (e.g. MK-7K3Q).
+    reference: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -104,6 +104,8 @@ from greenbay_ai_evaluator.services.airtable_service import (
     write_evaluation_async as airtable_write_async,
 )
 
+from greenbay_ai_evaluator.partners import service as partner_service
+
 evaluator_router = APIRouter()
 
 
@@ -2046,6 +2048,7 @@ def _pulse_airtable_fields(vs: ValuationSession) -> dict[str, Any]:
         value = getattr(vs, attr_name, None)
         if value:
             out[column] = str(value)
+    out.update(partner_service.airtable_fields(vs))
     return out
 
 
@@ -2374,6 +2377,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
     eval_s3_keys: list[str] = []
     s3_configured_for_airtable = False
     try:
+        # 0. Partner site (/mika, /vision-plus): is this item accepted there,
+        # and where did the lead come from? Refuses with 422 before pricing.
+        partner_ctx = partner_service.resolve(db, req)
+
         # 1. Load pricing policy
         policy = _load_policy(req.category, db)
         policy_data = _policy_to_data(policy)
@@ -3218,6 +3225,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 "confidence": comp_result.confidence,
             },
             **_attribution_columns(req),
+            **partner_service.session_columns(partner_ctx),
         )
         db.add(vs)
         db.flush()  # Populate vs.id before creating ledger entries
@@ -3293,6 +3301,9 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                         tis_row.s3_keys = eval_s3_keys
             except Exception as e:
                 logger.warning(f"Evaluate: S3 persist for evaluation images failed: {e}")
+
+        # Partner site: the credit offer, its ledger row and funnel events.
+        partner_block = partner_service.after_evaluation(db, partner_ctx, vs)
 
         db.commit()
         db.refresh(vs)
@@ -3506,6 +3517,7 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
             customer_message=customer_message,
             rejected_images=rejected_images_data,
             redirect_info=redirect_info,
+            partner=partner_block,
         )
 
     except HTTPException:
@@ -3547,6 +3559,10 @@ def accept_offer(
             raw = float(body.get("accepted_amount") or 0)
             if raw > 0:
                 ceiling = float(vs.acquisition_ceiling or vs.opening_offer or 0)
+                # On a partner site the credit floor can sit above the
+                # engine's ceiling (an item worth KES 300 still gets 500).
+                if getattr(vs, "partner_id", None) and vs.partner_offer:
+                    ceiling = max(ceiling, float(vs.partner_offer))
                 accepted_amount = min(raw, ceiling) if ceiling > 0 else raw
                 if accepted_amount != raw:
                     logger.warning(
@@ -3555,6 +3571,13 @@ def accept_offer(
                     )
         except (TypeError, ValueError):
             accepted_amount = None
+
+    # Partner site: the credit (floor and nominal rules applied) is what the
+    # customer gets, and their reference is created with it.
+    partner_reference = None
+    partner_result = partner_service.on_accept(db, vs, accepted_amount)
+    if partner_result is not None:
+        accepted_amount, partner_reference = partner_result
 
     vs.decision = "accepted"
     vs.final_decision = "accepted"
@@ -3600,6 +3623,19 @@ def accept_offer(
         send_evaluation_outcome_email(snapshot_session(vs), "ACCEPTED")
     except Exception as e:
         logger.warning(f"Accept email failed: {e}")
+
+    if partner_reference:
+        return AcceptOfferResponse(
+            session_id=session_id,
+            decision="accepted",
+            final_offer=float(vs.final_offer or 0),
+            reference=partner_reference,
+            message=(
+                f"Your offer is accepted. Your reference is {partner_reference}. "
+                "Our team will call you to arrange the inspection. Your credit is "
+                "issued once the item has been checked."
+            ),
+        )
 
     return AcceptOfferResponse(
         session_id=session_id,
