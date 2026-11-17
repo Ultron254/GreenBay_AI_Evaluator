@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en" data-country="{{country}}" data-partner="{{slug}}">
+
+<head>
+    <!-- Google tag (gtag.js): same cleaning rules as index.html -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2REFLT805D"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      // THE SAME ALLOW-LIST LIVES IN index.html and in
+      // greenbay_ai_evaluator/api/schemas.py (ATTRIBUTION_QUERY_ALLOWLIST).
+      window.gbCleanUrl = function (url, keepQuery) {
+        var allow = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+                     'utm_source_platform',
+                     'gclid', 'gbraid', 'wbraid', 'dclid', 'gad_source', 'gad_campaignid',
+                     'fbclid', 'ttclid', 'msclkid'];
+        if (!url) return '';
+        try {
+          var u = new URL(url, window.location.href);
+          var out = u.protocol + '//' + u.host + u.pathname;
+          if (!keepQuery) return out;
+          var kept = new URLSearchParams();
+          u.searchParams.forEach(function (v, k) {
+            if (v && allow.indexOf(k.toLowerCase()) !== -1) kept.append(k, v);
+          });
+          var q = kept.toString();
+          var hash = /^#[A-Za-z0-9_\-]{0,64}$/.test(u.hash) ? u.hash : '';
+          return out + (q ? '?' + q : '') + hash;
+        } catch (e) {
+          return String(url).split(/[?#]/)[0];
+        }
+      };
+      gtag('js', new Date());
+      gtag('config', 'G-2REFLT805D', {
+        page_location: window.gbCleanUrl(window.location.href, true),
+        page_referrer: window.gbCleanUrl(document.referrer, false)
+      });
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="gb-partner" content="{{slug}}" data-country="{{country}}">
+    <title>{{copy.page_title}}</title>
+    <meta name="description" content="{{copy.description}}">
+    <meta name="theme-color" content="{{color.ink}}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="{{fonts_url}}" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com https://*.google-analytics.com https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com;">
+    <link rel="stylesheet" href="/app/styles.css?v={{asset_version}}">
+    <link rel="stylesheet" href="/app/partner.css?v={{asset_version}}">
+    <style>{{theme_css}}</style>
+    <link rel="icon" href="/app/greenbay-logo.png" type="image/png">
+    <script type="application/json" id="gbPartnerConfig">{{config_json}}</script>
+</head>
+
+<body class="partner-page">
+    <a class="p-skip" href="#evaluate">Skip to the valuation</a>
+
+    <!-- CO-BRAND BAR: both marks are the official files, never redrawn -->
+    <header class="p-bar">
+        <div class="p-wrap p-bar-inner">
+            <a class="p-lockup" href="{{path}}" aria-label="GreenBay x {{name}} swap, home">
+                <img class="p-lockup-partner" src="{{logo_on_dark}}" alt="{{logo_alt}}" width="110" height="46">
+                <span class="p-lockup-x" aria-hidden="true">&times;</span>
+                <img class="p-lockup-gb" src="/app/partners/greenbay/greenbay-wordmark-white.png" alt="GreenBay" width="112" height="24">
+            </a>
+            <a class="p-btn p-btn--light p-bar-cta" href="#evaluate">{{copy.cta_primary}}</a>
+        </div>
+    </header>
+
+    <main>
+        <!-- 1. HERO -->
+        <section class="p-hero" aria-labelledby="pHeadline">
+            <div class="p-wrap p-hero-grid">
+                <div class="p-hero-copy">
+                    <p class="p-kicker" data-reveal>{{copy.kicker}}</p>
+                    <h1 class="p-headline" id="pHeadline" data-reveal>
+                        <span>{{copy.headline_1}}</span>
+                        <em>{{copy.headline_2}}</em>
+                    </h1>
+                    <p class="p-lede" data-reveal>{{copy.lede}}</p>
+                    <div class="p-actions" data-reveal>
+                        <a class="p-btn p-btn--light" href="#evaluate">{{copy.cta_primary}}<i data-lucide="arrow-right" aria-hidden="true"></i></a>
+                        <a class="p-btn p-btn--ghost" href="#how">{{copy.cta_secondary}}</a>
+                    </div>
+                    <p class="p-runby" data-reveal>
+                        <img src="/app/partners/greenbay/greenbay-mark-white.png" alt="" width="18" height="19">
+                        {{copy.run_by}}
+                    </p>
+                </div>
+
+                <figure class="p-card" data-reveal aria-label="Example of a credit offer">
+                    <div class="p-card-top">
+                        <img src="{{logo}}" alt="{{logo_alt}}" class="p-card-logo" width="88" height="37">
+                        <span class="p-card-tag">Example</span>
+                    </div>
+                    <p class="p-card-label">{{copy.card_label}}</p>
+                    <p class="p-card-amount"><span class="p-card-cur">KES</span> <span data-countup="{{copy.card_example_amount}}">0</span></p>
+                    <p class="p-card-item">{{copy.card_item}}</p>
+                    <div class="p-card-perf" aria-hidden="true"></div>
+                    <dl class="p-card-meta">
+                        <div><dt>Valued by</dt><dd>GreenBay</dd></div>
+                        <div><dt>Spend at</dt><dd>{{name}}</dd></div>
+                        <div><dt>Lasts</dt><dd>{{expiry_days}} days</dd></div>
+                    </dl>
+                    <figcaption class="p-card-note">{{copy.card_note}}</figcaption>
+                </figure>
+            </div>
+        </section>
+
+        <!-- 2. HOW IT WORKS: numbered steps on a drawn line -->
+        <section class="p-steps" id="how" aria-labelledby="pStepsTitle">
+            <div class="p-wrap">
+                <h2 class="p-h2" id="pStepsTitle" data-reveal>{{copy.steps_title}}</h2>
+                <div class="p-steps-track">
+                    <svg class="p-steps-line" aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1000 4">
+                        <line x1="0" y1="2" x2="1000" y2="2" pathLength="1"></line>
+                    </svg>
+                    <ol class="p-steps-list">{{steps_html}}</ol>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. THE CREDIT, PLAINLY -->
+        <section class="p-credit" aria-labelledby="pCreditTitle">
+            <div class="p-wrap p-credit-grid">
+                <div>
+                    <h2 class="p-h2" id="pCreditTitle" data-reveal>{{copy.credit_title}}</h2>
+                    <div class="p-accepts" data-reveal>
+                        <h3>{{copy.accepts_title}}</h3>
+                        <p>{{copy.accepts}}</p>
+                    </div>
+                </div>
+                <table class="p-table" data-reveal>
+                    <tbody>{{credit_rows_html}}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 4. THE EVALUATOR (shared wizard, re-skinned by partner tokens) -->
+        {{wizard_html}}
+
+        <!-- 5. QUESTIONS -->
+        <section class="p-faq" aria-labelledby="pFaqTitle">
+            <div class="p-wrap p-faq-grid">
+                <h2 class="p-h2" id="pFaqTitle" data-reveal>{{copy.faq_title}}</h2>
+                <div class="p-faq-list">{{faq_html}}</div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="p-foot">
+        <div class="p-wrap">
+            <div class="p-foot-top">
+                <div class="p-lockup p-lockup--foot">
+                    <img class="p-lockup-partner" src="{{logo_on_dark}}" alt="{{logo_alt}}" width="110" height="46">
+                    <span class="p-lockup-x" aria-hidden="true">&times;</span>
+                    <img class="p-lockup-gb" src="/app/partners/greenbay/greenbay-wordmark-white.png" alt="GreenBay" width="112" height="24">
+                </div>
+                <ul class="p-foot-contact">
+                    <li><a href="#" data-wa="Hi GreenBay, I have a question about the {{name}} swap" target="_blank" rel="noopener">WhatsApp GreenBay</a></li>
+                    <li><a href="tel:+254709155506" data-contact="phone">+254 709 155 506</a></li>
+                    <li><a href="mailto:info@greenbay.market" data-contact="email">info@greenbay.market</a></li>
+                </ul>
+            </div>
+            <p class="p-foot-legal">{{copy.footer_legal}}</p>
+        </div>
+    </footer>
+
+    <script src="/app/app.js?v={{asset_version}}"></script>
+    <script src="/app/partner.js?v={{asset_version}}"></script>
+    <script>lucide.createIcons();</script>
+</body>
+
+</html>

@@ -8,6 +8,7 @@ test_markets), and FastAPI's TestClient for the public partner routes.
 
 from __future__ import annotations
 
+import re as _re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -135,9 +136,10 @@ class TestConfig:
         assert len(codes) == len(set(codes))
 
     def test_public_config_carries_no_emails_or_internal_rules(self):
+        email = _re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
         for cfg in all_partners():
             text = repr(public_config(cfg))
-            assert "@" not in text
+            assert not email.search(text)
             assert "max_auto_risk_score" not in text and "notify" not in text
 
     def test_every_notify_event_has_recipients(self):
@@ -497,7 +499,7 @@ def client(db):  # noqa: F811
 class TestPublicRoutes:
     def test_config(self, client):
         r = client.get("/tradein/partners/mika/config")
-        assert r.status_code == 200 and r.json()["name"] == "Mika" and "@" not in r.text
+        assert r.status_code == 200 and r.json()["name"] == "Mika" and "@greenbay.market" not in r.text
         assert client.get("/tradein/partners/nobody/config").status_code == 404
 
     def test_qr_scan_is_logged_then_redirected(self, client, db):  # noqa: F811
@@ -535,8 +537,10 @@ class TestPublicRoutes:
         r = client.get("/mika")
         assert r.status_code == 200
         assert '<meta name="gb-partner" content="mika" data-country="KE">' in r.text
+        assert 'data-partner="mika"' in r.text
         assert 'href="/app/styles.css' in r.text and 'src="/app/app.js' in r.text
-        assert 'href="#evaluate"' in r.text or "#evaluate" in r.text
+        assert 'src="/app/partner.js' in r.text and 'href="/app/partner.css' in r.text
+        assert 'id="evaluate"' in r.text
         assert client.get("/vision-plus").status_code == 200
         assert client.get("/mika/", follow_redirects=False).headers["location"] == "/mika"
 
@@ -593,3 +597,136 @@ class TestMigration:
             model_cols = set(Base.metadata.tables[table].columns.keys())
             db_cols = {c["name"] for c in insp.get_columns(table)}
             assert model_cols == db_cols, table
+
+
+# ---------------------------------------------------------------------------
+# stage 2: the branded partner page
+# ---------------------------------------------------------------------------
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _subprocess  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+from greenbay_ai_evaluator.partners import pages  # noqa: E402
+
+_FRONTEND = _Path(__file__).resolve().parents[2] / "frontend"
+_BRANDED = [cfg for cfg in all_partners() if cfg.copy_text]
+
+
+def _luminance(hex_colour: str) -> float:
+    h = hex_colour.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    chans = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in chans]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+@pytest.mark.parametrize("cfg", _BRANDED, ids=lambda c: c.slug)
+class TestBrandedPage:
+    def test_every_placeholder_is_filled(self, cfg):
+        html = pages.render(cfg.slug)
+        assert "{{" not in html
+
+    def test_the_wizard_is_the_shared_one_not_a_copy(self, cfg):
+        """The page reuses index.html's evaluation section: same steps, same ids."""
+        html = pages.render(cfg.slug)
+        shared = pages.extract_wizard((_FRONTEND / "index.html").read_text(encoding="utf-8"))
+        for marker in ('id="step1"', 'id="step2"', 'id="step3"', 'id="step4"', 'id="stepResults"',
+                       'id="chatPanel"', 'id="sellerPhoneInput"', 'id="nextBtn"'):
+            assert marker in shared and html.count(marker) == 1, marker
+        assert (_FRONTEND / "partner.html").read_text(encoding="utf-8").count('id="step1"') == 0
+
+    def test_embedded_config_is_public_only(self, cfg):
+        html = pages.render(cfg.slug)
+        raw = _re.search(r'<script type="application/json" id="gbPartnerConfig">(.*?)</script>', html, _re.S).group(1)
+        data = _json.loads(raw)
+        assert data["slug"] == cfg.slug and data["brands"] == cfg.brands
+        assert "@greenbay.market" not in raw and "notify" not in data
+
+    def test_logos_are_official_files_that_exist(self, cfg):
+        for key in ("logo", "logo_on_dark"):
+            path = cfg.theme[key]
+            assert path.startswith("/app/partners/" + cfg.slug + "/"), path
+            assert (_FRONTEND / path[len("/app/"):]).is_file(), path
+        assert (_FRONTEND / "partners/greenbay/greenbay-wordmark-white.png").is_file()
+
+    def test_copy_is_plain(self, cfg):
+        """No em or en dashes, no instant promises, no reply-time promises."""
+        text = _json.dumps(cfg.copy_text, ensure_ascii=False)
+        assert "\u2014" not in text and "\u2013" not in text
+        low = text.lower()
+        for banned in ("instant", "guarantee", "within 24", "within 48", "same day", "right away", "immediately"):
+            assert banned not in low, banned
+
+    def test_wcag_aa_contrast(self, cfg):
+        c = cfg.theme["colors"]
+        pairs = [
+            ("ink", "paper"), ("muted", "paper"), ("ink", "stone"), ("muted", "stone"),
+            ("on_ink", "ink"), ("on_ink_muted", "ink"), ("cosign", "paper"), ("ink", "cosign_soft"),
+        ]
+        for fg, bg in pairs:
+            assert _contrast(c[fg], c[bg]) >= 4.5, (fg, bg, round(_contrast(c[fg], c[bg]), 2))
+        assert _contrast("#FFFFFF", c["accent"]) >= 4.5
+        assert _contrast("#FFFFFF", c["muted"]) >= 4.5  # muted text also sits on white cards
+
+
+class TestPageSafety:
+    def test_config_text_is_escaped(self, monkeypatch):
+        cfg = MIKA.model_copy(deep=True)
+        cfg.copy_text["headline_1"] = '<img src=x onerror=alert(1)>'
+        monkeypatch.setattr(pages, "get_partner", lambda slug: cfg)
+        pages._render.cache_clear()
+        try:
+            html = pages._render("mika", "test")
+        finally:
+            pages._render.cache_clear()
+        assert "<img src=x onerror" not in html and "&lt;img src=x" in html
+
+    def test_theme_values_cannot_break_out_of_css(self):
+        cfg = MIKA.model_copy(deep=True)
+        cfg.theme = dict(cfg.theme, colors=dict(cfg.theme["colors"], ink="red;}</style><script>x</script>"),
+                         font_body="x;}</style>", radius_card="1px;}")
+        css = pages.theme_css(cfg)
+        assert "</style>" not in css and "<script>" not in css and "1px;}" not in css
+        assert "--p-ink:#111111" in css
+
+    def test_embedded_json_cannot_close_its_script_tag(self, monkeypatch):
+        cfg = MIKA.model_copy(deep=True)
+        cfg.copy_text["greeting"] = "</script><script>alert(1)</script>"
+        assert "</script>" not in pages._config_json(cfg)
+
+
+@pytest.mark.skipif(_shutil.which("node") is None, reason="node is not installed")
+def test_browser_and_server_agree_on_brand_spellings():
+    """app.js partnerBrandOk must fold brand names exactly like rules.brand_allowed."""
+    src = (_FRONTEND / "app.js").read_text(encoding="utf-8")
+    start = src.index("function partnerBrandOk(")
+    end = src.index("/** On a partner site the brand is the partner's")
+    cases = []
+    for cfg in all_partners():
+        for brand in ["Mika", "MIKA", "Mika Appliances", "Vision Plus", "Vision+", "vision-plus", "VPlus",
+                      "Samsung", "", "Hisense", " mika "]:
+            cases.append([cfg.brands, brand, rules.brand_allowed(cfg, brand) and normalise_in(cfg, brand)])
+    script = (
+        "let GB_PARTNER = null;\n" + src[start:end]
+        + "\nconst cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
+        + "console.log(JSON.stringify(cases.map(c => { GB_PARTNER = {config: {brands: c[0]}}; return partnerBrandOk(c[1]); })));\n"
+    )
+    out = _subprocess.run(["node", "-e", script], input=_json.dumps(cases), capture_output=True,
+                          text=True, timeout=30, check=True)
+    got = _json.loads(out.stdout)
+    assert [bool(g) for g in got] == [bool(c[2]) for c in cases]
+
+
+def normalise_in(cfg, brand) -> bool:
+    """The browser only knows the brand names, not the aliases: a label that
+    reads an alias is let through by the server, so the browser must never be
+    stricter than the server on the names themselves."""
+    return rules.normalise_brand(brand) in {rules.normalise_brand(b) for b in cfg.brands}

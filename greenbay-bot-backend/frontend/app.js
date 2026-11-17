@@ -119,7 +119,11 @@ const GB_PARTNER = (function readPartner() {
     try {
         const meta = document.querySelector('meta[name="gb-partner"]');
         if (!meta || !meta.content) return null;
-        const p = { slug: meta.content, country: (meta.dataset.country || 'KE').toUpperCase() };
+        const p = { slug: meta.content, country: (meta.dataset.country || 'KE').toUpperCase(), config: {} };
+        try {
+            const el = document.getElementById('gbPartnerConfig');
+            if (el) p.config = JSON.parse(el.textContent || '{}') || {};
+        } catch (_) { p.config = {}; }
         const key = 'gb_partner_ctx_' + p.slug;
         let saved = {};
         try { saved = JSON.parse(sessionStorage.getItem(key) || '{}') || {}; } catch (_) { saved = {}; }
@@ -156,6 +160,42 @@ function partnerPing(type) {
             keepalive: true,
         }).catch(() => { /* analytics only */ });
     } catch (_) { /* analytics only */ }
+}
+
+/** Partner copy with {placeholders} filled; '' when the partner has none. */
+function partnerCopy(key, vars) {
+    if (!GB_PARTNER) return '';
+    const raw = ((GB_PARTNER.config || {}).copy || {})[key];
+    if (typeof raw !== 'string') return '';
+    return raw.replace(/\{(\w+)\}/g, (_, k) => (vars && vars[k] != null ? String(vars[k]) : ''));
+}
+
+/** Is this brand one the partner site accepts? Same folding as the server. */
+function partnerBrandOk(brand) {
+    if (!GB_PARTNER) return true;
+    const fold = (b) => String(b || '').toLowerCase().replace(/[^a-z0-9+]/g, '').replace(/\+/g, 'plus');
+    const key = fold(brand);
+    if (!key) return false;
+    return ((GB_PARTNER.config || {}).brands || []).some(b => fold(b) === key);
+}
+
+/** On a partner site the brand is the partner's, unless a label says otherwise. */
+function partnerInitAnswers() {
+    if (!GB_PARTNER || typeof state === 'undefined') return;
+    const a = state.answers;
+    const brand = ((GB_PARTNER.config || {}).brands || [])[0];
+    if (brand && (!a.brand || a.brandSource !== 'label' || !partnerBrandOk(a.brand))) {
+        if (!a.partnerBrandMismatch) { a.brand = brand; a.brandSource = 'partner'; }
+    }
+}
+
+/** Hand a results screen to partner.js (offer, review, accepted). */
+function partnerRender(kind, data, extra) {
+    if (!GB_PARTNER || !window.GBPartnerUI || typeof window.GBPartnerUI.render !== 'function') return false;
+    try { return window.GBPartnerUI.render(kind, data, extra) === true; } catch (e) {
+        console.warn('partner render failed', e);
+        return false;
+    }
 }
 
 // Market: a partner page's country wins, then the portal path (/app/ug),
@@ -201,7 +241,8 @@ function applyMarketCopy() {
     document.querySelectorAll('#brandSelect option[data-markets]').forEach(opt => {
         if (opt.dataset.markets.split(',').indexOf(MARKET.code) === -1) opt.remove();
     });
-    document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
+    // A partner page keeps its own title (set server side from its config).
+    if (!GB_PARTNER) document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
 }
 
 try { applyMarketCopy(); } catch (_) { /* re-applied on DOMContentLoaded */ }
@@ -426,8 +467,10 @@ const DEFECT_LABELS = {
 document.addEventListener('DOMContentLoaded', () => {
     applyMarketCopy();
 
+    partnerInitAnswers();
+
     // Greet in chat
-    addChatMessage('bot', `${MARKET.greeting}! I'm Kay, your GreenBay AI evaluator for ${MARKET.name}. Four quick steps on the left and I'll value your appliance.`);
+    addChatMessage('bot', partnerCopy('greeting') || `${MARKET.greeting}! I'm Kay, your GreenBay AI evaluator for ${MARKET.name}. Four quick steps on the left and I'll value your appliance.`);
     setTimeout(() => {
         addChatMessage('bot', 'Start by telling me what you\'re selling, how old it is and its condition.');
     }, 800);
@@ -483,7 +526,7 @@ function updateWizardUI() {
     const label = STEP_LABELS[step] || 'Results';
     const fill = inWizard ? ((step / TOTAL_STEPS) * 100) : 100;
 
-    document.getElementById('progressLabel').textContent = inWizard ? `Step ${step}: ${label}` : 'Analysis Complete';
+    document.getElementById('progressLabel').textContent = inWizard ? `Step ${step}: ${label}` : (partnerCopy('results_label') || 'Analysis Complete');
     document.getElementById('progressCount').textContent = inWizard ? `${step} / ${TOTAL_STEPS}` : 'Done!';
     document.getElementById('progressFill').style.width = `${fill}%`;
 
@@ -517,7 +560,9 @@ function isStepValid(step) {
             && (a.category !== 'other' || (a.otherDescription || '').trim().length >= 2)
             && a.age !== null && a.age !== undefined
             && !!a.condition;
-        case 2: return a.photos.length >= 3 && !!a.brand && a.plateRead !== 'reading';
+        // Partner site: the brand is the partner's; a label that reads another
+        // brand (partnerBrandMismatch) stops the swap here, with a reason on screen.
+        case 2: return a.photos.length >= 3 && (GB_PARTNER ? !a.partnerBrandMismatch : !!a.brand) && a.plateRead !== 'reading';
         case 3: return true; // price can be null ("make me an offer")
         case 4: return (a.sellerName || '').trim().length >= 2 && isValidPhone(a.sellerPhone);
         default: return true;
@@ -713,6 +758,18 @@ function handleCustomBrand(value) {
     saveState();
 }
 
+/** The customer says the label was misread: it really is the partner's brand. */
+function partnerBrandOverride() {
+    if (!GB_PARTNER) return;
+    state.answers.partnerBrandMismatch = null;
+    state.answers.brandSource = null;
+    partnerInitAnswers();
+    setPlateStatus('ok', 'Thanks. We will confirm the brand when we check the item.');
+    refreshNext();
+    saveState();
+}
+window.partnerBrandOverride = partnerBrandOverride;
+
 function setPlateStatus(kind, html) {
     const el = document.getElementById('plateStatus');
     if (!el) return;
@@ -896,6 +953,25 @@ async function lookupModelFromPhoto(dataUrl) {
     const ocrModel = sanitiseText((result && result.model_number) || '').trim();
     const model = ocrModel;
     if (ocrModel) state.answers.model = ocrModel;
+    if (GB_PARTNER) {
+        a.partnerBrandMismatch = (ocrBrand && !partnerBrandOk(ocrBrand)) ? ocrBrand : null;
+        a.plateRead = result ? 'done' : 'failed';
+        if (a.partnerBrandMismatch) {
+            setPlateStatus('warn', escapeHtml(partnerCopy('brand_mismatch', { brand: ocrBrand })
+                || `This label reads ${ocrBrand}. This swap is for ${GB_PARTNER.config.name || 'partner'} appliances.`)
+                + ' <button type="button" class="link-button" onclick="partnerBrandOverride()">It is a '
+                + escapeHtml(GB_PARTNER.config.name || '') + '</button>');
+        } else {
+            partnerInitAnswers();
+            setPlateStatus('ok', model
+                ? `<i data-lucide="check-circle" class="inline-icon"></i> Model read from your label: <strong>${escapeHtml(model)}</strong>`
+                : 'Label photo saved. You can carry on.');
+        }
+        if (window.lucide) lucide.createIcons();
+        refreshNext();
+        saveState();
+        return;
+    }
     if (ocrBrand && a.brandSource !== 'manual') {
         state.answers.brand = ocrBrand;
         a.brandSource = 'label';
@@ -1565,6 +1641,7 @@ Start New Evaluation
 
     // v6: AUTO-REDIRECT to specialist if confidence < 80% OR flagged for review
     const currency = data.currency_code || MARKET.currency;
+    if (needsPerson && partnerRender('review', data)) return;
     if (needsPerson) {
         const reviewMessage = escapeHtml(data.customer_message || (MARKET.showConfidence
             ? `Our AI's confidence on this valuation is below 80%. For the most accurate offer, we're connecting you with one of our trade-in specialists who can assess your ${a.brand} ${CATEGORY_NAMES[a.category]} personally.`
@@ -1629,6 +1706,8 @@ Start New Evaluation
         lucide.createIcons();
         return;
     }
+
+    if (partnerRender('offer', data, { offer, currency })) return;
 
     // Normal results display (confidence >= 85%)
     const resultsStep = document.getElementById('stepResults');
@@ -2127,6 +2206,10 @@ async function acceptOffer(amount) {
  ${MARKET.outlets.length ? '🏬 <strong>Option 2:</strong> Drop it off at one of our outlets<br>' : ''}<br>
  Choose your preferred option below!`);
 
+    if (partnerRender('accepted', state.evaluation, { amount, reference: state.partnerReference })) {
+        saveState();
+        return;
+    }
     showPickupDropoffChoice(amount);
     saveState();
 }

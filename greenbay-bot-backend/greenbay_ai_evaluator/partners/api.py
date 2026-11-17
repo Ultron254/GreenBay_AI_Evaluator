@@ -14,10 +14,7 @@ Admin and partner-scoped data routes come with the ledger views (stage 4).
 
 from __future__ import annotations
 
-import html
 import re
-from functools import lru_cache
-from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -25,42 +22,25 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.database.db import get_db
-from greenbay_ai_evaluator.partners import ledger
+from greenbay_ai_evaluator.partners import ledger, pages
 from greenbay_ai_evaluator.partners.config import all_partners, get_partner, public_config
 from greenbay_ai_evaluator.partners.service import lookup_code
 
 partner_api_router = APIRouter()   # mounted under /tradein
 partner_page_router = APIRouter()  # mounted at the site root
 
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
-
 # Public pings the browser may send. Everything else (complete, offer,
 # accept, validated, issued, redeemed) is written by the server itself.
 PUBLIC_EVENTS = frozenset({"start"})
 
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
-_RELATIVE_ASSET = re.compile(r'(\s(?:src|href)=")(?!https?:|//|/|#|mailto:|tel:|data:|javascript:)([^"]+)"')
-
-
-@lru_cache(maxsize=16)
-def _page_html(slug: str, country: str, mtime: float) -> str:
-    """index.html served at /<slug>: relative assets point at /app/, and a
-    meta tag tells app.js which partner and country it is on."""
-    raw = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-    raw = _RELATIVE_ASSET.sub(lambda m: f'{m.group(1)}/app/{m.group(2)}"', raw)
-    meta = (
-        f'<meta name="gb-partner" content="{html.escape(slug)}" '
-        f'data-country="{html.escape(country)}">'
-    )
-    return raw.replace("<head>", "<head>\n    " + meta, 1)
 
 
 def render_partner_page(slug: str) -> str:
-    cfg = get_partner(slug)
-    if cfg is None:
+    """The partner's page: partner.html with the shared wizard dropped in."""
+    if get_partner(slug) is None:
         raise HTTPException(404, "Not found")
-    index = FRONTEND_DIR / "index.html"
-    return _page_html(cfg.slug, cfg.countries[0] if cfg.countries else "KE", index.stat().st_mtime)
+    return pages.render(slug)
 
 
 def register_partner_pages(app) -> None:

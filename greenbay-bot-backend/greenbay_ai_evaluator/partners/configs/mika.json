@@ -5,21 +5,62 @@
   "path": "/mika",
   "ref_prefix": "MK",
   "voucher_prefix": "MIKA",
-  "countries": ["KE"],
+  "countries": [
+    "KE"
+  ],
   "currency": "KES",
-  "brands": ["Mika"],
-  "brand_aliases": ["mika", "mikaappliances", "mikaappliance"],
-  "categories": ["refrigerator", "cooker_oven", "microwave", "washing_machine", "small_kitchen"],
-  "bulky_categories": ["refrigerator", "washing_machine"],
+  "brands": [
+    "Mika"
+  ],
+  "brand_aliases": [
+    "mika",
+    "mikaappliances",
+    "mikaappliance"
+  ],
+  "categories": [
+    "refrigerator",
+    "cooker_oven",
+    "microwave",
+    "washing_machine",
+    "small_kitchen"
+  ],
+  "bulky_categories": [
+    "refrigerator",
+    "washing_machine"
+  ],
   "buy_categories": [
-    {"id": "refrigerator", "label": "Fridge or freezer"},
-    {"id": "cooker_oven", "label": "Cooker or oven"},
-    {"id": "microwave", "label": "Microwave"},
-    {"id": "washing_machine", "label": "Washing machine"},
-    {"id": "water_dispenser", "label": "Water dispenser"},
-    {"id": "small_kitchen", "label": "Small kitchen appliance"},
-    {"id": "tv", "label": "TV"},
-    {"id": "other", "label": "Something else"}
+    {
+      "id": "refrigerator",
+      "label": "Fridge or freezer"
+    },
+    {
+      "id": "cooker_oven",
+      "label": "Cooker or oven"
+    },
+    {
+      "id": "microwave",
+      "label": "Microwave"
+    },
+    {
+      "id": "washing_machine",
+      "label": "Washing machine"
+    },
+    {
+      "id": "water_dispenser",
+      "label": "Water dispenser"
+    },
+    {
+      "id": "small_kitchen",
+      "label": "Small kitchen appliance"
+    },
+    {
+      "id": "tv",
+      "label": "TV"
+    },
+    {
+      "id": "other",
+      "label": "Something else"
+    }
   ],
   "credit": {
     "floor": 500,
@@ -29,14 +70,179 @@
     "max_auto_risk_score": 70
   },
   "placements": [
-    {"code": "MK-WEB1", "channel": "website", "placement": "banner", "label": "Mika website banner"},
-    {"code": "MK-WEB2", "channel": "website", "placement": "product-page", "label": "Mika website product pages"}
+    {
+      "code": "MK-WEB1",
+      "channel": "website",
+      "placement": "banner",
+      "label": "Mika website banner"
+    },
+    {
+      "code": "MK-WEB2",
+      "channel": "website",
+      "placement": "product-page",
+      "label": "Mika website product pages"
+    }
   ],
   "shops": [],
   "notify": {
-    "accepted": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
-    "needs_validation": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
-    "credit_issued": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"],
-    "credit_used": ["allanmatano@greenbay.market", "alex@greenbay.market", "info@greenbay.market"]
+    "accepted": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "needs_validation": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "credit_issued": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "credit_used": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ]
+  },
+  "theme": {
+    "fonts_url": "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Figtree:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap",
+    "font_display": "'Outfit', 'Figtree', system-ui, sans-serif",
+    "font_body": "'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "font_serif": "'Newsreader', Georgia, serif",
+    "logo": "/app/partners/mika/mika-logo-black.png",
+    "logo_on_dark": "/app/partners/mika/mika-logo-white.png",
+    "logo_alt": "Mika",
+    "logo_ratio": 2.394,
+    "colors": {
+      "ink": "#111111",
+      "paper": "#F4F2ED",
+      "stone": "#E8E4DB",
+      "line": "#D6D0C4",
+      "muted": "#59554D",
+      "on_ink": "#F4F2ED",
+      "on_ink_muted": "#BDB7AB",
+      "accent": "#111111",
+      "accent_hover": "#2B2B2B",
+      "cosign": "#0B6E40",
+      "cosign_soft": "#E3EFE6",
+      "highlight": "#F4F2ED"
+    },
+    "radius_card": "14px"
+  },
+  "copy": {
+    "page_title": "Swap your old Mika | GreenBay x Mika",
+    "description": "Trade in your old Mika appliance for Mika credit. GreenBay values it, checks it and buys it. You spend the credit on something new from Mika.",
+    "kicker": "GreenBay x Mika swap",
+    "headline_1": "Your old Mika still has value.",
+    "headline_2": "Put it towards a new one.",
+    "lede": "Tell us about your old Mika appliance and we will make you a fair offer, paid as Mika credit. GreenBay checks the item and buys it from you. You spend the credit on anything new from Mika.",
+    "cta_primary": "Value my old Mika",
+    "cta_secondary": "How the swap works",
+    "run_by": "Valued and bought by GreenBay Second Life Appliances",
+    "card_label": "Mika credit",
+    "card_example_amount": 8200,
+    "card_note": "Example only. Your offer depends on your appliance.",
+    "card_item": "Mika fridge, 4 years old",
+    "steps_title": "How the swap works",
+    "steps": [
+      {
+        "title": "Tell us about it",
+        "body": "Four short steps: what it is, how old it is, its condition, and a few photos. It takes about two minutes."
+      },
+      {
+        "title": "See your offer",
+        "body": "We value it against real resale prices and show you a figure in Mika credit. Every Mika appliance we accept is worth at least KES 500."
+      },
+      {
+        "title": "We check it",
+        "body": "Our team calls you to arrange a check. For fridges and washing machines a GreenBay technician comes to you. Smaller items can be dropped at a GreenBay shop."
+      },
+      {
+        "title": "Spend it at Mika",
+        "body": "Once the check is done, your credit is ready. Use it at Mika within 90 days and pay the difference on your new appliance."
+      }
+    ],
+    "credit_title": "Your credit, in plain terms",
+    "credit_rows": [
+      [
+        "What you get",
+        "Mika credit equal to your accepted offer, and never less than KES 500."
+      ],
+      [
+        "Where it works",
+        "With Mika only, on new Mika appliances."
+      ],
+      [
+        "When it is ready",
+        "After our team has checked your item."
+      ],
+      [
+        "How long it lasts",
+        "90 days from the day it is issued."
+      ],
+      [
+        "Splitting it",
+        "Use it across more than one purchase until it runs out."
+      ],
+      [
+        "Cash",
+        "The credit is not paid out as cash."
+      ],
+      [
+        "Who does what",
+        "GreenBay values, checks and buys your old appliance. Mika sells and delivers the new one."
+      ]
+    ],
+    "accepts_title": "What we take",
+    "accepts": "Old Mika fridges and freezers, cookers and ovens, microwaves, washing machines and small kitchen appliances. Working or not.",
+    "eval_label": "Your swap",
+    "eval_title": "Value your old Mika",
+    "eval_sub": "Four short steps. Kay, our evaluator, keeps you company as you go.",
+    "faq_title": "Questions people ask",
+    "faq": [
+      [
+        "Does it have to be a Mika?",
+        "Yes. This swap is for Mika appliances. For other brands, GreenBay can still make you a cash offer at evaluate.greenbay.market."
+      ],
+      [
+        "What if it is very old or not working?",
+        "Send it in anyway. Every Mika appliance we accept is worth at least KES 500 in credit. What we cannot resell is stripped for parts or recycled."
+      ],
+      [
+        "What if the check finds something different?",
+        "Our team talks it through with you before anything is final. No credit is issued until you agree."
+      ],
+      [
+        "How do I get my credit?",
+        "Once your item has been checked, our customer team calls you with your Mika credit code."
+      ]
+    ],
+    "footer_legal": "GreenBay Second Life Appliances values, inspects and buys your old appliance. New Mika products are sold and delivered by Mika (Ideal Appliances Ltd). The Mika name and logo belong to their owner.",
+    "greeting": "Hi, I'm Kay from GreenBay. I'll value your old Mika for the swap. Four short steps and you will see your offer.",
+    "buy_title": "What would you like from Mika?",
+    "buy_hint": "Pick one. It helps Mika have it ready for you.",
+    "buy_model_placeholder": "Model or budget (optional)",
+    "step3_label": "Your swap",
+    "price_hint": "Any figure in mind for your old one? (optional)",
+    "offer_header": "Your Mika credit offer",
+    "offer_note": "Paid as Mika credit, not cash. It is ready once our team has checked your item, and lasts 90 days from then.",
+    "accept_cta": "Accept {amount} in Mika credit",
+    "talk_cta": "Talk to our team first",
+    "accepted_title": "You're in.",
+    "accepted_body": "Our team will call you on {phone} to arrange the check. When it is done, they will give you your Mika credit code.",
+    "accepted_next": [
+      "We call you to arrange the check.",
+      "A technician visits, or you drop it at a GreenBay shop.",
+      "Your Mika credit code is issued and ready to use."
+    ],
+    "brand_mismatch": "This label looks like a {brand}. The Mika swap is for Mika appliances. For other brands, GreenBay can make you a cash offer at evaluate.greenbay.market.",
+    "accepted_ref_label": "Your reference. Keep it handy when we call.",
+    "step1_title": "Tell us about your old Mika",
+    "step1_hint": "Three quick picks. It takes about 20 seconds.",
+    "step1_category_label": "Which Mika appliance is it?",
+    "step2_hint": "Start with a photo of the label, so we can read the model number. Then add at least 3 photos of the appliance.",
+    "results_label": "Your offer"
   }
 }
