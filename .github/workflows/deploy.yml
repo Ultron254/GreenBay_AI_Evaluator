@@ -55,7 +55,10 @@ jobs:
     name: Deploy to Production
     needs: test          # deploy is BLOCKED unless the test gate passes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The image build alone takes ~13 min; the post-deploy end-to-end check
+    # (three live evaluations, Airtable wait, service probes, purge) adds ~3.
+    # At 15 the job was cancelled mid-purge after every check had passed.
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
