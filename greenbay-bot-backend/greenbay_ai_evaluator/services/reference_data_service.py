@@ -962,6 +962,74 @@ def sheet_date_cell(when: Any = None) -> str:
     return "'" + d.strftime("%d/%m/%Y")
 
 
+# Uganda and Nigeria evaluations (Nov 2026) are priced in UGX/NGN, so they must
+# never land in EVAL_TRACKER_TAB: that KES tab trains the acquisition ratios and
+# the pricing learner. Each market gets its own tab in the same spreadsheet,
+# created on first write with this fixed header. "Final Price Offered" is left
+# for the local team to fill in; it becomes that market's training data later.
+MARKET_TRACKER_TABS: dict[str, str] = {"UG": "Uganda Evaluations", "NG": "Nigeria Evaluations"}
+MARKET_TRACKER_HEADER: list[str] = [
+    "Date", "Item", "Model", "Currency", "New Price (Estimate)", "AI Price",
+    "AI Confidence", "Customer Price", "Condition", "Age (Years)", "Status",
+    "Final Price Offered", "Notes",
+]
+
+
+def market_tracker_row(
+    *, currency: str, item: str, model: str = "", new_price: float | None = None,
+    ai_price: float | None = None, ai_confidence: float | None = None,
+    customer_price: float | None = None, condition: str = "", age: str = "",
+    status: str = "", notes: str = "", date_str: str | None = None,
+) -> list:
+    """One row for a market tab, in MARKET_TRACKER_HEADER order (pure)."""
+    def _n(v):
+        try:
+            return round(float(v)) if v not in (None, "") and float(v) > 0 else ""
+        except (TypeError, ValueError):
+            return ""
+    return [
+        sheet_date_cell(date_str), item, model, currency, _n(new_price), _n(ai_price),
+        f"{float(ai_confidence):.0f}%" if ai_confidence else "", _n(customer_price),
+        condition, age, status, "", notes,
+    ]
+
+
+def append_market_tracker_row(country: str, **fields) -> bool:
+    """Append a Uganda/Nigeria evaluation to that market's own tracker tab.
+
+    Creates the tab (with MARKET_TRACKER_HEADER) the first time. Never raises;
+    a failed write is logged and saved to the same JSONL fallback as Kenya's.
+    """
+    tab = MARKET_TRACKER_TABS.get((country or "").upper())
+    if not tab:
+        logger.warning(f"Market tracker: no tab for country {country!r}")
+        return False
+    # Deploy/CI probes (ZZSMOKE...) stay out: the purge only sweeps the KES tab.
+    if TEST_ROW_PATTERN.search(f"{fields.get('item') or ''} {fields.get('model') or ''}"):
+        logger.info(f"Market tracker: probe row not written to '{tab}'")
+        return True
+    payload = {"country": country, **fields}
+    gc = _get_gspread_client()
+    if gc is None:
+        _tracker_dump_fallback(payload)
+        return False
+    try:
+        row = market_tracker_row(**fields)
+        ss = gc.open_by_key(EVAL_TRACKER_SHEET_ID)
+        try:
+            ws = ss.worksheet(tab)
+        except Exception:  # gspread.WorksheetNotFound
+            ws = ss.add_worksheet(title=tab, rows=1000, cols=len(MARKET_TRACKER_HEADER))
+            ws.append_row(MARKET_TRACKER_HEADER, value_input_option="RAW")
+            logger.info(f"Market tracker: created tab '{tab}'")
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:  # noqa: BLE001
+        _tracker_dump_fallback(payload)
+        logger.error(f"Market tracker append to '{tab}' failed (row saved to {_TRACKER_FALLBACK_FILE}): {e}")
+        return False
+
+
 def append_tracker_row(
     *, item: str, model: str = "", new_price: float | None = None,
     ai_price: float | None = None, ai_confidence: float | None = None,

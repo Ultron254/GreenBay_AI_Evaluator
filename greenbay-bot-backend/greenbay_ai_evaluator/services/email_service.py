@@ -12,7 +12,9 @@ Config (app.config.Settings):
   - smtp_host / smtp_user / smtp_password / smtp_from — SMTP transport
   - ses_sender_email          — verified SES "From" address (SES transport)
   - ses_region                — SES region (falls back to aws_region)
-  - team_notification_emails  — comma-separated recipient list
+  - team_notification_emails     — Kenya evaluations + ops alerts (comma-separated)
+  - team_notification_emails_ug  — Uganda evaluations
+  - team_notification_emails_ng  — Nigeria evaluations
 """
 
 from __future__ import annotations
@@ -25,10 +27,45 @@ from typing import Any
 from loguru import logger
 
 
-def _recipients() -> list[str]:
+# Each market's evaluations go to that market's team only (Nov 2026): the
+# Kenyan list stays Kenyan, Uganda and Nigeria have their own. Ops alerts use
+# the Kenyan list.
+_MARKET_RECIPIENT_SETTING = {
+    "KE": "team_notification_emails",
+    "UG": "team_notification_emails_ug",
+    "NG": "team_notification_emails_ng",
+}
+_MARKET_NAMES = {"KE": "Kenya", "UG": "Uganda", "NG": "Nigeria"}
+
+
+def _market(vs: dict[str, Any] | None) -> str:
+    code = str((vs or {}).get("country") or "").strip().upper()
+    if code in _MARKET_NAMES:
+        return code
+    # Older snapshots carry only the currency.
+    return {"UGX": "UG", "NGN": "NG"}.get(str((vs or {}).get("currency_code") or ""), "KE")
+
+
+def _is_test_record(vs: dict[str, Any] | None) -> bool:
+    """ZZSMOKE / ZZTEST probe rows (deploy checks, CI) never email a market team."""
+    try:
+        from greenbay_ai_evaluator.services.reference_data_service import TEST_ROW_PATTERN
+    except Exception:  # noqa: BLE001
+        return False
+    text = f"{(vs or {}).get('seller_name') or ''} {(vs or {}).get('model') or ''}"
+    return bool(TEST_ROW_PATTERN.search(text))
+
+
+def _recipients_for(vs: dict[str, Any] | None) -> list[str]:
+    """The market team for a real evaluation; the ops (Kenyan) list for probes."""
+    return _recipients("KE" if _is_test_record(vs) else _market(vs))
+
+
+def _recipients(country: str | None = None) -> list[str]:
     from app.config import get_settings
     s = get_settings()
-    raw = getattr(s, "team_notification_emails", "") or ""
+    setting = _MARKET_RECIPIENT_SETTING.get((country or "KE").upper(), "team_notification_emails")
+    raw = getattr(s, setting, "") or ""
     return [e.strip() for e in raw.split(",") if e.strip()]
 
 
@@ -140,6 +177,7 @@ def snapshot_session(vs: Any) -> dict[str, Any]:
         "final_offer": getattr(vs, "final_offer", None),
         "confidence_score": getattr(vs, "confidence_score", None),
         "currency_code": getattr(vs, "currency_code", None) or "KES",
+        "country": getattr(vs, "country", None) or "KE",
         "size_value": getattr(vs, "size_value", None),
         "size_unit": getattr(vs, "size_unit", None),
         "decision_reason": getattr(vs, "decision_reason", "") or "",
@@ -180,11 +218,14 @@ def build_outcome_email(
     confidence = vs.get("confidence_score")
     image_urls = [u for u in (vs.get("image_urls") or []) if u]
 
+    market = _market(vs)
+    market_tag = "" if market == "KE" else f"[{_MARKET_NAMES[market]}] "
     subject = (
-        f"[GreenBay] Offer {outcome} — {product} — {_format_money(currency, ai_price)}"
+        f"{market_tag}[GreenBay] Offer {outcome} — {product} — {_format_money(currency, ai_price)}"
     )
 
     rows = [
+        ("Market", f"{_MARKET_NAMES[market]} ({currency})"),
         ("Outcome", outcome + (f" — {extra}" if extra else "")),
         ("Item", product),
         ("Model number", vs.get("model") or "—"),
@@ -200,7 +241,7 @@ def build_outcome_email(
         ("Session", str(vs.get("id") or "")[:8]),
     ]
 
-    text_body = f"GreenBay trade-in offer {outcome}\n\n" + "\n".join(
+    text_body = f"GreenBay trade-in offer {outcome} ({_MARKET_NAMES[market]})\n\n" + "\n".join(
         f"{label}: {_strip_html(value)}" for label, value in rows
     )
     if image_urls:
@@ -228,7 +269,7 @@ def build_outcome_email(
 
     html_body = (
         "<div style='font-family:Arial,sans-serif;max-width:700px;'>"
-        f"<h2 style='color:{accent};'>Trade-in offer {outcome}</h2>"
+        f"<h2 style='color:{accent};'>{html_escape(market_tag)}Trade-in offer {outcome}</h2>"
         "<table style='border-collapse:collapse;width:100%;'>"
         f"{html_rows}</table>"
         f"{html_images}"
@@ -238,7 +279,9 @@ def build_outcome_email(
     return subject, text_body, html_body
 
 
-def _send_smtp(subject: str, text_body: str, html_body: str) -> bool:
+def _send_smtp(
+    subject: str, text_body: str, html_body: str, recipients: list[str] | None = None,
+) -> bool:
     """Send via plain SMTP (e.g. Google Workspace / Gmail app password).
 
     Used when SMTP_HOST is configured — simpler than SES (no identity
@@ -253,9 +296,9 @@ def _send_smtp(subject: str, text_body: str, html_body: str) -> bool:
     host = getattr(s, "smtp_host", "") or ""
     if not host:
         return False
-    recipients = _recipients()
+    recipients = recipients if recipients is not None else _recipients()
     if not recipients:
-        logger.warning("Email: no TEAM_NOTIFICATION_EMAILS configured — skipping")
+        logger.warning("Email: no recipients configured for this market — skipping")
         return False
     sender = getattr(s, "smtp_from", "") or getattr(s, "smtp_user", "") or ""
     if not sender:
@@ -290,17 +333,19 @@ def _send_smtp(subject: str, text_body: str, html_body: str) -> bool:
         return False
 
 
-def _send_ses(subject: str, text_body: str, html_body: str) -> bool:
+def _send_ses(
+    subject: str, text_body: str, html_body: str, recipients: list[str] | None = None,
+) -> bool:
     """Deliver email. Prefers SMTP when SMTP_HOST is set, else uses AWS SES."""
     from app.config import get_settings
     s = get_settings()
 
     # Simpler path first: SMTP (Google Workspace / Gmail / any provider).
     if getattr(s, "smtp_host", ""):
-        return _send_smtp(subject, text_body, html_body)
+        return _send_smtp(subject, text_body, html_body, recipients)
 
     sender = getattr(s, "ses_sender_email", "") or ""
-    recipients = _recipients()
+    recipients = recipients if recipients is not None else _recipients()
     if not sender:
         logger.warning("Email: no SMTP_HOST and no SES_SENDER_EMAIL — email is OFF")
         return False
@@ -361,7 +406,7 @@ def send_evaluation_outcome_email(
     def _worker():
         try:
             subject, text_body, html_body = build_outcome_email(snapshot, outcome, extra)
-            _send_ses(subject, text_body, html_body)
+            _send_ses(subject, text_body, html_body, _recipients_for(snapshot))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Email: {outcome} worker failed: {e}")
 
@@ -383,6 +428,12 @@ def qualify_lead(vs: dict[str, Any]) -> tuple[bool, str]:
     phone = (vs.get("seller_phone") or "").strip()
     if not phone:
         return False, "no phone captured"
+
+    # Uganda and Nigeria evaluations are all confirmed by hand, so the local
+    # team hears about every one, whatever the preliminary figure.
+    market = _market(vs)
+    if market != "KE":
+        return True, f"{_MARKET_NAMES[market]} evaluation, confirmed by the local team"
 
     offer = vs.get("final_offer") or vs.get("opening_offer") or 0
     try:
@@ -424,7 +475,7 @@ def send_qualified_lead_email(snapshot: dict[str, Any], outcome: str) -> None:
                 f"<p style='font-size:15px;font-weight:600;color:#14532d;'>{note}</p>"
                 + html_body
             )
-            _send_ses(subject, text_body, html_body)
+            _send_ses(subject, text_body, html_body, _recipients_for(snapshot))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Email: qualified-lead worker failed: {e}")
 

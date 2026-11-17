@@ -156,6 +156,10 @@ class Settings(BaseSettings):
         default="allanmatano@greenbay.market,alexander@greenbay.market",
         env="TEAM_NOTIFICATION_EMAILS",
     )
+    # Uganda / Nigeria evaluations go to the local team (and Allan), never the
+    # Kenyan list. Override with TEAM_NOTIFICATION_EMAILS_UG / _NG.
+    team_notification_emails_ug: str = "kalungi@greenbay.market,allanmatano@greenbay.market"
+    team_notification_emails_ng: str = "sunday@greenbay.market,allanmatano@greenbay.market"
 
     # Simple SMTP alternative to SES (e.g. Google Workspace / Gmail app password).
     # If SMTP_HOST is set, email goes via SMTP and SES is not needed at all.

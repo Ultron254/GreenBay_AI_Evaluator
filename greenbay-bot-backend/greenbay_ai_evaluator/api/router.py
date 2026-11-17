@@ -3363,11 +3363,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
         # CR-4: mirror the evaluation into the tracker Google Sheet (async,
         # non-blocking). Header-aware writer so columns align with the real sheet,
         # and the SAME reconciled new price we send to Airtable (1:1 match).
-        # Kenya only: the tracker is the KES ledger the acquisition ratios and
-        # pricing learner train on, so a UGX/NGN row would corrupt both.
+        # Kenya rows go to the KES tab the acquisition ratios and pricing
+        # learner train on; Uganda/Nigeria rows go to their own market tab in
+        # the same spreadsheet so a UGX/NGN row can never corrupt either.
         try:
-            if not kes_reference:
-                raise _KesOnlySource()
             import threading
 
             _sheet_item = " ".join(
@@ -3406,8 +3405,25 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
 
             def _append_sheet():
                 from greenbay_ai_evaluator.services.reference_data_service import (
+                    append_market_tracker_row,
                     append_tracker_row,
                 )
+                if not kes_reference:
+                    append_market_tracker_row(
+                        req_country,
+                        currency=req_currency,
+                        item=_sheet_item,
+                        model=req.model or "",
+                        new_price=new_price_estimate,
+                        ai_price=result.opening_offer,
+                        ai_confidence=result.confidence_score,
+                        customer_price=req.seller_asking_price,
+                        condition=grade,
+                        age=str(req.age_years) if req.age_years is not None else "",
+                        status=_status_map.get(result.decision, "Pending"),
+                        notes=_sheet_notes,
+                    )
+                    return
                 append_tracker_row(
                     item=_sheet_item,
                     model=req.model or "",
@@ -3424,9 +3440,10 @@ def evaluate_trade_in(req: EvaluateRequest, db: Session = Depends(get_db)):
                 )
 
             threading.Thread(target=_append_sheet, daemon=True).start()
-            logger.info("CR-4: tracker sheet append queued (header-aware)")
-        except _KesOnlySource:
-            logger.info(f"CR-4: tracker append skipped ({req_country} is not a KES market)")
+            logger.info(
+                "CR-4: tracker sheet append queued "
+                + ("(header-aware)" if kes_reference else f"({req_country} market tab)")
+            )
         except Exception as e:
             logger.warning(f"CR-4 Google Sheet append failed: {e}")
 

@@ -25,6 +25,9 @@ const COUNTRY_CONFIG = {
     KE: {
         code: 'KE', name: 'Kenya', currency: 'KES', locale: 'en-KE',
         whatsapp: '254705919099',
+        // Contact details as published on greenbay.market.
+        phone: '+254709155506', email: 'info@greenbay.market',
+        store: 'https://greenbay.market',
         greeting: 'Karibu',
         city: 'Nairobi',
         showConfidence: true,
@@ -40,6 +43,8 @@ const COUNTRY_CONFIG = {
             pickupLine: 'FREE pickup in Nairobi',
             handOver: 'Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!',
             footerPlace: 'Nairobi, Kenya',
+            phoneDisplay: '+254 709 155 506',
+            email: 'info@greenbay.market',
             mockOffer: 'KES 28,500',
             namePlaceholder: 'e.g. Wanjiku',
             phonePlaceholder: 'e.g. 0712 345 678',
@@ -48,8 +53,10 @@ const COUNTRY_CONFIG = {
     },
     UG: {
         code: 'UG', name: 'Uganda', currency: 'UGX', locale: 'en-UG',
-        // TODO(Uganda team): replace with the Uganda trade-in WhatsApp line.
-        whatsapp: '254705919099',
+        // WhatsApp, phone and email as published on uganda.greenbay.market.
+        whatsapp: '256793194148',
+        phone: '+256323200861', email: 'info.uganda@greenbay.market',
+        store: 'https://uganda.greenbay.market',
         greeting: 'Tukusanyukidde',
         city: null, // TODO(Uganda team): pickup city/area once confirmed.
         showConfidence: false,
@@ -62,6 +69,8 @@ const COUNTRY_CONFIG = {
             pickupLine: 'Collection arranged by our Uganda team',
             handOver: 'Our Uganda team inspects the item, arranges collection and settles with you.',
             footerPlace: 'Uganda',
+            phoneDisplay: '+256 323 200 861',
+            email: 'info.uganda@greenbay.market',
             mockOffer: 'UGX 780,000',
             namePlaceholder: 'e.g. Nakato',
             phonePlaceholder: 'e.g. 0772 123 456',
@@ -70,8 +79,12 @@ const COUNTRY_CONFIG = {
     },
     NG: {
         code: 'NG', name: 'Nigeria', currency: 'NGN', locale: 'en-NG',
-        // TODO(Nigeria team): replace with the Nigeria trade-in WhatsApp line.
+        // TODO(Nigeria team): nigeria.greenbay.market lists no WhatsApp line
+        // yet, so chats go to the Kenyan CX line. Phone and email are the
+        // Nigeria site's own.
         whatsapp: '254705919099',
+        phone: '+2342017000170', email: 'info.nigeria@greenbay.market',
+        store: 'https://nigeria.greenbay.market',
         greeting: 'Welcome',
         city: null, // TODO(Nigeria team): pickup city/area once confirmed.
         showConfidence: false,
@@ -84,6 +97,8 @@ const COUNTRY_CONFIG = {
             pickupLine: 'Collection arranged by our Nigeria team',
             handOver: 'Our Nigeria team inspects the item, arranges collection and settles with you.',
             footerPlace: 'Nigeria',
+            phoneDisplay: '+234 201 700 0170',
+            email: 'info.nigeria@greenbay.market',
             mockOffer: 'NGN 335,000',
             namePlaceholder: 'e.g. Chiamaka',
             phonePlaceholder: 'e.g. 0803 123 4567',
@@ -123,12 +138,21 @@ function applyMarketCopy() {
         const text = el.dataset.wa ? '?text=' + encodeURIComponent(el.dataset.wa) : '';
         el.setAttribute('href', `https://wa.me/${MARKET.whatsapp}${text}`);
     });
+    document.querySelectorAll('a[data-contact="phone"]').forEach(el => el.setAttribute('href', `tel:${MARKET.phone}`));
+    document.querySelectorAll('a[data-contact="email"]').forEach(el => el.setAttribute('href', `mailto:${MARKET.email}`));
+    // Store links go to this market's own GreenBay store (its home page: the
+    // Kenyan collection paths are not guaranteed to exist on the others).
+    if (MARKET.store !== COUNTRY_CONFIG.KE.store) {
+        document.querySelectorAll('a[href^="https://greenbay.market"]').forEach(el => el.setAttribute('href', MARKET.store));
+    }
     // Brands sold in one market only (Von, Scanfrost, ...).
     document.querySelectorAll('#brandSelect option[data-markets]').forEach(opt => {
         if (opt.dataset.markets.split(',').indexOf(MARKET.code) === -1) opt.remove();
     });
     document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
 }
+
+try { applyMarketCopy(); } catch (_) { /* re-applied on DOMContentLoaded */ }
 
 // The storage key carries a version: answers saved by the old 10-step wizard
 // do not fit this one.
@@ -1443,7 +1467,7 @@ function showResults(data) {
  <i data-lucide="message-circle" style="width:18px;height:18px;"></i>
  Speak to Our Team
  </a>
- <a href="https://greenbay.market" target="_blank" class="btn btn-primary" style="width:100%;">
+ <a href="${MARKET.store}" target="_blank" rel="noopener" class="btn btn-primary" style="width:100%;">
  🛒 Browse GreenBay Marketplace
  </a>
 <button class="btn btn-outline" onclick="startNewEvaluation()" style="width:100%;">
@@ -2312,7 +2336,7 @@ async function loadRelatedProducts(category) {
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;">
                 ${cards}
             </div>
-            <a href="https://greenbay.market" target="_blank" class="btn btn-outline" style="width:100%;margin-top:12px;">
+            <a href="${MARKET.store}" target="_blank" rel="noopener" class="btn btn-outline" style="width:100%;margin-top:12px;">
                 View All Products on GreenBay →
             </a>
         `;

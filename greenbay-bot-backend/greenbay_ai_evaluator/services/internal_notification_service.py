@@ -40,6 +40,12 @@ def notify_internal_team(payload: dict[str, Any]) -> None:
       session_id: str
       extra: str | None — e.g. rejection option chosen
     """
+    # This WhatsApp line is the Kenyan team's. Uganda and Nigeria evaluations
+    # reach their own teams by email (email_service, per-market recipients).
+    currency = str(payload.get("currency") or "KES").upper()
+    if currency != "KES":
+        logger.info(f"Internal WhatsApp alert skipped for a {currency} evaluation (local team emailed)")
+        return
     t = threading.Thread(
         target=_send_notification, args=(payload,), daemon=True,
     )

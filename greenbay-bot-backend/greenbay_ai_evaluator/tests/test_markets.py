@@ -181,6 +181,8 @@ def calls(monkeypatch):
     import greenbay_ai_evaluator.services.email_service as email
 
     monkeypatch.setattr(ref, "append_tracker_row", rec("append_tracker_row", None))
+    monkeypatch.setattr(ref, "append_market_tracker_row",
+                        lambda country, **k: seen.setdefault("append_market_tracker_row", []).append({"country": country, **k}))
     monkeypatch.setattr(notify, "notify_internal_team", rec("notify", None))
     monkeypatch.setattr(email, "send_qualified_lead_email", lambda snap, outcome: seen.setdefault("lead_email", []).append(snap))
 
@@ -239,6 +241,12 @@ class TestLocalMarketEvaluation:
         router.evaluate_trade_in(_req(country), db)
         assert "append_tracker_row" not in calls
 
+    def test_market_tracker_tab_is_written(self, db, calls, country, currency):
+        router.evaluate_trade_in(_req(country), db)
+        row = calls["append_market_tracker_row"][0]
+        assert row["country"] == country and row["currency"] == currency
+        assert row["ai_price"] > 0 and "Ref: " in row["notes"]
+
     def test_airtable_and_team_still_hear_about_it(self, db, calls, country, currency):
         router.evaluate_trade_in(_req(country), db)
         assert calls.get("airtable"), "the evaluation must still reach Airtable"
@@ -260,6 +268,7 @@ class TestKenyaUnchanged:
         for source in ("get_comparables", "get_historical_price", "lookup_sales_stock", "lookup_matrix"):
             assert source in calls, source
         assert "append_tracker_row" in calls
+        assert "append_market_tracker_row" not in calls
         assert out.currency_code == "KES"
 
 
@@ -295,23 +304,192 @@ class TestLabelLookupReturnsBrand:
         assert "<" not in out.brand and ">" not in out.brand
 
 
-class TestLeadFloorInLocalCurrency:
-    """LEAD_MIN_OFFER_KES is a KES floor; a UGX offer is compared in UGX."""
+class TestLeadQualification:
+    """Kenya keeps the KES lead floor; every Uganda/Nigeria evaluation is
+    confirmed by hand, so the local team hears about each one."""
 
-    def _vs(self, offer, currency):
-        return {"seller_phone": "256772123456", "opening_offer": offer, "currency_code": currency}
+    def _vs(self, offer, currency, country):
+        return {"seller_phone": "256772123456", "opening_offer": offer,
+                "currency_code": currency, "country": country}
 
-    def test_small_ugx_offer_is_not_a_lead(self):
+    @pytest.mark.parametrize("country,currency", [("UG", "UGX"), ("NG", "NGN")])
+    def test_every_local_market_evaluation_reaches_the_team(self, country, currency):
         from greenbay_ai_evaluator.services.email_service import qualify_lead
-        ok, _ = qualify_lead(self._vs(50_000, "UGX"))  # about KES 1,800
-        assert not ok
+        assert qualify_lead(self._vs(50_000, currency, country))[0]
 
-    def test_real_ugx_offer_is_a_lead(self):
+    def test_no_phone_is_never_a_lead(self):
         from greenbay_ai_evaluator.services.email_service import qualify_lead
-        ok, _ = qualify_lead(self._vs(400_000, "UGX"))  # about KES 14,000
-        assert ok
+        vs = self._vs(900_000, "UGX", "UG")
+        vs["seller_phone"] = ""
+        assert not qualify_lead(vs)[0]
 
     def test_kenya_floor_unchanged(self):
         from greenbay_ai_evaluator.services.email_service import qualify_lead
-        assert qualify_lead(self._vs(6_000, "KES"))[0]
-        assert not qualify_lead(self._vs(4_000, "KES"))[0]
+        assert qualify_lead(self._vs(6_000, "KES", "KE"))[0]
+        assert not qualify_lead(self._vs(4_000, "KES", "KE"))[0]
+
+
+class TestEmailRouting:
+    """Nigeria -> Sunday + Allan, Uganda -> Kalungi + Allan, Kenya unchanged."""
+
+    @pytest.fixture(autouse=True)
+    def settings(self, monkeypatch):
+        from app.config import get_settings
+        s = get_settings()
+        monkeypatch.setattr(s, "team_notification_emails", "allanmatano@greenbay.market,alexander@greenbay.market")
+        monkeypatch.setattr(s, "team_notification_emails_ug", "kalungi@greenbay.market,allanmatano@greenbay.market")
+        monkeypatch.setattr(s, "team_notification_emails_ng", "sunday@greenbay.market,allanmatano@greenbay.market")
+        return s
+
+    def test_defaults_point_at_the_local_teams(self):
+        from app.config import Settings
+        f = Settings.model_fields
+        assert "kalungi@greenbay.market" in f["team_notification_emails_ug"].default
+        assert "sunday@greenbay.market" in f["team_notification_emails_ng"].default
+        for key in ("team_notification_emails_ug", "team_notification_emails_ng"):
+            assert "allanmatano@greenbay.market" in f[key].default
+            assert "alexander" not in f[key].default
+
+    @pytest.mark.parametrize("country,expected", [
+        ("KE", {"allanmatano@greenbay.market", "alexander@greenbay.market"}),
+        ("UG", {"kalungi@greenbay.market", "allanmatano@greenbay.market"}),
+        ("NG", {"sunday@greenbay.market", "allanmatano@greenbay.market"}),
+    ])
+    def test_recipients_by_market(self, country, expected):
+        from greenbay_ai_evaluator.services.email_service import _recipients
+        assert set(_recipients(country)) == expected
+
+    @pytest.mark.parametrize("country,currency,tag", [("UG", "UGX", "[Uganda]"), ("NG", "NGN", "[Nigeria]")])
+    def test_subject_and_body_name_the_market(self, country, currency, tag):
+        from greenbay_ai_evaluator.services.email_service import build_outcome_email
+        subject, text, html = build_outcome_email(
+            {"country": country, "currency_code": currency, "brand": "LG", "opening_offer": 500000}, "NEEDS REVIEW")
+        assert subject.startswith(tag)
+        assert tag.strip("[]") in text
+
+    def test_kenya_subject_untagged(self):
+        from greenbay_ai_evaluator.services.email_service import build_outcome_email
+        subject, _, _ = build_outcome_email({"country": "KE", "currency_code": "KES"}, "ACCEPTED")
+        assert subject.startswith("[GreenBay]")
+
+    @pytest.mark.parametrize("country", ["UG", "NG"])
+    def test_lead_email_goes_to_the_local_team_only(self, monkeypatch, country):
+        import threading
+        import greenbay_ai_evaluator.services.email_service as email
+
+        sent = []
+        monkeypatch.setattr(email, "_send_ses", lambda subj, t, h, recipients=None: sent.append((subj, recipients)))
+
+        class _Inline:
+            def __init__(self, target=None, daemon=None, **k):
+                self._t = target
+
+            def start(self):
+                self._t()
+
+        monkeypatch.setattr(threading, "Thread", _Inline)
+        email.send_qualified_lead_email(
+            {"country": country, "currency_code": {"UG": "UGX", "NG": "NGN"}[country],
+             "seller_phone": "256772123456", "opening_offer": 700000, "image_urls": []},
+            "NEEDS REVIEW")
+        assert sent, "no email sent"
+        _, recipients = sent[0]
+        assert "alexander@greenbay.market" not in recipients
+        assert "allanmatano@greenbay.market" in recipients
+
+
+class TestKenyanWhatsAppAlertStaysKenyan:
+    def test_local_market_alert_is_not_sent_to_the_kenyan_line(self, monkeypatch):
+        import greenbay_ai_evaluator.services.internal_notification_service as n
+
+        started = []
+        monkeypatch.setattr(n.threading, "Thread", lambda **k: started.append(k) or type("T", (), {"start": lambda self: None})())
+        n.notify_internal_team({"currency": "UGX", "outcome": "NEEDS REVIEW"})
+        assert not started
+        n.notify_internal_team({"currency": "KES", "outcome": "NEEDS REVIEW"})
+        assert started
+
+
+class TestMarketTrackerTabs:
+    def test_tabs_are_separate_from_the_kes_tab(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            EVAL_TRACKER_TAB, MARKET_TRACKER_TABS,
+        )
+        assert set(MARKET_TRACKER_TABS) == {"UG", "NG"}
+        assert EVAL_TRACKER_TAB not in MARKET_TRACKER_TABS.values()
+
+    def test_row_matches_the_header(self):
+        from greenbay_ai_evaluator.services.reference_data_service import (
+            MARKET_TRACKER_HEADER, market_tracker_row,
+        )
+        row = market_tracker_row(currency="UGX", item="LG fridge", ai_price=760000,
+                                 ai_confidence=55, new_price=1800000, status="Under Review",
+                                 notes="Ref: abcd1234")
+        assert len(row) == len(MARKET_TRACKER_HEADER)
+        by = dict(zip(MARKET_TRACKER_HEADER, row))
+        assert by["Currency"] == "UGX" and by["AI Price"] == 760000
+        assert by["Final Price Offered"] == ""  # left for the local team
+        assert by["Date"].startswith("'")
+
+    def test_creates_the_tab_once_and_appends(self, monkeypatch):
+        import greenbay_ai_evaluator.services.reference_data_service as ref
+
+        class WS:
+            def __init__(self):
+                self.rows = []
+
+            def append_row(self, row, value_input_option=None):
+                self.rows.append(row)
+
+        class SS:
+            def __init__(self):
+                self.tabs = {}
+
+            def worksheet(self, title):
+                if title not in self.tabs:
+                    raise LookupError(title)
+                return self.tabs[title]
+
+            def add_worksheet(self, title, rows, cols):
+                self.tabs[title] = WS()
+                return self.tabs[title]
+
+        ss = SS()
+
+        class GC:
+            def open_by_key(self, key):
+                return ss
+
+        monkeypatch.setattr(ref, "_get_gspread_client", lambda: GC())
+        assert ref.append_market_tracker_row("NG", currency="NGN", item="Scanfrost", ai_price=320000)
+        assert ref.append_market_tracker_row("NG", currency="NGN", item="Thermocool", ai_price=250000)
+        rows = ss.tabs["Nigeria Evaluations"].rows
+        assert rows[0] == ref.MARKET_TRACKER_HEADER
+        assert len(rows) == 3
+
+
+class TestProbeRowsNeverEmailMarketTeams:
+    @pytest.fixture(autouse=True)
+    def settings(self, monkeypatch):
+        from app.config import get_settings
+        s = get_settings()
+        monkeypatch.setattr(s, "team_notification_emails", "allanmatano@greenbay.market,alexander@greenbay.market")
+        monkeypatch.setattr(s, "team_notification_emails_ug", "kalungi@greenbay.market,allanmatano@greenbay.market")
+        monkeypatch.setattr(s, "team_notification_emails_ng", "sunday@greenbay.market,allanmatano@greenbay.market")
+
+    @pytest.mark.parametrize("country", ["UG", "NG"])
+    def test_deploy_probe_goes_to_the_ops_list(self, country):
+        from greenbay_ai_evaluator.services.email_service import _recipients_for
+        rcpt = _recipients_for({"country": country, "seller_name": f"ZZSMOKE E2E {country}",
+                                "model": f"ZZSMOKE-E2E-{country}"})
+        assert "kalungi@greenbay.market" not in rcpt and "sunday@greenbay.market" not in rcpt
+
+    def test_real_customer_goes_to_the_market_team(self):
+        from greenbay_ai_evaluator.services.email_service import _recipients_for
+        assert "sunday@greenbay.market" in _recipients_for({"country": "NG", "seller_name": "Chiamaka", "model": "Thermocool 200"})
+
+
+def test_probe_rows_never_reach_the_market_tabs(monkeypatch):
+    import greenbay_ai_evaluator.services.reference_data_service as ref
+    monkeypatch.setattr(ref, "_get_gspread_client", lambda: (_ for _ in ()).throw(AssertionError("sheet opened")))
+    assert ref.append_market_tracker_row("UG", currency="UGX", item="Samsung ZZSMOKE-E2E-UG", model="ZZSMOKE-E2E-UG")

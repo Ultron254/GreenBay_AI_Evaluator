@@ -66,7 +66,7 @@
             document.documentElement.setAttribute('data-country', c);
         })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261117">
+    <link rel="stylesheet" href="styles.css?v=20261118">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -109,7 +109,7 @@
                     <h1>Turn Your Old Appliances into <em>Cash</em></h1>
                     <p class="hero-description">
                         Upload photos of your appliance and get an instant, AI-powered valuation.
-                        <span data-copy="heroPickup">Free pickup anywhere in Nairobi, settled by our sourcing team.</span>
+                        <span data-copy="heroPickup">Collection arranged by our sourcing team, who inspect and settle with you.</span>
                     </p>
                     <div class="hero-actions">
                         <a href="#evaluate" class="btn btn-primary btn-lg">Get Free Valuation <i
@@ -158,7 +158,7 @@
                         </div>
                         <div class="mockup-offer">
                             <div class="mockup-offer-label">Your GreenBay Offer</div>
-                            <div class="mockup-offer-amount" data-copy="mockOffer">KES 28,500</div>
+                            <div class="mockup-offer-amount" data-copy="mockOffer">&nbsp;</div>
                             <div class="mockup-offer-label">Valid for 7 days</div>
                         </div>
                     </div>
@@ -244,7 +244,7 @@
                     <div class="step-number">4</div>
                     <div class="step-icon"><i data-lucide="banknote" class="icon-lg"></i></div>
                     <h3>Hand It Over</h3>
-                    <p data-copy="handOver">Free pickup anywhere in Nairobi. Our sourcing team inspects and settles with you. Done!</p>
+                    <p data-copy="handOver">Our sourcing team inspects the item, arranges collection and settles with you.</p>
                 </div>
             </div>
         </div>
@@ -443,7 +443,7 @@
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="truck" class="icon-md"></i></div>
                     <h4>FREE Pickup</h4>
-                    <p data-copy="pickupShort">We collect anywhere in Nairobi</p>
+                    <p data-copy="pickupShort">We arrange collection with you</p>
                 </div>
                 <div class="trust-item">
                     <div class="trust-icon"><i data-lucide="smartphone" class="icon-md"></i></div>
@@ -658,7 +658,7 @@
                             <p class="step-description">Tell us your ideal price, or let us make the first offer.</p>
                             <div class="form-group">
                                 <div class="price-input-wrapper">
-                                    <span class="currency-label" data-copy="currency">KES</span>
+                                    <span class="currency-label" data-copy="currency">&nbsp;</span>
                                     <input type="text" class="form-input" id="priceInput" inputmode="decimal"
                                         placeholder="e.g. 25000" oninput="handlePriceInput(this.value)">
                                 </div>
@@ -687,7 +687,7 @@
                             <div class="form-group">
                                 <label class="form-label" for="sellerPhoneInput">Your phone number <span class="req">*</span></label>
                                 <input type="tel" class="form-input" id="sellerPhoneInput"
-                                    placeholder="e.g. 0712 345 678" required aria-required="true"
+                                    placeholder="Your mobile number" required aria-required="true"
                                     autocomplete="tel" inputmode="tel" maxlength="30"
                                     data-copy-placeholder="phonePlaceholder"
                                     oninput="updateAnswer('sellerPhone', this.value)">
@@ -773,18 +773,18 @@
                     <h4>Contact</h4>
                     <a href="https://wa.me/254705919099" data-wa="" target="_blank"><i data-lucide="message-circle"
                             style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i> WhatsApp CX Team</a>
-                    <a href="tel:+254705919099"><i data-lucide="phone"
-                            style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i> +254 705
-                        919 099</a>
-                    <a href="mailto:info@greenbay.market"><i data-lucide="mail"
+                    <a href="tel:+254709155506" data-contact="phone"><i data-lucide="phone"
+                            style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i> <span
+                            data-copy="phoneDisplay">+254 709 155 506</span></a>
+                    <a href="mailto:info@greenbay.market" data-contact="email"><i data-lucide="mail"
                             style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"></i>
-                        info@greenbay.market</a>
+                        <span data-copy="email">info@greenbay.market</span></a>
                 </div>
             </div>
             <div class="footer-bottom">
                 <span>&copy; 2026 GreenBay Market. All rights reserved.</span>
                 <span class="footer-made">Made with <i data-lucide="heart" class="footer-heart"></i> for
-                    <span data-copy="footerPlace">Nairobi, Kenya</span></span>
+                    <span data-copy="footerPlace">East Africa and Nigeria</span></span>
             </div>
         </div>
     </footer>
@@ -819,7 +819,7 @@
             }
         } catch(e) { localStorage.removeItem('gb_eval_state'); }
     </script>
-    <script src="app.js?v=20261117"></script>
+    <script src="app.js?v=20261118"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
