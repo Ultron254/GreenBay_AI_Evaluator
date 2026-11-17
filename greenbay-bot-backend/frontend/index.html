@@ -49,7 +49,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&family=Sora:wght@400;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Sora:wght@600;700&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://greenbay.market https://*.shopify.com https://*.google-analytics.com https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com;">
@@ -66,7 +66,7 @@
             document.documentElement.setAttribute('data-country', c);
         })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261118">
+    <link rel="stylesheet" href="styles.css?v=20261120">
     <link rel="icon" href="greenbay-logo.png" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -75,38 +75,55 @@
 
 <body>
 
+    <!-- Line icons (thin stroke, drawn by CSS). Appliance set from the GreenBay x Mika portal. -->
+    <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+        <symbol id="a-fridge" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M6 9h12M9 5v2M9 12v4"/></symbol>
+        <symbol id="a-cooker" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16"/><circle cx="8.5" cy="6" r="1"/><circle cx="15.5" cy="6" r="1"/><rect x="7.5" y="12" width="9" height="6" rx="1"/></symbol>
+        <symbol id="a-washer" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="13.5" r="4.5"/><path d="M7 5.5h2M12 5.5h.01"/></symbol>
+        <symbol id="a-micro" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><rect x="5" y="9" width="9" height="6" rx="1"/><path d="M18 9.5v.01M18 12v.01M18 14.5v.01"/></symbol>
+        <symbol id="a-tv" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="12" rx="2"/><path d="M8 20h8M12 17v3"/></symbol>
+        <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.6"/></symbol>
+        <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></symbol>
+        <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.4"/></symbol>
+        <symbol id="i-cash" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+        <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/></symbol>
+        <symbol id="i-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.2a5.5 5.5 0 0 1 3 4.8"/></symbol>
+        <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8"/></symbol>
+        <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></symbol>
+        <symbol id="i-blender" viewBox="0 0 24 24"><path d="M8 3h8l-1.2 9H9.2z"/><path d="M7.5 12h9l1 9h-11z"/><circle cx="12" cy="16.5" r="1.2"/></symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></symbol>
+    </svg>
+
     <!-- HEADER -->
     <header class="site-header">
-        <div class="header-ribbon" aria-hidden="true"></div>
         <div class="header-inner">
-            <a href="#" class="logo">
-                <img src="greenbay-logo.png" alt="GreenBay Market" class="logo-img">
-                <span class="logo-text">GreenBay</span>
-            </a>
-            <nav class="header-nav">
-                <a href="#how-it-works">How It Works</a>
-                <a href="#categories">Categories</a>
-                <a href="#evaluate">Get Valuation</a>
+            <div class="header-brand">
+                <a href="#" class="logo">
+                    <img src="assets/shared/greenbay-logo.png" alt="GreenBay Market" class="logo-img" width="128" height="40">
+                </a>
+                <span class="market-tag"><span class="flag-swatch" aria-hidden="true"></span>Trade-in
+                    <span class="market-tag-country"><span class="only-ke">Kenya</span><span class="only-ug">Uganda</span><span class="only-ng">Nigeria</span></span></span>
+            </div>
+            <nav class="header-nav" aria-label="Main">
+                <a href="#how-it-works">How it works</a>
+                <a href="#categories">What we buy</a>
+                <a href="#evaluate">Get valuation</a>
             </nav>
             <div class="header-cta">
-                <a href="http://52.31.126.91" target="_blank" id="bugReportBtn" class="btn-bug-report" title="Report a Bug">
-                    <i data-lucide="bug" style="width:18px;height:18px;"></i>
-                </a>
-                <a href="#evaluate" class="btn btn-primary btn-sm">Sell My Appliance</a>
+                <a href="#evaluate" class="btn btn-primary btn-sm">Sell my appliance</a>
             </div>
         </div>
     </header>
 
     <!-- HERO -->
     <section class="hero" id="hero">
-        <div class="hero-pattern" aria-hidden="true"></div>
         <div class="container">
             <div class="hero-content">
                 <div class="hero-text">
-                    <div class="hero-badge">
-                        <span class="hero-badge-dot"></span> <span data-copy="heroKicker">AI-Powered Valuations</span>
-                    </div>
-                    <h1>Turn Your Old Appliances into <em>Cash</em></h1>
+                    <p class="eyebrow hero-eyebrow"><span class="hero-eyebrow-rule" aria-hidden="true"></span><span>GreenBay Trade-In<span class="eyebrow-country"><span class="eyebrow-dot" aria-hidden="true">·</span><span class="only-ke">Kenya</span><span class="only-ug">Uganda</span><span class="only-ng">Nigeria</span></span></span></p>
+                    <h1>Turn your old appliances into <em>cash</em>.</h1>
                     <p class="hero-description">
                         Upload photos of your appliance and get an instant, AI-powered valuation.
                         <span data-copy="heroPickup">Collection arranged by our sourcing team, who inspect and settle with you.</span>
@@ -115,27 +132,32 @@
                         <a href="#evaluate" class="btn btn-primary btn-lg">Get Free Valuation <i
                                 data-lucide="arrow-right" class="btn-icon"></i></a>
                         <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20want%20to%20sell%20an%20appliance" data-wa="Hi GreenBay, I want to sell an appliance"
-                            target="_blank" class="btn btn-whatsapp btn-lg"><i data-lucide="message-circle"
+                            target="_blank" class="btn btn-whatsapp btn-quiet btn-lg"><i data-lucide="message-circle"
                                 class="btn-icon"></i>
                             Speak to an Agent</a>
                     </div>
                     <div class="hero-stats">
                         <div class="stat-item">
-                            <div class="stat-number" id="stat-valuations" onclick="window.location.href='/tradein/dashboard'" title="">3,500+</div>
-                            <div class="stat-label">Valuations Done</div>
+                            <div class="stat-number" id="stat-valuations"><span class="countup cu-valuations" aria-hidden="true"></span><span class="sr-only">3,500+</span></div>
+                            <div class="stat-label">Valuations done</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-number">24hr</div>
-                            <div class="stat-label">Pickup &amp; Collection</div>
+                            <div class="stat-number">3</div>
+                            <div class="stat-label">Markets served</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-number">90%+</div>
-                            <div class="stat-label">Accuracy Rate</div>
+                            <div class="stat-number"><span class="countup cu-accuracy" aria-hidden="true"></span><span class="sr-only">90%+</span></div>
+                            <div class="stat-label">Accuracy rate</div>
                         </div>
                     </div>
                 </div>
                 <div class="hero-visual">
-                    <div class="hero-mockup">
+                    <div class="hero-photo" role="img" aria-label="A GreenBay customer trading in an appliance">
+                        <div class="hero-badge">
+                            <span class="flag-swatch" aria-hidden="true"></span> <span data-copy="heroKicker">AI-Powered Valuations</span>
+                        </div>
+                    </div>
+                    <div class="hero-mockup" aria-hidden="true">
                         <div class="hero-mockup-header">
                             <div class="mockup-avatar">K</div>
                             <div>
@@ -144,10 +166,8 @@
                             </div>
                         </div>
                         <div class="mockup-messages">
-                            <div class="mockup-msg bot">Hey! I'm Kay. Send me photos of your appliance and I'll give you
-                                an instant
-                                offer!</div>
-                            <div class="mockup-msg user">I have a Samsung fridge, 2 years old</div>
+                            <div class="mockup-msg bot">Hi, I'm Kay. What would you like to sell?</div>
+                            <div class="mockup-msg user">A Samsung fridge, 2 years old</div>
                             <div class="mockup-msg bot">Great choice! Samsung fridges hold value well. Let me analyze
                                 your photos...
                             </div>
@@ -159,18 +179,18 @@
                         <div class="mockup-offer">
                             <div class="mockup-offer-label">Your GreenBay Offer</div>
                             <div class="mockup-offer-amount" data-copy="mockOffer">&nbsp;</div>
-                            <div class="mockup-offer-label">Valid for 7 days</div>
+                            <div class="mockup-offer-label mockup-offer-valid">Valid for 7 days</div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-        <div class="pattern-band" aria-hidden="true"></div>
     </section>
 
     <!-- BRAND MARQUEE -->
-    <section class="brand-marquee">
+    <section class="brand-marquee" aria-label="Brands we accept">
         <div class="marquee-label">We accept all major brands</div>
+        <div class="marquee-viewport">
         <div class="marquee-track" id="marqueeTrack">
             <div class="marquee-item">Samsung</div>
             <div class="marquee-item">LG</div>
@@ -191,80 +211,87 @@
             <div class="marquee-item only-ng">Thermocool</div>
             <div class="marquee-item only-ng">Nexus</div>
             <!-- Duplicate for seamless loop -->
-            <div class="marquee-item">Samsung</div>
-            <div class="marquee-item">LG</div>
-            <div class="marquee-item">Hisense</div>
-            <div class="marquee-item only-ke">VON</div>
-            <div class="marquee-item only-ke">Ramtons</div>
-            <div class="marquee-item">TCL</div>
-            <div class="marquee-item">Haier</div>
-            <div class="marquee-item only-ke">ARMCO</div>
-            <div class="marquee-item">Midea</div>
-            <div class="marquee-item only-ke">MIKA</div>
-            <div class="marquee-item">Kenwood</div>
-            <div class="marquee-item">Tefal</div>
-            <div class="marquee-item">Toshiba</div>
-            <div class="marquee-item">Simfer</div>
-            <div class="marquee-item">NUNIX</div>
-            <div class="marquee-item only-ng">Scanfrost</div>
-            <div class="marquee-item only-ng">Thermocool</div>
-            <div class="marquee-item only-ng">Nexus</div>
+            <div class="marquee-item" aria-hidden="true">Samsung</div>
+            <div class="marquee-item" aria-hidden="true">LG</div>
+            <div class="marquee-item" aria-hidden="true">Hisense</div>
+            <div class="marquee-item only-ke" aria-hidden="true">VON</div>
+            <div class="marquee-item only-ke" aria-hidden="true">Ramtons</div>
+            <div class="marquee-item" aria-hidden="true">TCL</div>
+            <div class="marquee-item" aria-hidden="true">Haier</div>
+            <div class="marquee-item only-ke" aria-hidden="true">ARMCO</div>
+            <div class="marquee-item" aria-hidden="true">Midea</div>
+            <div class="marquee-item only-ke" aria-hidden="true">MIKA</div>
+            <div class="marquee-item" aria-hidden="true">Kenwood</div>
+            <div class="marquee-item" aria-hidden="true">Tefal</div>
+            <div class="marquee-item" aria-hidden="true">Toshiba</div>
+            <div class="marquee-item" aria-hidden="true">Simfer</div>
+            <div class="marquee-item" aria-hidden="true">NUNIX</div>
+            <div class="marquee-item only-ng" aria-hidden="true">Scanfrost</div>
+            <div class="marquee-item only-ng" aria-hidden="true">Thermocool</div>
+            <div class="marquee-item only-ng" aria-hidden="true">Nexus</div>
+        </div>
         </div>
     </section>
 
     <!-- HOW IT WORKS -->
     <section class="how-it-works" id="how-it-works">
         <div class="container">
-            <div class="section-header">
-                <div class="section-label">Simple Process</div>
-                <h2 class="section-title">How It Works</h2>
-                <p class="section-subtitle">Four simple steps to turn your appliance into cash. No hassle, no waiting.
-                </p>
+            <div class="section-header reveal">
+                <div>
+                    <div class="section-label">How it works</div>
+                    <h2 class="section-title">From photo to payment in four steps.</h2>
+                </div>
+                <p class="section-subtitle">No haggling at the door and no waiting around. You send photos, we do the
+                    pricing, our team does the rest.</p>
             </div>
-            <div class="steps-grid">
-                <div class="step-card">
-                    <div class="step-number">1</div>
-                    <div class="step-icon"><i data-lucide="camera" class="icon-lg"></i></div>
-                    <h3>Upload Photos</h3>
+            <ol class="steps-grid">
+                <li class="step-card reveal">
+                    <div class="step-marker"><span class="step-number">01</span></div>
+                    <svg class="ico step-icon" aria-hidden="true"><use href="#i-camera"/></svg>
+                    <h3>Upload photos</h3>
                     <p>Take 5+ clear photos of your appliance: front, back, model label, and any damage areas.</p>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">2</div>
-                    <div class="step-icon"><i data-lucide="scan-search" class="icon-lg"></i></div>
-                    <h3>AI Analysis</h3>
+                </li>
+                <li class="step-card reveal">
+                    <div class="step-marker"><span class="step-number">02</span></div>
+                    <svg class="ico step-icon" aria-hidden="true"><use href="#i-scan"/></svg>
+                    <h3>AI analysis</h3>
                     <p>Our AI identifies the brand, model, condition, and searches current local market prices.</p>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">3</div>
-                    <div class="step-icon"><i data-lucide="badge-check" class="icon-lg"></i></div>
-                    <h3>Instant Offer</h3>
-                    <p>Get a fair, data-backed offer within minutes. Negotiate if you'd like, we're flexible!</p>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">4</div>
-                    <div class="step-icon"><i data-lucide="banknote" class="icon-lg"></i></div>
-                    <h3>Hand It Over</h3>
+                </li>
+                <li class="step-card reveal">
+                    <div class="step-marker"><span class="step-number">03</span></div>
+                    <svg class="ico step-icon" aria-hidden="true"><use href="#i-tag"/></svg>
+                    <h3 data-copy="stepOfferTitle">Instant offer</h3>
+                    <p data-copy="stepOfferBody">Get a fair, data-backed offer within minutes. Negotiate if you'd like, we're flexible!</p>
+                </li>
+                <li class="step-card reveal">
+                    <div class="step-marker"><span class="step-number">04</span></div>
+                    <svg class="ico step-icon" aria-hidden="true"><use href="#i-cash"/></svg>
+                    <h3>Hand it over</h3>
                     <p data-copy="handOver">Our sourcing team inspects the item, arranges collection and settles with you.</p>
-                </div>
-            </div>
+                </li>
+            </ol>
         </div>
     </section>
 
     <!-- CATEGORIES WITH REAL GREENBAY PRODUCTS -->
     <section class="categories" id="categories">
         <div class="container">
-            <div class="section-header">
-                <div class="section-label">What We Buy</div>
-                <h2 class="section-title">Appliance Categories</h2>
-                <p class="section-subtitle">Browse real products from GreenBay Market. Select a category to start your
-                    valuation.</p>
+            <div class="section-header reveal">
+                <div>
+                    <div class="section-label">What we buy</div>
+                    <h2 class="section-title">Appliances we value every day.</h2>
+                </div>
+                <p class="section-subtitle">Pick a category to start your valuation. The same brands you see on
+                    GreenBay Market.</p>
             </div>
 
             <div class="category-showcase" id="categoryShowcase">
 
                 <!-- Fridges & Freezers -->
-                <div class="showcase-card" data-category="refrigerator"
-                    onclick="selectCategoryFromLanding('refrigerator')">
+                <div class="showcase-card showcase-card--feature reveal" data-category="refrigerator"
+                    onclick="selectCategoryFromLanding('refrigerator')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+                    <div class="showcase-photo" aria-hidden="true"></div>
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/vn1_d9a078e3-f010-4cb3-9e27-586e2e596da9.jpg?width=400",
  "https://greenbay.market/cdn/shop/files/v1.webp?width=400",
@@ -275,20 +302,21 @@
                             alt="VON Fridge">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="thermometer-snowflake"></i></div>
-                        <h4>Fridges & Freezers</h4>
-                        <p class="showcase-brands">VON, Samsung, Haier, Midea, Ramtons, Hisense</p>
+                        <h4>Fridges &amp; freezers</h4>
+                        <p class="showcase-brands">Samsung, Haier, Midea, Hisense<span class="only-ke">, VON, Ramtons</span></p>
                         <div class="showcase-products">
-                            <span class="product-tag">VON VRT-181DRAX 181L</span>
                             <span class="product-tag">Samsung RR21 203L</span>
                             <span class="product-tag">Haier HRD-2204CSS 215L</span>
                         </div>
+                        <span class="showcase-cta">Get a valuation <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span>
                     </div>
                 </div>
 
                 <!-- Cookers & Ovens -->
-                <div class="showcase-card" data-category="cooker_oven"
-                    onclick="selectCategoryFromLanding('cooker_oven')">
+                <div class="showcase-card showcase-card--feature reveal" data-category="cooker_oven"
+                    onclick="selectCategoryFromLanding('cooker_oven')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+                    <div class="showcase-photo" aria-hidden="true"></div>
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/fg1.jpg?width=400",
  "https://greenbay.market/cdn/shop/files/h1.jpg?width=400",
@@ -298,19 +326,21 @@
                             alt="VON Cooker">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="flame"></i></div>
-                        <h4>Cookers & Ovens</h4>
-                        <p class="showcase-brands">VON, Haier, MIKA, Simfer, Armco, Ramtons</p>
+                        <h4>Cookers &amp; ovens</h4>
+                        <p class="showcase-brands">Haier, Simfer<span class="only-ke">, VON, MIKA, Armco, Ramtons</span></p>
                         <div class="showcase-products">
-                            <span class="product-tag">VON VCF563141NFG 3G+1E</span>
                             <span class="product-tag">Haier HCR2031EED1</span>
-                            <span class="product-tag">Ramtons RC/606</span>
+                            <span class="product-tag only-ke">Ramtons RC/606</span>
                         </div>
+                        <span class="showcase-cta">Get a valuation <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span>
                     </div>
                 </div>
 
                 <!-- TV & Home Entertainment -->
-                <div class="showcase-card" data-category="tv_monitor" onclick="selectCategoryFromLanding('tv_monitor')">
+                <div class="showcase-card showcase-card--feature reveal" data-category="tv_monitor"
+                    onclick="selectCategoryFromLanding('tv_monitor')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+                    <div class="showcase-photo" aria-hidden="true"></div>
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/h1_a5110457-6823-48d2-ac20-ec2927d6cd33.webp?width=400",
  "https://greenbay.market/cdn/shop/files/h1_cef504f5-17c2-460a-a94e-7382cb8a420d.jpg?width=400",
@@ -321,20 +351,20 @@
                             alt="Hisense TV">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="tv"></i></div>
-                        <h4>TV & Home Entertainment</h4>
-                        <p class="showcase-brands">Hisense, Samsung, TCL, LG, ARMCO, Toshiba</p>
+                        <h4>TV &amp; home entertainment</h4>
+                        <p class="showcase-brands">Hisense, Samsung, TCL, LG, Toshiba<span class="only-ke">, Armco</span></p>
                         <div class="showcase-products">
                             <span class="product-tag">Hisense 65" QLED 4K</span>
                             <span class="product-tag">Samsung 55" Crystal UHD</span>
-                            <span class="product-tag">TCL 55" QD Mini LED</span>
                         </div>
+                        <span class="showcase-cta">Get a valuation <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span>
                     </div>
                 </div>
 
                 <!-- Washing Machines -->
-                <div class="showcase-card" data-category="washing_machine"
-                    onclick="selectCategoryFromLanding('washing_machine')">
+                <div class="showcase-card showcase-card--compact reveal" data-category="washing_machine"
+                    onclick="selectCategoryFromLanding('washing_machine')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
                     <div class="showcase-image-slider" data-images='[
  "https://cdn.shopify.com/s/files/1/0933/1635/0228/files/w1_8968bf80-4fd1-4c36-b712-94e7c1b31584.jpg?width=400",
  "https://cdn.shopify.com/s/files/1/0933/1635/0228/files/h1_13c43eb5-012c-4350-bf24-7c7f820bfbc4.jpg?width=400",
@@ -344,20 +374,20 @@
                             src="https://cdn.shopify.com/s/files/1/0933/1635/0228/files/w1_8968bf80-4fd1-4c36-b712-94e7c1b31584.jpg?width=400" alt="Hisense Washing Machine">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="washing-machine"></i></div>
-                        <h4>Washing Machines</h4>
-                        <p class="showcase-brands">Samsung, LG, Hisense, Ramtons, ARMCO, VON</p>
+                        <h4>Washing machines</h4>
+                        <p class="showcase-brands">Samsung, LG, Hisense<span class="only-ke">, Ramtons, Armco, VON</span></p>
                         <div class="showcase-products">
                             <span class="product-tag">Hisense 7Kg Front Load</span>
                             <span class="product-tag">Samsung 11Kg AI</span>
-                            <span class="product-tag">LG 9Kg AI DD™</span>
                         </div>
                     </div>
+                    <svg class="ico showcase-go" aria-hidden="true"><use href="#i-arrow"/></svg>
                 </div>
 
                 <!-- Small Kitchen Appliances -->
-                <div class="showcase-card" data-category="small_kitchen"
-                    onclick="selectCategoryFromLanding('small_kitchen')">
+                <div class="showcase-card showcase-card--compact reveal" data-category="small_kitchen"
+                    onclick="selectCategoryFromLanding('small_kitchen')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/0272549c-d7a4-4c77-892a-562ed5f07d1d.jpg?width=400",
  "https://greenbay.market/cdn/shop/files/cb16a470-585a-4cd9-bfff-ceeaa0344bd3.jpg?width=400",
@@ -368,19 +398,20 @@
                             alt="Kitchen Appliance">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="chef-hat"></i></div>
-                        <h4>Small Kitchen Appliances</h4>
-                        <p class="showcase-brands">VON, Ramtons, Kenwood, Moulinex, Braun</p>
+                        <h4>Small kitchen appliances</h4>
+                        <p class="showcase-brands">Kenwood, Moulinex, Braun<span class="only-ke">, VON, Ramtons</span></p>
                         <div class="showcase-products">
                             <span class="product-tag">Kenwood Chef Baker XL</span>
-                            <span class="product-tag">VON Coffee Maker</span>
-                            <span class="product-tag">Ramtons Blender 500W</span>
+                            <span class="product-tag only-ke">Ramtons Blender 500W</span>
                         </div>
                     </div>
+                    <svg class="ico showcase-go" aria-hidden="true"><use href="#i-arrow"/></svg>
                 </div>
 
                 <!-- Microwaves -->
-                <div class="showcase-card" data-category="microwave" onclick="selectCategoryFromLanding('microwave')">
+                <div class="showcase-card showcase-card--compact reveal" data-category="microwave"
+                    onclick="selectCategoryFromLanding('microwave')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/m1_143229a5-74a5-4b1b-8d0a-9c6440a06feb.jpg?width=400",
  "https://greenbay.market/cdn/shop/files/MMWDSTH2342BF.jpg?width=400",
@@ -391,18 +422,20 @@
                             alt="Microwave">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="microwave"></i></div>
                         <h4>Microwaves</h4>
-                        <p class="showcase-brands">VON, MIKA, Ramtons</p>
+                        <p class="showcase-brands"><span class="only-ke">VON, MIKA, Ramtons</span><span class="not-ke">Most major brands</span></p>
                         <div class="showcase-products">
-                            <span class="product-tag">VON VAMS-22MGX 20L</span>
-                            <span class="product-tag">MIKA MMWDSTH2342BF 23L</span>
+                            <span class="product-tag only-ke">VON VAMS-22MGX 20L</span>
+                            <span class="product-tag only-ke">MIKA MMWDSTH2342BF 23L</span>
                         </div>
                     </div>
+                    <svg class="ico showcase-go" aria-hidden="true"><use href="#i-arrow"/></svg>
                 </div>
 
                 <!-- Others -->
-                <div class="showcase-card" data-category="other" onclick="selectCategoryFromLanding('other')">
+                <div class="showcase-card showcase-card--compact reveal" data-category="other"
+                    onclick="selectCategoryFromLanding('other')" role="button" tabindex="0"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
                     <div class="showcase-image-slider" data-images='[
  "https://greenbay.market/cdn/shop/files/VN1.jpg?width=400",
  "https://greenbay.market/cdn/shop/files/VA1.jpg?width=400",
@@ -414,45 +447,50 @@
                             alt="Other Appliances">
                     </div>
                     <div class="showcase-info">
-                        <div class="showcase-icon"><i data-lucide="package"></i></div>
-                        <h4>Other Appliances</h4>
-                        <p class="showcase-brands">Water Dispensers, Gas Cylinders, Fans & More</p>
+                        <h4>Other appliances</h4>
+                        <p class="showcase-brands">Water dispensers, gas cylinders, fans &amp; more</p>
                         <div class="showcase-products">
-                            <span class="product-tag">VON Water Dispenser</span>
-                            <span class="product-tag">Armco Cooker</span>
-                            <span class="product-tag">Ramtons Vacuum</span>
+                            <span class="product-tag">Water dispenser</span>
+                            <span class="product-tag">Standing fan</span>
                         </div>
                     </div>
+                    <svg class="ico showcase-go" aria-hidden="true"><use href="#i-arrow"/></svg>
                 </div>
-
-
 
             </div>
         </div>
     </section>
 
     <!-- TRUST BAR -->
-    <section class="trust-bar">
+    <section class="trust-bar" id="why-us">
         <div class="container">
+            <div class="section-header reveal">
+                <div>
+                    <div class="section-label">Why GreenBay</div>
+                    <h2 class="section-title">A fair price, and people you can call.</h2>
+                </div>
+                <p class="section-subtitle">Every offer is built from current local prices, and our sourcing team
+                    inspects the item before settling with you.</p>
+            </div>
             <div class="trust-grid">
-                <div class="trust-item">
-                    <div class="trust-icon"><i data-lucide="clock" class="icon-md"></i></div>
-                    <h4>24/7 Availability</h4>
+                <div class="trust-item reveal">
+                    <svg class="ico trust-icon" aria-hidden="true"><use href="#i-clock"/></svg>
+                    <h4>24/7 availability</h4>
                     <p>Get a valuation anytime, day or night</p>
                 </div>
-                <div class="trust-item">
-                    <div class="trust-icon"><i data-lucide="truck" class="icon-md"></i></div>
-                    <h4>FREE Pickup</h4>
+                <div class="trust-item reveal">
+                    <svg class="ico trust-icon" aria-hidden="true"><use href="#i-truck"/></svg>
+                    <h4 data-copy="pickupTitle">Free pickup</h4>
                     <p data-copy="pickupShort">We arrange collection with you</p>
                 </div>
-                <div class="trust-item">
-                    <div class="trust-icon"><i data-lucide="smartphone" class="icon-md"></i></div>
-                    <h4>Handled by Our Team</h4>
+                <div class="trust-item reveal">
+                    <svg class="ico trust-icon" aria-hidden="true"><use href="#i-team"/></svg>
+                    <h4>Handled by our team</h4>
                     <p>Our sourcing team confirms and settles with you directly</p>
                 </div>
-                <div class="trust-item">
-                    <div class="trust-icon"><i data-lucide="target" class="icon-md"></i></div>
-                    <h4>90%+ Accuracy</h4>
+                <div class="trust-item reveal">
+                    <svg class="ico trust-icon" aria-hidden="true"><use href="#i-target"/></svg>
+                    <h4>90%+ accuracy</h4>
                     <p>AI-powered market-based pricing</p>
                 </div>
             </div>
@@ -461,21 +499,28 @@
 
     <!-- EVALUATE ON WHATSAPP CTA -->
     <section class="whatsapp-cta-section">
-        <div class="container" style="text-align: center;">
-            <p style="color:var(--muted); margin-bottom: 16px; font-size: 1rem;">Prefer to chat? Get your valuation over WhatsApp</p>
-            <a href="#" id="whatsappEvalBtn" data-wa="Hi GreenBay, I would like a valuation for my appliance" target="_blank" rel="noopener" class="btn btn-whatsapp btn-lg">
-                <i data-lucide="message-circle" class="btn-icon"></i>
-                Evaluate on WhatsApp
-            </a>
+        <div class="container">
+            <div class="wa-cta reveal">
+                <div class="wa-cta-text">
+                    <div class="section-label">Prefer to chat?</div>
+                    <h2>Get your valuation on WhatsApp.</h2>
+                    <p>Send a few photos to our team on WhatsApp and get your valuation right there in the chat.</p>
+                </div>
+                <a href="#" id="whatsappEvalBtn" data-wa="Hi GreenBay, I would like a valuation for my appliance" target="_blank" rel="noopener" class="btn btn-whatsapp btn-lg">
+                    <i data-lucide="message-circle" class="btn-icon"></i>
+                    Evaluate on WhatsApp
+                </a>
+            </div>
         </div>
     </section>
-
     <!-- EVALUATION TOOL -->
     <section class="evaluation-section" id="evaluate">
         <div class="container">
             <div class="section-header">
-                <div class="section-label">AI Evaluator</div>
-                <h2 class="section-title">Get Your Instant Valuation</h2>
+                <div>
+                    <div class="section-label">AI evaluator</div>
+                    <h2 class="section-title">Get your valuation.</h2>
+                </div>
                 <p class="section-subtitle">Answer a few questions, upload photos, and let our AI do the rest.</p>
             </div>
 
@@ -551,7 +596,7 @@
 
                             <div class="form-group defect-group" id="defectGroup" hidden>
                                 <span class="form-label" id="defectLabel">What's wrong with it? <span
-                                        class="step-optional-badge">Tap all that apply</span></span>
+                                        class="step-optional-badge hint-inline">Tap all that apply</span></span>
                                 <div class="chip-group chip-group-sm" id="defectOptions" aria-labelledby="defectLabel">
                                     <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="cosmetic_dent" onclick="toggleDefect(this)">Dents</button>
                                     <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="cosmetic_scratch" onclick="toggleDefect(this)">Scratches</button>
@@ -563,7 +608,7 @@
                                     <button type="button" class="chip chip-sm" aria-pressed="false" data-defect="not_working" onclick="toggleDefect(this)">Doesn't turn on</button>
                                 </div>
                                 <input type="text" class="form-input" id="issuesInput" maxlength="500"
-                                    placeholder="Anything else we should know? (optional)"
+                                    placeholder="Anything else? (optional)"
                                     oninput="updateAnswer('issues', this.value)">
                             </div>
                         </div>
@@ -659,7 +704,7 @@
                             <div class="form-group">
                                 <div class="price-input-wrapper">
                                     <span class="currency-label" data-copy="currency">&nbsp;</span>
-                                    <input type="text" class="form-input" id="priceInput" inputmode="decimal"
+                                    <input type="text" class="form-input" id="priceInput" inputmode="decimal" data-copy-placeholder="pricePlaceholder"
                                         placeholder="e.g. 25000" oninput="handlePriceInput(this.value)">
                                 </div>
                                 <p class="form-hint">Type a number. "25k" works too.</p>
@@ -749,21 +794,21 @@
             <div class="footer-grid">
                 <div class="footer-brand">
                     <div class="logo">
-                        <img src="greenbay-logo.png" alt="GreenBay Market" class="logo-img footer-logo-img">
+                        <img src="assets/shared/greenbay-logo.png" alt="GreenBay Market" class="logo-img footer-logo-img" width="128" height="40">
                     </div>
                     <p>The GreenBay marketplace for pre-loved appliances. AI-powered valuations, settled by our
                         sourcing team.</p>
                 </div>
                 <div class="footer-col">
-                    <h4>Quick Links</h4>
-                    <a href="#how-it-works">How It Works</a>
+                    <h4>Quick links</h4>
+                    <a href="#how-it-works">How it works</a>
                     <a href="#categories">Categories</a>
-                    <a href="#evaluate">Get Valuation</a>
+                    <a href="#evaluate">Get valuation</a>
                 </div>
                 <div class="footer-col">
                     <h4>Categories</h4>
                     <a href="https://greenbay.market/collections/refrigerators" target="_blank">Fridges & Freezers</a>
-                    <a href="https://greenbay.market/collections/microwaves-ovens" target="_blank">Cookers & Ovens</a>
+                    <a href="https://greenbay.market/collections/microwaves-ovens" target="_blank">Microwaves &amp; Ovens</a>
                     <a href="https://greenbay.market/collections/tv-home-entertainment" target="_blank">TVs &
                         Entertainment</a>
                     <a href="https://greenbay.market/collections/laundry-cleaning" target="_blank">Laundry &
@@ -783,30 +828,17 @@
             </div>
             <div class="footer-bottom">
                 <span>&copy; 2026 GreenBay Market. All rights reserved.</span>
-                <span class="footer-made">Made with <i data-lucide="heart" class="footer-heart"></i> for
+                <span class="footer-made"><span class="flag-swatch" aria-hidden="true"></span> Made with <i data-lucide="heart" class="footer-heart"></i> for
                     <span data-copy="footerPlace">East Africa and Nigeria</span></span>
             </div>
         </div>
     </footer>
 
     <!-- Floating WhatsApp CX Button -->
-    <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20need%20help%20with%20my%20trade-in" data-wa="Hi GreenBay, I need help with my trade-in" target="_blank" class="floating-whatsapp" id="floatingWhatsapp" title="Chat with our CX Team">
-        <i data-lucide="message-circle" style="width:28px;height:28px;"></i>
-        <span class="floating-wa-label">Need Help?</span>
+    <a href="https://wa.me/254705919099?text=Hi%20GreenBay%2C%20I%20need%20help%20with%20my%20trade-in" data-wa="Hi GreenBay, I need help with my trade-in" target="_blank" class="floating-whatsapp" id="floatingWhatsapp" title="Chat with our CX Team" aria-label="Chat with our CX team on WhatsApp">
+        <i data-lucide="message-circle" style="width:26px;height:26px;"></i>
+        <span class="floating-wa-label">Need help?</span>
     </a>
-
-    <!-- Floating Appliance Icons Background -->
-    <div class="floating-appliances" aria-hidden="true">
-        <div class="floating-icon fi-1"><i data-lucide="refrigerator" style="width:40px;height:40px;"></i></div>
-        <div class="floating-icon fi-2"><i data-lucide="washing-machine" style="width:36px;height:36px;"></i></div>
-        <div class="floating-icon fi-3"><i data-lucide="tv" style="width:32px;height:32px;"></i></div>
-        <div class="floating-icon fi-4"><i data-lucide="microwave" style="width:30px;height:30px;"></i></div>
-        <div class="floating-icon fi-5"><i data-lucide="flame" style="width:28px;height:28px;"></i></div>
-        <div class="floating-icon fi-6"><i data-lucide="chef-hat" style="width:34px;height:34px;"></i></div>
-        <div class="floating-icon fi-7"><i data-lucide="thermometer-snowflake" style="width:26px;height:26px;"></i></div>
-        <div class="floating-icon fi-8"><i data-lucide="washing-machine" style="width:38px;height:38px;"></i></div>
-    </div>
-
     <!-- Clear stale evaluation state BEFORE app.js loads -->
     <script>
         try {
@@ -819,7 +851,7 @@
             }
         } catch(e) { localStorage.removeItem('gb_eval_state'); }
     </script>
-    <script src="app.js?v=20261118"></script>
+    <script src="app.js?v=20261119"></script>
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
