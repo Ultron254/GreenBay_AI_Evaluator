@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     # Kenyan list. Override with TEAM_NOTIFICATION_EMAILS_UG / _NG.
     team_notification_emails_ug: str = "kalungi@greenbay.market,allanmatano@greenbay.market"
     team_notification_emails_ng: str = "sunday@greenbay.market,allanmatano@greenbay.market"
+    # Deploy/CI probe evaluations (ZZSMOKE...) email only this list, so no
+    # market team hears about test rows. Override with TEAM_NOTIFICATION_EMAILS_TEST.
+    team_notification_emails_test: str = "allanmatano@greenbay.market"
 
     # Simple SMTP alternative to SES (e.g. Google Workspace / Gmail app password).
     # If SMTP_HOST is set, email goes via SMTP and SES is not needed at all.

@@ -476,13 +476,26 @@ class TestProbeRowsNeverEmailMarketTeams:
         monkeypatch.setattr(s, "team_notification_emails", "allanmatano@greenbay.market,alexander@greenbay.market")
         monkeypatch.setattr(s, "team_notification_emails_ug", "kalungi@greenbay.market,allanmatano@greenbay.market")
         monkeypatch.setattr(s, "team_notification_emails_ng", "sunday@greenbay.market,allanmatano@greenbay.market")
+        monkeypatch.setattr(s, "team_notification_emails_test", "allanmatano@greenbay.market")
 
-    @pytest.mark.parametrize("country", ["UG", "NG"])
-    def test_deploy_probe_goes_to_the_ops_list(self, country):
+    @pytest.mark.parametrize("country", ["KE", "UG", "NG"])
+    def test_deploy_probe_goes_to_allan_only(self, country):
         from greenbay_ai_evaluator.services.email_service import _recipients_for
         rcpt = _recipients_for({"country": country, "seller_name": f"ZZSMOKE E2E {country}",
                                 "model": f"ZZSMOKE-E2E-{country}"})
-        assert "kalungi@greenbay.market" not in rcpt and "sunday@greenbay.market" not in rcpt
+        assert rcpt == ["allanmatano@greenbay.market"]
+
+    @pytest.mark.parametrize("country", ["KE", "UG", "NG"])
+    def test_probe_subject_says_test(self, country):
+        from greenbay_ai_evaluator.services.email_service import build_outcome_email
+        subject, _, _ = build_outcome_email({"country": country, "seller_name": "ZZSMOKE E2E",
+                                             "model": "ZZSMOKE-E2E"}, "NEEDS REVIEW")
+        assert subject.startswith("[TEST] ")
+
+    def test_real_ugandan_customer_goes_to_kalungi_and_allan(self):
+        from greenbay_ai_evaluator.services.email_service import _recipients_for
+        rcpt = _recipients_for({"country": "UG", "seller_name": "Nakato", "model": "LG GN-B202"})
+        assert set(rcpt) == {"kalungi@greenbay.market", "allanmatano@greenbay.market"}
 
     def test_real_customer_goes_to_the_market_team(self):
         from greenbay_ai_evaluator.services.email_service import _recipients_for

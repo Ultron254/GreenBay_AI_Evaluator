@@ -57,8 +57,14 @@ def _is_test_record(vs: dict[str, Any] | None) -> bool:
 
 
 def _recipients_for(vs: dict[str, Any] | None) -> list[str]:
-    """The market team for a real evaluation; the ops (Kenyan) list for probes."""
-    return _recipients("KE" if _is_test_record(vs) else _market(vs))
+    """The market team for a real evaluation. Deploy/CI probes (ZZSMOKE...)
+    go to TEAM_NOTIFICATION_EMAILS_TEST only (Allan by default): no market
+    team, Kenya's included, is emailed about a test row."""
+    if _is_test_record(vs):
+        from app.config import get_settings
+        raw = getattr(get_settings(), "team_notification_emails_test", "") or ""
+        return [e.strip() for e in raw.split(",") if e.strip()]
+    return _recipients(_market(vs))
 
 
 def _recipients(country: str | None = None) -> list[str]:
@@ -220,6 +226,8 @@ def build_outcome_email(
 
     market = _market(vs)
     market_tag = "" if market == "KE" else f"[{_MARKET_NAMES[market]}] "
+    if _is_test_record(vs):
+        market_tag = "[TEST] " + market_tag
     subject = (
         f"{market_tag}[GreenBay] Offer {outcome} — {product} — {_format_money(currency, ai_price)}"
     )
