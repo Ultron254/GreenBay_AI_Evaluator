@@ -1,0 +1,262 @@
+{
+  "slug": "vision-plus",
+  "name": "Vision Plus",
+  "legal_name": "Kryptonite International Limited",
+  "path": "/vision-plus",
+  "ref_prefix": "VP",
+  "voucher_prefix": "VPLUS",
+  "countries": [
+    "KE"
+  ],
+  "currency": "KES",
+  "brands": [
+    "Vision Plus"
+  ],
+  "brand_aliases": [
+    "visionplus",
+    "vision+",
+    "visionplusafrica",
+    "vplus"
+  ],
+  "categories": [
+    "tv_monitor",
+    "refrigerator",
+    "cooker_oven",
+    "microwave",
+    "washing_machine",
+    "small_kitchen"
+  ],
+  "bulky_categories": [
+    "refrigerator",
+    "washing_machine",
+    "tv_monitor"
+  ],
+  "bulky_min_size": {
+    "tv_monitor": 50
+  },
+  "buy_categories": [
+    {
+      "id": "tv",
+      "label": "TV"
+    },
+    {
+      "id": "audio",
+      "label": "Soundbar or speaker"
+    },
+    {
+      "id": "refrigerator",
+      "label": "Fridge or freezer"
+    },
+    {
+      "id": "washing_machine",
+      "label": "Washing machine"
+    },
+    {
+      "id": "cooker_oven",
+      "label": "Cooker or oven"
+    },
+    {
+      "id": "microwave",
+      "label": "Microwave"
+    },
+    {
+      "id": "water_dispenser",
+      "label": "Water dispenser"
+    },
+    {
+      "id": "other",
+      "label": "Something else"
+    }
+  ],
+  "credit": {
+    "floor": 500,
+    "nominal_age_years": 12,
+    "nominal_value": 500,
+    "expiry_days": 90,
+    "max_auto_risk_score": 70
+  },
+  "placements": [
+    {
+      "code": "VP-WEB1",
+      "channel": "website",
+      "placement": "banner",
+      "label": "Vision Plus website banner"
+    },
+    {
+      "code": "VP-WEB2",
+      "channel": "website",
+      "placement": "product-page",
+      "label": "Vision Plus website product pages"
+    }
+  ],
+  "shops": [],
+  "notify": {
+    "accepted": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "needs_validation": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "credit_issued": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ],
+    "credit_used": [
+      "allanmatano@greenbay.market",
+      "alex@greenbay.market",
+      "info@greenbay.market"
+    ]
+  },
+  "theme": {
+    "fonts_url": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@1&display=swap",
+    "font_display": "'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif",
+    "font_body": "'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "font_serif": "'Instrument Serif', Georgia, serif",
+    "logo": "/app/partners/vision-plus/vision-plus-logo.svg",
+    "logo_on_dark": "/app/partners/vision-plus/vision-plus-logo-white.svg",
+    "logo_alt": "Vision Plus",
+    "logo_ratio": 4.578,
+    "colors": {
+      "band": "#472F8F",
+      "ink": "#1A1330",
+      "paper": "#F6F5FA",
+      "stone": "#ECE9F4",
+      "line": "#D9D4E8",
+      "muted": "#55506A",
+      "on_ink": "#FFFFFF",
+      "on_ink_muted": "#DCD5F2",
+      "accent": "#472F8F",
+      "accent_hover": "#38236F",
+      "cosign": "#0B6E40",
+      "cosign_soft": "#E3EFE6",
+      "highlight": "#FFFFFF"
+    },
+    "radius_card": "10px",
+    "logo_on_dark_png": "/app/partners/vision-plus/vision-plus-logo-white.png"
+  },
+  "copy": {
+    "page_title": "Upgrade your Vision Plus | GreenBay x Vision Plus",
+    "description": "Trade in your old Vision Plus appliance or TV for Vision Plus credit. GreenBay values it, checks it and buys it. You spend the credit on something new from Vision Plus.",
+    "kicker": "GreenBay x Vision Plus swap",
+    "headline_1": "Upgrade your Vision Plus.",
+    "headline_2": "Your old one pays towards it.",
+    "lede": "Tell us about your old Vision Plus TV or appliance and we will make you a fair offer, paid as Vision Plus credit. GreenBay checks the item and buys it from you. You spend the credit on anything new from Vision Plus.",
+    "cta_primary": "Value my old Vision Plus",
+    "cta_secondary": "How the swap works",
+    "run_by": "Valued and bought by GreenBay Second Life Appliances",
+    "card_label": "Vision Plus credit",
+    "card_example_amount": 6500,
+    "card_note": "Example only. Your offer depends on your TV or appliance.",
+    "card_item": "Vision Plus 43 inch TV, 3 years old",
+    "steps_title": "How the swap works",
+    "steps": [
+      {
+        "title": "Tell us about it",
+        "body": "Four short steps: what it is, how old it is, its condition, and a few photos. It takes about two minutes."
+      },
+      {
+        "title": "See your offer",
+        "body": "We value it against real resale prices and show you a figure in Vision Plus credit. Every Vision Plus item we accept is worth at least KES 500."
+      },
+      {
+        "title": "We check it",
+        "body": "Our team calls you to arrange a check. For fridges, washing machines and TVs of 50 inches and up, a GreenBay technician comes to you. Smaller items can be dropped at a GreenBay shop."
+      },
+      {
+        "title": "Spend it at Vision Plus",
+        "body": "Once the check is done, your credit is ready. Use it at Vision Plus within 90 days and pay the difference on your new TV or appliance."
+      }
+    ],
+    "credit_title": "Your credit, in plain terms",
+    "credit_rows": [
+      [
+        "What you get",
+        "Vision Plus credit equal to your accepted offer, and never less than KES 500."
+      ],
+      [
+        "Where it works",
+        "With Vision Plus only, on new Vision Plus products."
+      ],
+      [
+        "When it is ready",
+        "After our team has checked your item."
+      ],
+      [
+        "How long it lasts",
+        "90 days from the day it is issued."
+      ],
+      [
+        "Splitting it",
+        "Use it across more than one purchase until it runs out."
+      ],
+      [
+        "Cash",
+        "The credit is not paid out as cash."
+      ],
+      [
+        "Who does what",
+        "GreenBay values, checks and buys your old item. Vision Plus sells and delivers the new one."
+      ]
+    ],
+    "accepts_title": "What we take",
+    "accepts": "Old Vision Plus TVs, fridges and freezers, cookers and ovens, microwaves, washing machines and small kitchen appliances. Working or not.",
+    "eval_label": "Your swap",
+    "eval_title": "Value your old Vision Plus",
+    "eval_sub": "Four short steps. Kay, our evaluator, keeps you company as you go.",
+    "faq_title": "Questions people ask",
+    "faq": [
+      [
+        "Does it have to be a Vision Plus?",
+        "Yes. This swap is for Vision Plus products. For other brands, GreenBay can still make you a cash offer at evaluate.greenbay.market."
+      ],
+      [
+        "Can I swap a TV?",
+        "Yes. For TVs, a short video of the screen switched on helps us value it fairly. You can add one with your photos."
+      ],
+      [
+        "What if it is very old or not working?",
+        "Send it in anyway. Every Vision Plus item we accept is worth at least KES 500 in credit. What we cannot resell is stripped for parts or recycled."
+      ],
+      [
+        "What if the check finds something different?",
+        "Our team talks it through with you before anything is final. No credit is issued until you agree."
+      ],
+      [
+        "How do I get my credit?",
+        "Once your item has been checked, our customer team calls you with your Vision Plus credit code."
+      ]
+    ],
+    "footer_legal": "GreenBay Second Life Appliances values, inspects and buys your old item. New Vision Plus products are sold and delivered by Vision Plus (Kryptonite International Limited). The Vision Plus name and logo belong to their owner.",
+    "greeting": "Hi, I'm Kay from GreenBay. I'll value your old Vision Plus for the swap. Four short steps and you will see your offer.",
+    "step1_title": "Tell us about your old Vision Plus",
+    "step1_hint": "Three quick picks. It takes about 20 seconds.",
+    "step1_category_label": "Which Vision Plus product is it?",
+    "step2_hint": "Start with a photo of the label, so we can read the model number. Then add at least 3 photos. For a TV, a short video of the screen on helps too.",
+    "buy_title": "What would you like from Vision Plus?",
+    "buy_hint": "Pick one. It helps Vision Plus have it ready for you.",
+    "buy_model_placeholder": "Model or budget (optional)",
+    "step3_label": "Your swap",
+    "price_hint": "Any figure in mind for your old one? (optional)",
+    "results_label": "Your offer",
+    "offer_header": "Your Vision Plus credit offer",
+    "offer_note": "Paid as Vision Plus credit, not cash. It is ready once our team has checked your item, and lasts 90 days from then.",
+    "accept_cta": "Accept {amount} in Vision Plus credit",
+    "talk_cta": "Talk to our team first",
+    "accepted_title": "You're in.",
+    "accepted_ref_label": "Your reference. Keep it handy when we call.",
+    "accepted_body": "Our team will call you on {phone} to arrange the check. When it is done, they will give you your Vision Plus credit code.",
+    "accepted_next": [
+      "We call you to arrange the check.",
+      "A technician visits, or you drop it at a GreenBay shop.",
+      "Your Vision Plus credit code is issued and ready to use."
+    ],
+    "brand_mismatch": "This label looks like a {brand}. The Vision Plus swap is for Vision Plus products. For other brands, GreenBay can make you a cash offer at evaluate.greenbay.market.",
+    "sticker_headline": "Upgrade your Vision Plus",
+    "sticker_sub": "Scan for a fair offer, paid as Vision Plus credit to spend on a new one."
+  }
+}

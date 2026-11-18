@@ -386,6 +386,17 @@ def create_app() -> FastAPI:
     # products.json scraper in lifespan(), which is all the carousel needs.
     # app.include_router(shopify_router, tags=["Shopify"])
     app.include_router(flowcart_router, prefix="/webhook", tags=["Flowcart WhatsApp"])
+    # Partner trade-in (Mika, Vision Plus): page config and start pings under
+    # /tradein, QR short links at /q/<code>, one page per partner path.
+    from greenbay_ai_evaluator.partners.api import (
+        partner_api_router, partner_page_router, register_partner_pages,
+    )
+    from greenbay_ai_evaluator.partners.data_api import partner_admin_router, partner_portal_router
+    app.include_router(partner_admin_router, prefix="/tradein", tags=["Partner Trade-In (ops)"])
+    app.include_router(partner_portal_router, prefix="/tradein", tags=["Partner Trade-In (portal)"])
+    app.include_router(partner_api_router, prefix="/tradein", tags=["Partner Trade-In"])
+    app.include_router(partner_page_router, tags=["Partner Trade-In"])
+    register_partner_pages(app)
     app.include_router(evaluator_router, prefix="/tradein", tags=["Trade-In Evaluator"])
     app.include_router(chat_router, prefix="/tradein", tags=["Trade-In Chat"])
     

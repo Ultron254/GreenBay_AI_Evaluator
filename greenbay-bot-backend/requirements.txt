@@ -49,6 +49,7 @@ psutil>=5.9.0,<7.0
 
 # PDF Generation (for receipts)
 reportlab
+segno>=1.6,<2.0
 weasyprint
 
 # AWS S3 (for image storage)

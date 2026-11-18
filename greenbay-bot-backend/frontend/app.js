@@ -119,11 +119,103 @@ const COUNTRY_CONFIG = {
     },
 };
 
-// Market: the portal path wins (/app/ug), then the browser timezone, then Kenya.
+/* ============================================================
+ PARTNER SITES
+ /mika and /vision-plus serve this same page with
+ <meta name="gb-partner" content="<slug>" data-country="KE">. Every
+ evaluation from such a page carries a partner block (slug, QR code, channel)
+ so the backend can check the brand, label the lead and open a credit.
+ A QR scan lands as /<slug>?qr=<CODE>; the code is kept for the whole visit.
+ ============================================================ */
+const GB_PARTNER = (function readPartner() {
+    try {
+        const meta = document.querySelector('meta[name="gb-partner"]');
+        if (!meta || !meta.content) return null;
+        const p = { slug: meta.content, country: (meta.dataset.country || 'KE').toUpperCase(), config: {} };
+        try {
+            const el = document.getElementById('gbPartnerConfig');
+            if (el) p.config = JSON.parse(el.textContent || '{}') || {};
+        } catch (_) { p.config = {}; }
+        const key = 'gb_partner_ctx_' + p.slug;
+        let saved = {};
+        try { saved = JSON.parse(sessionStorage.getItem(key) || '{}') || {}; } catch (_) { saved = {}; }
+        const qs = new URLSearchParams(window.location.search || '');
+        const qr = (qs.get('qr') || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 24);
+        if (qr) saved.qr_code = qr;
+        p.qr_code = saved.qr_code || null;
+        try { sessionStorage.setItem(key, JSON.stringify(saved)); } catch (_) { /* ignore */ }
+        return p;
+    } catch (_) { return null; }
+})();
+
+/** The partner block sent with POST /tradein/evaluate (null off partner sites). */
+function partnerPayload() {
+    if (!GB_PARTNER) return null;
+    const a = (typeof state !== 'undefined' && state.answers) || {};
+    return {
+        slug: GB_PARTNER.slug,
+        qr_code: GB_PARTNER.qr_code,
+        channel: GB_PARTNER.qr_code ? null : 'direct',
+        buy_category: a.buyCategory || null,
+        buy_model: a.buyModel || null,
+    };
+}
+
+/** Tell the backend a partner visitor started; once per visit, never blocks. */
+function partnerPing(type) {
+    if (!GB_PARTNER) return;
+    try {
+        fetch(`${window.location.origin}/tradein/partners/${GB_PARTNER.slug}/events`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, qr_code: GB_PARTNER.qr_code }),
+            keepalive: true,
+        }).catch(() => { /* analytics only */ });
+    } catch (_) { /* analytics only */ }
+}
+
+/** Partner copy with {placeholders} filled; '' when the partner has none. */
+function partnerCopy(key, vars) {
+    if (!GB_PARTNER) return '';
+    const raw = ((GB_PARTNER.config || {}).copy || {})[key];
+    if (typeof raw !== 'string') return '';
+    return raw.replace(/\{(\w+)\}/g, (_, k) => (vars && vars[k] != null ? String(vars[k]) : ''));
+}
+
+/** Is this brand one the partner site accepts? Same folding as the server. */
+function partnerBrandOk(brand) {
+    if (!GB_PARTNER) return true;
+    const fold = (b) => String(b || '').toLowerCase().replace(/[^a-z0-9+]/g, '').replace(/\+/g, 'plus');
+    const key = fold(brand);
+    if (!key) return false;
+    return ((GB_PARTNER.config || {}).brands || []).some(b => fold(b) === key);
+}
+
+/** On a partner site the brand is the partner's, unless a label says otherwise. */
+function partnerInitAnswers() {
+    if (!GB_PARTNER || typeof state === 'undefined') return;
+    const a = state.answers;
+    const brand = ((GB_PARTNER.config || {}).brands || [])[0];
+    if (brand && (!a.brand || a.brandSource !== 'label' || !partnerBrandOk(a.brand))) {
+        if (!a.partnerBrandMismatch) { a.brand = brand; a.brandSource = 'partner'; }
+    }
+}
+
+/** Hand a results screen to partner.js (offer, review, accepted). */
+function partnerRender(kind, data, extra) {
+    if (!GB_PARTNER || !window.GBPartnerUI || typeof window.GBPartnerUI.render !== 'function') return false;
+    try { return window.GBPartnerUI.render(kind, data, extra) === true; } catch (e) {
+        console.warn('partner render failed', e);
+        return false;
+    }
+}
+
+// Market: a partner page's country wins, then the portal path (/app/ug),
+// then the browser timezone, then Kenya.
 (function detectCountry() {
-    let code = null;
+    let code = GB_PARTNER ? GB_PARTNER.country : null;
     const m = /^\/app\/(ke|ug|ng)\/?$/i.exec(window.location.pathname || '');
-    if (m) code = m[1].toUpperCase();
+    if (!code && m) code = m[1].toUpperCase();
     if (!code) {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
         if (tz.startsWith('Africa/Kampala')) code = 'UG';
@@ -161,14 +253,15 @@ function applyMarketCopy() {
     document.querySelectorAll('#brandSelect option[data-markets]').forEach(opt => {
         if (opt.dataset.markets.split(',').indexOf(MARKET.code) === -1) opt.remove();
     });
-    document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
+    // A partner page keeps its own title (set server side from its config).
+    if (!GB_PARTNER) document.title = `Sell Your Appliance in ${MARKET.name} | GreenBay AI Evaluator`;
 }
 
 try { applyMarketCopy(); } catch (_) { /* re-applied on DOMContentLoaded */ }
 
 // The storage key carries a version: answers saved by the old 10-step wizard
 // do not fit this one.
-const GB_STATE_KEY = 'gb_eval_state_v2_' + MARKET.code;
+const GB_STATE_KEY = 'gb_eval_state_v2_' + MARKET.code + (GB_PARTNER ? '_' + GB_PARTNER.slug : '');
 
 const state = {
     currentStep: 1,
@@ -281,6 +374,7 @@ function trackOnce(name, params) {
         sessionStorage.setItem(flag, '1');
     } catch (_) { /* fall through and send anyway */ }
     trackEvent(name, params);
+    if (name === 'wizard_start') partnerPing('start');
 }
 
 // Restore from localStorage — auto-reset if previous evaluation was complete
@@ -385,8 +479,10 @@ const DEFECT_LABELS = {
 document.addEventListener('DOMContentLoaded', () => {
     applyMarketCopy();
 
+    partnerInitAnswers();
+
     // Greet in chat
-    addChatMessage('bot', `${MARKET.greeting}! I'm Kay, GreenBay's AI evaluator for ${MARKET.name}. Answer four quick steps and I'll value your appliance.`);
+    addChatMessage('bot', partnerCopy('greeting') || `${MARKET.greeting}! I'm Kay, GreenBay's AI evaluator for ${MARKET.name}. Answer four quick steps and I'll value your appliance.`);
     setTimeout(() => {
         addChatMessage('bot', "Start with what you're selling, how old it is and its condition.");
     }, 800);
@@ -490,7 +586,9 @@ function isStepValid(step) {
             && (a.category !== 'other' || (a.otherDescription || '').trim().length >= 2)
             && a.age !== null && a.age !== undefined
             && !!a.condition;
-        case 2: return a.photos.length >= 3 && !!a.brand && a.plateRead !== 'reading';
+        // Partner site: the brand is the partner's; a label that reads another
+        // brand (partnerBrandMismatch) stops the swap here, with a reason on screen.
+        case 2: return a.photos.length >= 3 && (GB_PARTNER ? !a.partnerBrandMismatch : !!a.brand) && a.plateRead !== 'reading';
         case 3: return true; // price can be null ("make me an offer")
         case 4: return (a.sellerName || '').trim().length >= 2 && isValidPhone(a.sellerPhone);
         default: return true;
@@ -686,6 +784,18 @@ function handleCustomBrand(value) {
     saveState();
 }
 
+/** The customer says the label was misread: it really is the partner's brand. */
+function partnerBrandOverride() {
+    if (!GB_PARTNER) return;
+    state.answers.partnerBrandMismatch = null;
+    state.answers.brandSource = null;
+    partnerInitAnswers();
+    setPlateStatus('ok', 'Thanks. We will confirm the brand when we check the item.');
+    refreshNext();
+    saveState();
+}
+window.partnerBrandOverride = partnerBrandOverride;
+
 function setPlateStatus(kind, html) {
     const el = document.getElementById('plateStatus');
     if (!el) return;
@@ -869,6 +979,25 @@ async function lookupModelFromPhoto(dataUrl) {
     const ocrModel = sanitiseText((result && result.model_number) || '').trim();
     const model = ocrModel;
     if (ocrModel) state.answers.model = ocrModel;
+    if (GB_PARTNER) {
+        a.partnerBrandMismatch = (ocrBrand && !partnerBrandOk(ocrBrand)) ? ocrBrand : null;
+        a.plateRead = result ? 'done' : 'failed';
+        if (a.partnerBrandMismatch) {
+            setPlateStatus('warn', escapeHtml(partnerCopy('brand_mismatch', { brand: ocrBrand })
+                || `This label reads ${ocrBrand}. This swap is for ${GB_PARTNER.config.name || 'partner'} appliances.`)
+                + ' <button type="button" class="link-button" onclick="partnerBrandOverride()">It is a '
+                + escapeHtml(GB_PARTNER.config.name || '') + '</button>');
+        } else {
+            partnerInitAnswers();
+            setPlateStatus('ok', model
+                ? `<i data-lucide="check-circle" class="inline-icon"></i> Model read from your label: <strong>${escapeHtml(model)}</strong>`
+                : 'Label photo saved. You can carry on.');
+        }
+        if (window.lucide) lucide.createIcons();
+        refreshNext();
+        saveState();
+        return;
+    }
     if (ocrBrand && a.brandSource !== 'manual') {
         state.answers.brand = ocrBrand;
         a.brandSource = 'label';
@@ -1367,6 +1496,8 @@ async function callEvaluationAPI() {
             landing_url: attribution.landing_url || null,
         },
     };
+    const partner = partnerPayload();
+    if (partner) payload.partner = partner;
 
     trackEvent('evaluate_submit');
 
@@ -1384,6 +1515,16 @@ async function callEvaluationAPI() {
             // at the echoed input: an over-long issues text that happens to
             // contain the word "phone" is not a phone error.
             let aboutPhone = false;
+            let detail422 = null;
+            try { detail422 = (await resp.clone().json()).detail; } catch (_) { /* ignore */ }
+            // A partner site refused the item (wrong brand, category or
+            // country): say why, plainly, and stop. No demo offer.
+            if (detail422 && typeof detail422 === 'object' && !Array.isArray(detail422)
+                && /^partner_/.test(String(detail422.code || ''))) {
+                addChatMessage('bot', String(detail422.message || 'This item is not part of this swap.'));
+                showEvaluationError(String(detail422.message || ''));
+                return;
+            }
             try {
                 const detail = (await resp.json()).detail;
                 aboutPhone = Array.isArray(detail) && detail.some(e =>
@@ -1403,6 +1544,18 @@ async function callEvaluationAPI() {
         }
 
         const data = await resp.json();
+        // Partner site: the customer is offered partner credit (floor and
+        // nominal rules applied server side), not the engine's cash figure.
+        // No credit offer means a person decides first: show the review screen.
+        if (data.partner) {
+            if (typeof data.partner.credit_offer === 'number') {
+                if (data.decision === 'review') data.decision = 'accept';
+                data.opening_offer = data.partner.credit_offer;
+                if (data.acquisition_ceiling < data.opening_offer) data.acquisition_ceiling = data.opening_offer;
+            } else {
+                data.decision = 'review';
+            }
+        }
         state.sessionId = data.session_id;
         state.evaluation = data;
         saveState();
@@ -1499,6 +1652,11 @@ function showResults(data) {
     const a = state.answers;
     const offer = data.decision === 'accept' && a.price ? a.price : data.opening_offer;
     const confidence = data.confidence_score || 0;
+    // On a partner site the server already decided: a credit offer (even the
+    // KES 500 nominal one for a very old item) is shown; none means a person.
+    const partnerOffer = !!(data.partner && typeof data.partner.credit_offer === 'number');
+    const needsPerson = partnerOffer ? false
+        : (confidence < 80 || data.decision === 'review' || data.decision === 'redirect_to_agents');
     const product = `${escapeHtml(a.brand || '')} ${CATEGORY_NAMES[a.category] || ''}`.trim();
     const conditionText = CONDITION_LABELS[a.condition] || '';
     const currency = data.currency_code || MARKET.currency;
@@ -1511,7 +1669,7 @@ function showResults(data) {
     if (!isDemo) {
         let shownDecision = 'negotiate';
         if (data.decision === 'reject') shownDecision = 'reject';
-        else if (confidence < 80 || data.decision === 'review' || data.decision === 'redirect_to_agents') shownDecision = 'review';
+        else if (needsPerson) shownDecision = 'review';
         else if (data.decision === 'accept') shownDecision = 'accept';
         trackEvent('offer_shown', { decision: shownDecision });
         if (shownDecision === 'review') trackEvent('human_review_routed');
@@ -1541,7 +1699,8 @@ function showResults(data) {
     }
 
     // A person confirms the offer: low confidence, review, or sent to agents.
-    if (confidence < 80 || data.decision === 'review' || data.decision === 'redirect_to_agents') {
+    if (needsPerson && partnerRender('review', data)) return;
+    if (needsPerson) {
         setResultHeader('Your result');
         const toAgents = data.decision === 'redirect_to_agents';
         const reviewMessage = escapeHtml(toAgents
@@ -1574,6 +1733,8 @@ function showResults(data) {
             : `I'd like a specialist to confirm this one. The preliminary estimate is ${currency} ${formatKES(offer)}, and our team will confirm the final offer with you on WhatsApp.`);
         return;
     }
+
+    if (partnerRender('offer', data, { offer, currency })) return;
 
     // The offer card
     setResultHeader('Your valuation');
@@ -1907,6 +2068,7 @@ async function acceptOffer(amount) {
             if (resp.ok) {
                 const data = await resp.json();
                 if (typeof data.final_offer === 'number') amount = data.final_offer;
+                if (data.reference) state.partnerReference = data.reference;
                 accepted = true;
             } else {
                 failureReason = `HTTP ${resp.status}`;
@@ -1934,6 +2096,10 @@ async function acceptOffer(amount) {
     state.negotiation.status = 'accepted';
     addChatMessage('bot', `Deal confirmed at <strong>${currency} ${formatKES(amount)}</strong>. Next, choose how you'd like to hand it over.`);
 
+    if (partnerRender('accepted', state.evaluation, { amount, reference: state.partnerReference })) {
+        saveState();
+        return;
+    }
     showPickupDropoffChoice(amount);
     saveState();
 }

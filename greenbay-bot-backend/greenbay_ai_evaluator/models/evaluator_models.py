@@ -152,6 +152,18 @@ class ValuationSession(Base):
     referrer = Column(String(500), nullable=True)
     landing_url = Column(String(2000), nullable=True)
 
+    # Partner trade-in (v6.4, migration v640_partners). Set only when the
+    # evaluation came from a partner site such as /mika; empty otherwise.
+    partner_id = Column(String(40), nullable=True, index=True)
+    partner_channel = Column(String(40), nullable=True)   # website | shop | staff | direct ...
+    partner_shop = Column(String(60), nullable=True)      # shop slug, when it came from a shop
+    partner_placement = Column(String(60), nullable=True)  # banner | sticker | product-page ...
+    partner_qr_code = Column(String(24), nullable=True, index=True)
+    partner_source = Column(String(160), nullable=True)   # e.g. mika-website-banner
+    buy_intent_category = Column(String(60), nullable=True)
+    buy_intent_model = Column(String(200), nullable=True)
+    partner_offer = Column(Float, nullable=True)  # credit offered after partner rules
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -282,3 +294,8 @@ class SalesStockReference(Base):
     selling_price = Column(Float, nullable=True)
     raw_json = Column(Text, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# Partner trade-in tables live in their own module; importing it here
+# registers them wherever the evaluator models are loaded (init_db, tests).
+from greenbay_ai_evaluator.models import partner_models  # noqa: E402,F401
