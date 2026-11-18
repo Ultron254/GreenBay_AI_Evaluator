@@ -1,0 +1,393 @@
+/* ============================================================
+   GreenBay x Mika: the Mika page's own look, on top of partner.css.
+   Every rule is scoped to html[data-partner="mika"].
+
+   Image led: Mika's own product photos (img/, see img/SOURCES.md) and
+   one GreenBay photo of a used Mika. The hero tells the swap in pictures
+   (old Mika, Mika credit, something new) with appliance icons drifting
+   behind; the steps get a picture each; a rail of products shows what the
+   credit buys; the credit terms become icon tiles.
+
+   Motion: drift, a looping swap beat, hover lift. All of it stops for
+   prefers-reduced-motion, pauses while the tab is hidden or the section is
+   off screen (classes set by scene.js), and only ever moves transform and
+   opacity inside boxes whose size is fixed, so nothing reflows.
+   ============================================================ */
+
+html[data-partner="mika"] {
+  --mk-white: #FFFFFF;
+  --mk-shadow: 0 18px 40px rgba(0, 0, 0, .38);
+  --mk-shadow-soft: 0 10px 30px rgba(17, 17, 17, .10);
+  --mk-ease: cubic-bezier(.2, .7, .2, 1);
+  --mx: 0;
+  --my: 0;
+}
+
+/* ---------- pause switches ---------- */
+html[data-partner="mika"].mk-paused *,
+html[data-partner="mika"].mk-paused *::before,
+html[data-partner="mika"].mk-paused *::after,
+html[data-partner="mika"] .mk-off *,
+html[data-partner="mika"] .mk-off *::before,
+html[data-partner="mika"] .mk-off *::after { animation-play-state: paused !important; }
+
+/* ============================================================
+   HERO
+   ============================================================ */
+html[data-partner="mika"] .p-hero { isolation: isolate; }
+html[data-partner="mika"] .p-hero-grid { position: relative; z-index: 1; grid-template-areas: "copy" "art"; }
+html[data-partner="mika"] .p-hero-copy { grid-area: copy; position: relative; z-index: 2; }
+html[data-partner="mika"] .p-lede { max-width: 26em; font-size: 1.1rem; }
+
+/* backdrop: a soft light and line icons */
+html[data-partner="mika"] .mk-sky { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+html[data-partner="mika"] .mk-glow {
+  position: absolute; width: 760px; height: 760px; right: -260px; top: 50%; margin-top: -380px;
+  background: radial-gradient(closest-side, rgba(244, 242, 237, .13), rgba(244, 242, 237, .04) 55%, transparent 72%);
+}
+html[data-partner="mika"] .mk-sky::after {
+  /* a fine dot field that fades out towards the copy */
+  content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(rgba(244, 242, 237, .10) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(100deg, transparent 30%, #000 75%);
+  mask-image: linear-gradient(100deg, transparent 30%, #000 75%);
+}
+html[data-partner="mika"] .mk-ico {
+  position: absolute; left: var(--x); top: var(--y); width: var(--s); height: var(--s);
+  color: rgba(244, 242, 237, .16);
+  transform: translate3d(calc(var(--mx) * var(--z) * -18px), calc(var(--my) * var(--z) * -14px), 0);
+  transition: transform .6s var(--mk-ease);
+}
+html[data-partner="mika"] .mk-ico svg {
+  width: 100%; height: 100%; stroke-width: 1.4;
+  animation: mkDrift var(--t) ease-in-out var(--d) infinite;
+}
+@media (max-width: 959px) { html[data-partner="mika"] .mk-ico--wide { display: none; } }
+@media (min-width: 960px) { html[data-partner="mika"] .mk-ico--phone { display: none; } }
+
+@keyframes mkDrift {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  25% { transform: translate3d(10px, -14px, 0) rotate(5deg); }
+  50% { transform: translate3d(-6px, -24px, 0) rotate(-3deg); }
+  75% { transform: translate3d(-12px, -8px, 0) rotate(4deg); }
+}
+
+/* the art area: card in the middle, the story around it */
+html[data-partner="mika"] .p-hero .p-card {
+  grid-area: art; position: relative; z-index: 3;
+  width: calc(100% - 28px); max-width: 330px; margin: 92px 0 112px auto; justify-self: end;
+  animation: mkCardBeat 6.4s ease-in-out 1.2s infinite;
+}
+html[data-partner="mika"] .mk-art { grid-area: art; position: relative; z-index: 1; min-height: 100%; }
+@media (min-width: 960px) {
+  html[data-partner="mika"] .p-hero { padding: 64px 0 88px; }
+  html[data-partner="mika"] .p-hero-grid { grid-template-areas: "copy art"; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 48px; }
+  html[data-partner="mika"] .p-hero .p-card { max-width: 340px; margin: 132px 40px 150px auto; }
+}
+
+@media (min-width: 561px) and (max-width: 959px) {
+  /* tablets: keep the story as one tight group under the copy */
+  html[data-partner="mika"] .mk-art { width: 100%; max-width: 440px; justify-self: center; }
+  html[data-partner="mika"] .p-hero .p-card { width: 330px; margin-left: 110px; margin-right: 0; justify-self: center; }
+}
+html[data-partner="mika"] .mk-piece { position: absolute; margin: 0; }
+html[data-partner="mika"] .mk-par {
+  transform: translate3d(calc(var(--mx) * var(--z) * 10px), calc(var(--my) * var(--z) * 8px), 0);
+  transition: transform .5s var(--mk-ease);
+}
+html[data-partner="mika"] .mk-bob { animation: mkBob 7s ease-in-out infinite; }
+html[data-partner="mika"] .mk-tile {
+  border-radius: 18px; overflow: hidden; background: #2A2A2A;
+  box-shadow: var(--mk-shadow); border: 4px solid var(--p-paper);
+}
+html[data-partner="mika"] .mk-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+html[data-partner="mika"] .mk-tile--white { background: var(--mk-white); border: 0; padding: 8%; }
+html[data-partner="mika"] .mk-tile--white img { object-fit: contain; }
+
+@keyframes mkBob {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -10px, 0); }
+}
+
+/* old Mika: top left, tilted */
+html[data-partner="mika"] .mk-old { left: 0; top: 0; width: 112px; transform: rotate(-7deg); }
+html[data-partner="mika"] .mk-old .mk-tile { aspect-ratio: 4 / 5; }
+html[data-partner="mika"] .mk-old .mk-bob { animation-delay: -1.5s; }
+html[data-partner="mika"] .mk-old .mk-tile { animation: mkBeatOld 6.4s ease-in-out 1.2s infinite; }
+/* something new: bottom right */
+html[data-partner="mika"] .mk-new { right: -6px; bottom: 0; width: 124px; transform: rotate(5deg); }
+html[data-partner="mika"] .mk-new .mk-tile { aspect-ratio: 1; animation: mkBeatNew 6.4s ease-in-out 1.2s infinite; }
+html[data-partner="mika"] .mk-new .mk-bob { animation-delay: -4s; }
+/* two more Mika products drifting about */
+html[data-partner="mika"] .mk-float--kettle { right: 6px; top: 6px; width: 70px; transform: rotate(8deg); }
+html[data-partner="mika"] .mk-float--kettle .mk-tile { aspect-ratio: 1; border-radius: 50%; padding: 12%; }
+html[data-partner="mika"] .mk-float--kettle .mk-bob { animation-duration: 6s; animation-delay: -2s; }
+html[data-partner="mika"] .mk-float--micro { left: 0; bottom: 26px; width: 92px; transform: rotate(-4deg); }
+html[data-partner="mika"] .mk-float--micro .mk-tile { aspect-ratio: 1; padding: 6%; }
+html[data-partner="mika"] .mk-float--micro .mk-bob { animation-duration: 8s; animation-delay: -5s; }
+
+html[data-partner="mika"] .mk-tag {
+  position: absolute; left: 50%; white-space: nowrap; transform: translateX(-50%);
+  font-family: var(--p-font-display); font-weight: 600; font-size: .78rem; letter-spacing: .01em;
+  padding: 5px 11px; border-radius: 999px; background: var(--p-paper); color: var(--p-ink);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .3);
+}
+html[data-partner="mika"] .mk-old .mk-tag { top: -12px; }
+html[data-partner="mika"] .mk-new .mk-tag { bottom: -12px; }
+html[data-partner="mika"] .mk-tag--new { background: var(--p-cosign); color: #FFFFFF; }
+
+/* the flow arrows between the three beats */
+html[data-partner="mika"] .mk-flow { position: absolute; width: 96px; height: 72px; overflow: visible; fill: none; }
+html[data-partner="mika"] .mk-flow--1 { left: 104px; top: 4px; }
+html[data-partner="mika"] .mk-flow--2 { right: 112px; bottom: 26px; }
+html[data-partner="mika"] .mk-flow path { stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+html[data-partner="mika"] .mk-flow-track { stroke: rgba(244, 242, 237, .28); stroke-width: 1.5; stroke-dasharray: 2 6; }
+html[data-partner="mika"] .mk-flow-run { stroke: var(--p-paper); stroke-width: 2.2; stroke-dasharray: 22 100; stroke-dashoffset: 22; opacity: 0; }
+html[data-partner="mika"] .mk-flow-head { stroke: rgba(244, 242, 237, .7); stroke-width: 2; }
+html[data-partner="mika"] .mk-flow--1 .mk-flow-run { animation: mkRun1 6.4s linear 1.2s infinite; }
+html[data-partner="mika"] .mk-flow--2 .mk-flow-run { animation: mkRun2 6.4s linear 1.2s infinite; }
+@media (min-width: 960px) {
+  html[data-partner="mika"] .mk-old { width: 158px; left: 4px; }
+  html[data-partner="mika"] .mk-new { width: 172px; right: -4px; }
+  html[data-partner="mika"] .mk-float--kettle { width: 96px; right: 30px; top: 18px; }
+  html[data-partner="mika"] .mk-float--micro { width: 118px; left: 18px; bottom: 60px; }
+  html[data-partner="mika"] .mk-flow { width: 130px; height: 98px; }
+  html[data-partner="mika"] .mk-flow--1 { left: 168px; top: 14px; }
+  html[data-partner="mika"] .mk-flow--2 { right: 178px; bottom: 34px; }
+  html[data-partner="mika"] .mk-tag { font-size: .84rem; padding: 6px 13px; }
+}
+
+/* the loop: old Mika lifts, the credit glows, the new one lands */
+@keyframes mkBeatOld {
+  0%, 30%, 100% { transform: scale(1); }
+  10% { transform: scale(1.06); }
+}
+@keyframes mkRun1 {
+  0%, 8% { stroke-dashoffset: 22; opacity: 0; }
+  10% { opacity: 1; }
+  30% { stroke-dashoffset: -100; opacity: 1; }
+  32%, 100% { stroke-dashoffset: -100; opacity: 0; }
+}
+@keyframes mkCardBeat {
+  0%, 30%, 60%, 100% { box-shadow: 0 30px 60px rgba(0, 0, 0, .35), 0 0 0 0 rgba(244, 242, 237, 0); }
+  42% { box-shadow: 0 30px 60px rgba(0, 0, 0, .35), 0 0 0 10px rgba(244, 242, 237, .14); }
+}
+@keyframes mkRun2 {
+  0%, 52% { stroke-dashoffset: 22; opacity: 0; }
+  54% { opacity: 1; }
+  74% { stroke-dashoffset: -100; opacity: 1; }
+  76%, 100% { stroke-dashoffset: -100; opacity: 0; }
+}
+@keyframes mkBeatNew {
+  0%, 70%, 96%, 100% { transform: scale(1); }
+  80% { transform: scale(1.08); }
+}
+
+/* ============================================================
+   STEPS: a picture for each, number on the picture
+   ============================================================ */
+html[data-partner="mika"] .p-steps { padding-bottom: 24px; }
+html[data-partner="mika"] .p-step {
+  /* phones: picture on the left, words on the right */
+  border-left: 0; margin-left: 0; padding: 0 0 0 112px; min-height: 96px; margin-bottom: 22px;
+}
+html[data-partner="mika"] .p-step:last-child { margin-bottom: 0; }
+html[data-partner="mika"] .p-step::before {
+  /* the picture frame, there before scene.js fills it */
+  content: ""; position: absolute; left: 0; top: 0; width: 96px; height: 96px;
+  border-radius: 18px; background: var(--p-stone);
+}
+html[data-partner="mika"] .p-step-num {
+  left: 72px; top: -8px; width: 32px; height: 32px; z-index: 2; font-size: .8rem;
+  background: var(--p-ink); color: var(--p-paper); border-color: var(--p-ink);
+}
+html[data-partner="mika"] .p-step h3 { margin: 6px 0 2px; font-size: 1.14rem; }
+html[data-partner="mika"] .p-step p { font-size: .98rem; line-height: 1.5; }
+html[data-partner="mika"] .mk-sa {
+  position: absolute; left: 0; top: 0; width: 96px; height: 96px; border-radius: 18px; overflow: hidden;
+  display: grid; place-items: center;
+}
+@media (max-width: 560px) { html[data-partner="mika"] .p-step { padding-left: 112px; } }
+
+@media (min-width: 960px) {
+  html[data-partner="mika"] .p-steps-line { top: 100px; }
+  html[data-partner="mika"] .p-steps-line line { stroke: var(--p-line); stroke-width: 2; }
+  html[data-partner="mika"] .p-steps-list { gap: 28px; }
+  html[data-partner="mika"] .p-step { padding: 228px 0 0; min-height: 0; margin-bottom: 0; }
+  html[data-partner="mika"] .p-step::before,
+  html[data-partner="mika"] .mk-sa { width: 100%; height: 200px; border-radius: 22px; }
+  html[data-partner="mika"] .p-step-num { left: 16px; top: 180px; width: 42px; height: 42px; font-size: .9rem; }
+  html[data-partner="mika"] .p-step h3 { margin-top: 8px; font-size: 1.22rem; }
+}
+@media (min-width: 960px) and (hover: hover) {
+  html[data-partner="mika"] .mk-sa { transition: transform .35s var(--mk-ease), box-shadow .35s var(--mk-ease); }
+  html[data-partner="mika"] .p-step:hover .mk-sa { transform: translateY(-4px); box-shadow: var(--mk-shadow-soft); }
+}
+
+/* 1. snap: a phone with the old cooker and a scan line */
+html[data-partner="mika"] .mk-sa--snap { background: #1C1C1C; }
+html[data-partner="mika"] .mk-phone {
+  position: relative; width: 50px; height: 76px; border-radius: 10px; overflow: hidden;
+  border: 3px solid #3A3A3A; background: #000; box-shadow: 0 8px 18px rgba(0, 0, 0, .4);
+}
+html[data-partner="mika"] .mk-phone img { width: 100%; height: 100%; object-fit: cover; display: block; }
+html[data-partner="mika"] .mk-scan {
+  position: absolute; left: 0; right: 0; top: 0; height: 2px; background: #7CE0A8;
+  box-shadow: 0 0 10px 2px rgba(124, 224, 168, .7);
+  animation: mkScan 2.8s ease-in-out infinite;
+}
+@keyframes mkScan { 0%, 100% { transform: translateY(4px); } 50% { transform: translateY(66px); } }
+html[data-partner="mika"] .mk-chip {
+  position: absolute; display: grid; place-items: center; border-radius: 999px;
+  font-family: var(--p-font-display); font-weight: 600;
+}
+html[data-partner="mika"] .mk-chip svg { width: 16px; height: 16px; }
+html[data-partner="mika"] .mk-chip--cam { right: 10px; bottom: 10px; width: 28px; height: 28px; background: var(--p-paper); color: var(--p-ink); }
+
+/* 2. offer: a credit ticket */
+html[data-partner="mika"] .mk-sa--offer { background: var(--p-ink); }
+html[data-partner="mika"] .mk-ticket {
+  width: 80px; padding: 8px 8px 7px; border-radius: 10px; background: var(--p-paper); color: var(--p-ink);
+  display: grid; gap: 1px; transform: rotate(-4deg); box-shadow: 0 10px 20px rgba(0, 0, 0, .35);
+}
+html[data-partner="mika"] .mk-ticket-logo { width: 38px; height: auto; margin-bottom: 4px; }
+html[data-partner="mika"] .mk-ticket-label { font-size: .58rem; color: var(--p-muted); text-transform: uppercase; letter-spacing: .1em; }
+html[data-partner="mika"] .mk-ticket-amt { font-family: var(--p-font-display); font-weight: 600; font-size: 1.05rem; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+html[data-partner="mika"] .mk-ticket-amt small { font-size: .55em; color: var(--p-muted); letter-spacing: 0; }
+
+/* 3. check: we visit, or you drop off */
+html[data-partner="mika"] .mk-sa--check { background: var(--p-cosign-soft); grid-auto-flow: row; align-content: center; gap: 2px; }
+html[data-partner="mika"] .mk-badge { display: inline-flex; align-items: center; gap: 6px; color: var(--p-cosign); }
+html[data-partner="mika"] .mk-badge svg { width: 18px; height: 18px; flex: none; }
+html[data-partner="mika"] .mk-badge b { font-family: var(--p-font-display); font-weight: 600; font-size: .66rem; color: var(--p-ink); white-space: nowrap; }
+html[data-partner="mika"] .mk-or { font-family: var(--p-font-serif); font-style: italic; font-size: .72rem; color: var(--p-muted); }
+
+/* 4. spend: a new Mika fridge */
+html[data-partner="mika"] .mk-sa--spend { background: var(--mk-white); box-shadow: inset 0 0 0 1px var(--p-line); }
+html[data-partner="mika"] .mk-spend-img { width: 82%; height: 82%; object-fit: contain; }
+html[data-partner="mika"] .mk-chip--new { left: 8px; top: 8px; padding: 2px 8px; font-size: .64rem; background: var(--p-cosign); color: #FFFFFF; }
+html[data-partner="mika"] .mk-chip--bag { right: 8px; bottom: 8px; width: 26px; height: 26px; background: var(--p-ink); color: var(--p-paper); }
+html[data-partner="mika"] .mk-chip--bag svg { width: 14px; height: 14px; }
+
+@media (min-width: 960px) {
+  html[data-partner="mika"] .mk-phone { width: 92px; height: 144px; border-radius: 16px; border-width: 4px; }
+  html[data-partner="mika"] .mk-chip--cam { right: 22px; bottom: 30px; width: 40px; height: 40px; }
+  html[data-partner="mika"] .mk-chip svg { width: 20px; height: 20px; }
+  @keyframes mkScan { 0%, 100% { transform: translateY(6px); } 50% { transform: translateY(128px); } }
+  html[data-partner="mika"] .mk-ticket { width: 168px; padding: 16px 16px 14px; border-radius: 14px; }
+  html[data-partner="mika"] .mk-ticket-logo { width: 64px; margin-bottom: 10px; }
+  html[data-partner="mika"] .mk-ticket-label { font-size: .7rem; }
+  html[data-partner="mika"] .mk-ticket-amt { font-size: 2rem; }
+  html[data-partner="mika"] .mk-sa--check { gap: 8px; }
+  html[data-partner="mika"] .mk-badge { gap: 10px; padding: 8px 14px; border-radius: 999px; background: #FFFFFF; }
+  html[data-partner="mika"] .mk-badge svg { width: 22px; height: 22px; }
+  html[data-partner="mika"] .mk-badge b { font-size: .9rem; }
+  html[data-partner="mika"] .mk-or { font-size: .95rem; }
+  html[data-partner="mika"] .mk-chip--new { left: 16px; top: 16px; padding: 4px 12px; font-size: .78rem; }
+  html[data-partner="mika"] .mk-chip--bag { right: 16px; bottom: 16px; width: 34px; height: 34px; }
+  html[data-partner="mika"] .mk-chip--bag svg { width: 17px; height: 17px; }
+}
+
+/* ============================================================
+   WHAT YOUR CREDIT CAN BUY: the product rail
+   ============================================================ */
+html[data-partner="mika"] .mk-shop { padding: 56px 0 64px; overflow: hidden; }
+@media (min-width: 960px) { html[data-partner="mika"] .mk-shop { padding: 88px 0 96px; } }
+html[data-partner="mika"] .mk-shop-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 24px; margin-bottom: 24px; }
+html[data-partner="mika"] .mk-shop-head .p-h2 { margin: 0; }
+html[data-partner="mika"] .mk-shop-sub { margin: 0; color: var(--p-muted); font-size: 1.02rem; }
+html[data-partner="mika"] .mk-rail {
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+}
+html[data-partner="mika"] .mk-rail::-webkit-scrollbar { display: none; }
+html[data-partner="mika"] .mk-rail:focus-visible { outline: 3px solid var(--p-cosign); outline-offset: -3px; }
+html[data-partner="mika"] .mk-rail-list { display: flex; gap: 14px; list-style: none; margin: 0; padding: 10px 16px 18px; width: max-content; }
+@media (min-width: 768px) { html[data-partner="mika"] .mk-rail-list { gap: 18px; padding: 12px 32px 22px; } }
+html[data-partner="mika"] .mk-prod {
+  flex: none; width: 148px; background: var(--mk-white); border-radius: var(--p-radius);
+  border: 1px solid var(--p-line); padding: 14px 14px 12px; display: grid; gap: 8px;
+  transition: transform .3s var(--mk-ease), box-shadow .3s var(--mk-ease), border-color .3s ease;
+}
+html[data-partner="mika"] .mk-prod img { width: 100%; height: auto; aspect-ratio: 1; object-fit: contain; display: block; }
+html[data-partner="mika"] .mk-prod span { font-family: var(--p-font-display); font-weight: 600; font-size: .95rem; letter-spacing: -0.01em; }
+@media (min-width: 960px) { html[data-partner="mika"] .mk-prod { width: 212px; padding: 18px 18px 14px; } }
+@media (hover: hover) {
+  html[data-partner="mika"] .mk-prod:hover { transform: translateY(-6px); box-shadow: 0 18px 36px rgba(17, 17, 17, .12); border-color: var(--p-ink); }
+}
+
+/* ============================================================
+   THE CREDIT: icon tiles instead of a table
+   ============================================================ */
+html[data-partner="mika"] .p-credit { padding-top: 24px; }
+html[data-partner="mika"] .p-credit-grid { border-top: 0; padding-top: 0; }
+html[data-partner="mika"] .p-table,
+html[data-partner="mika"] .p-table tbody { display: block; width: 100%; }
+html[data-partner="mika"] .p-table tbody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+html[data-partner="mika"] .p-table tr {
+  display: block; position: relative; background: var(--mk-white); border: 1px solid var(--p-line);
+  border-radius: var(--p-radius); padding: 60px 14px 14px;
+  transition: transform .3s var(--mk-ease), box-shadow .3s var(--mk-ease);
+}
+@media (hover: hover) {
+  html[data-partner="mika"] .p-table tr:hover { transform: translateY(-3px); box-shadow: var(--mk-shadow-soft); }
+}
+html[data-partner="mika"] .p-table tr::before {
+  /* icon disc, filled by scene.js */
+  content: ""; position: absolute; left: 14px; top: 14px; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--p-stone);
+}
+html[data-partner="mika"] .p-table th,
+html[data-partner="mika"] .p-table td { display: block; width: 100%; padding: 0; border: 0; }
+html[data-partner="mika"] .p-table th { font-size: 1rem; line-height: 1.25; margin-bottom: 4px; padding: 0; }
+html[data-partner="mika"] .p-table td { font-size: .9rem; line-height: 1.45; }
+html[data-partner="mika"] .mk-ti {
+  position: absolute; left: 14px; top: 14px; width: 36px; height: 36px; display: grid; place-items: center; color: var(--p-ink);
+}
+html[data-partner="mika"] .mk-ti svg { width: 18px; height: 18px; }
+html[data-partner="mika"] .p-table tr:nth-child(4)::before { background: var(--p-ink); }
+html[data-partner="mika"] .p-table tr:nth-child(4) .mk-ti { color: var(--p-paper); }
+@media (min-width: 960px) {
+  html[data-partner="mika"] .p-table tbody { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  html[data-partner="mika"] .p-table tr { padding: 72px 20px 20px; }
+  html[data-partner="mika"] .p-table tr::before, html[data-partner="mika"] .mk-ti { left: 20px; top: 20px; width: 40px; height: 40px; }
+  html[data-partner="mika"] .p-table th { font-size: 1.06rem; }
+  html[data-partner="mika"] .p-credit-grid { grid-template-columns: minmax(0, .72fr) minmax(0, 1.28fr); gap: 56px; align-items: start; }
+}
+
+html[data-partner="mika"] .p-accepts { background: var(--p-ink); color: var(--p-on-ink); padding: 22px; }
+html[data-partner="mika"] .p-accepts h3 { color: var(--p-on-ink-muted); }
+html[data-partner="mika"] .p-accepts p { color: var(--p-on-ink); font-size: .98rem; }
+html[data-partner="mika"] .mk-accept-icons { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; padding: 0; list-style: none; }
+html[data-partner="mika"] .mk-accept-icons li {
+  width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+  background: rgba(244, 242, 237, .1); color: var(--p-on-ink);
+}
+html[data-partner="mika"] .mk-accept-icons svg { width: 22px; height: 22px; stroke-width: 1.6; }
+
+/* ============================================================
+   REDUCED MOTION: nothing moves
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  html[data-partner="mika"] .mk-ico svg,
+  html[data-partner="mika"] .mk-bob,
+  html[data-partner="mika"] .mk-tile,
+  html[data-partner="mika"] .mk-scan,
+  html[data-partner="mika"] .mk-flow-run,
+  html[data-partner="mika"] .p-hero .p-card { animation: none !important; }
+  html[data-partner="mika"] .mk-flow-run { opacity: 0; }
+  html[data-partner="mika"] .mk-ico,
+  html[data-partner="mika"] .mk-par,
+  html[data-partner="mika"] .mk-prod,
+  html[data-partner="mika"] .mk-sa { transition: none !important; }
+  html[data-partner="mika"] .mk-ico,
+  html[data-partner="mika"] .mk-par { transform: none !important; }
+  html[data-partner="mika"] .p-table tr { transition: none !important; }
+  html[data-partner="mika"] .p-table tr:hover,
+  html[data-partner="mika"] .mk-prod:hover,
+  html[data-partner="mika"] .p-step:hover .mk-sa { transform: none !important; }
+  html[data-partner="mika"] .mk-scan { transform: translateY(30px); }
+}
