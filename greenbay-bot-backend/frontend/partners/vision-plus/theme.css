@@ -1,0 +1,574 @@
+/* ============================================================
+   GreenBay x Vision Plus: the campaign layer.
+
+   Loaded after partner.css, only on /vision-plus. Every rule is scoped to
+   html[data-partner="vision-plus"]. Adds:
+     - a living hero: screen glow, a slow light sweep, faint scan lines,
+       drifting line icons (slots/hero_backdrop.html) and a stage with a new
+       Vision Plus TV and the range floating round it (slots/hero_media.html),
+       with the example credit card laid over its corner;
+     - "the swap in one look" loop (slots/after_hero.html);
+     - picture tiles on the four steps, icon tiles for the credit terms;
+     - the product rail (slots/after_steps.html) and the TV tip
+       (slots/before_evaluate.html).
+   Product photos are Vision Plus's own (img/SOURCES.md). Motion uses
+   transform and opacity only, so nothing shifts the layout; it stops for
+   prefers-reduced-motion, while the tab is hidden (html.vp-paused) and in
+   sections off screen (.vp-idle), both set by scene.js.
+   ============================================================ */
+
+html[data-partner="vision-plus"] {
+  --vp-glow: #8B6CF0;
+  --vp-deep: #2B1B63;
+  --vp-lilac: #B9A6FF;
+  --vp-ease: cubic-bezier(.2, .7, .2, 1);
+  --vp-shadow: 0 18px 36px rgba(42, 26, 94, .16);
+  /* Lucide line icons (ISC licence) as data URIs: masks (any colour) and
+     white glyphs for the purple step badges. */
+  --vp-m-coins: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M18.09 10.37A6 6 0 1 1 10.34 18'/%3E%3Cpath d='M7 6h1v4'/%3E%3Cpath d='m16.71 13.88.7.71-2.82 2.82'/%3E%3C/svg%3E");
+  --vp-m-store: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7'/%3E%3Cpath d='M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8'/%3E%3Cpath d='M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4'/%3E%3Cpath d='M2 7h20'/%3E%3Cpath d='M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12a2 2 0 0 1-2-2V7'/%3E%3C/svg%3E");
+  --vp-m-calendar-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5'/%3E%3Cpath d='M16 2v4'/%3E%3Cpath d='M8 2v4'/%3E%3Cpath d='M3 10h5'/%3E%3Cpath d='M17.5 17.5 16 16.3V14'/%3E%3Ccircle cx='16' cy='16' r='6'/%3E%3C/svg%3E");
+  --vp-m-ban: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m4.9 4.9 14.2 14.2'/%3E%3C/svg%3E");
+  --vp-m-tv: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='20' height='15' x='2' y='7' rx='2' ry='2'/%3E%3Cpolyline points='17 2 12 7 7 2'/%3E%3C/svg%3E");
+  --vp-m-refrigerator: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6Z'/%3E%3Cpath d='M5 10h14'/%3E%3Cpath d='M15 7v6'/%3E%3C/svg%3E");
+  --vp-m-washing-machine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h3'/%3E%3Cpath d='M17 6h.01'/%3E%3Crect width='18' height='20' x='3' y='2' rx='2'/%3E%3Ccircle cx='12' cy='13' r='5'/%3E%3Cpath d='M12 18a2.5 2.5 0 0 0 0-5 2.5 2.5 0 0 1 0-5'/%3E%3C/svg%3E");
+  --vp-m-microwave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='20' height='15' x='2' y='4' rx='2'/%3E%3Crect width='8' height='7' x='6' y='8' rx='1'/%3E%3Cpath d='M18 8v7'/%3E%3Cpath d='M6 19v2'/%3E%3Cpath d='M18 19v2'/%3E%3C/svg%3E");
+  --vp-m-cooking-pot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 12h20'/%3E%3Cpath d='M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8'/%3E%3Cpath d='m4 8 16-4'/%3E%3Cpath d='m8.86 6.78-.45-1.81a2 2 0 0 1 1.45-2.43l1.94-.48a2 2 0 0 1 2.43 1.46l.45 1.8'/%3E%3C/svg%3E");
+  --vp-w-camera: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z'/%3E%3Ccircle cx='12' cy='13' r='3'/%3E%3C/svg%3E");
+  --vp-w-ticket: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z'/%3E%3Cpath d='M13 5v2'/%3E%3Cpath d='M13 17v2'/%3E%3Cpath d='M13 11v2'/%3E%3C/svg%3E");
+  --vp-w-wrench: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'/%3E%3C/svg%3E");
+  --vp-w-shopping-bag: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z'/%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M16 10a4 4 0 0 1-8 0'/%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------
+   HERO
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .p-hero {
+  background:
+    radial-gradient(70% 80% at 82% 42%, #5A3EB3 0%, rgba(90, 62, 179, 0) 70%),
+    linear-gradient(180deg, #472F8F 0%, #3E2882 100%);
+  isolation: isolate;
+}
+html[data-partner="vision-plus"] .p-hero > .p-wrap { position: relative; z-index: 1; }
+html[data-partner="vision-plus"] .p-lede { max-width: 27em; }
+
+/* backdrop: glow, scan lines, sweep, drifting icons */
+html[data-partner="vision-plus"] .vp-backdrop {
+  position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+html[data-partner="vision-plus"] .vp-glow {
+  position: absolute; right: -18%; top: 50%; width: min(980px, 90vw); aspect-ratio: 1;
+  margin-top: calc(min(980px, 90vw) / -2);
+  background: radial-gradient(closest-side, rgba(139, 108, 240, .5), rgba(139, 108, 240, .12) 55%, rgba(139, 108, 240, 0));
+  animation: vp-breathe 9s ease-in-out infinite;
+}
+html[data-partner="vision-plus"] .vp-scan {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 4px);
+  -webkit-mask-image: radial-gradient(60% 70% at 78% 45%, #000 0%, transparent 100%);
+  mask-image: radial-gradient(60% 70% at 78% 45%, #000 0%, transparent 100%);
+}
+html[data-partner="vision-plus"] .vp-sweep {
+  position: absolute; top: -25%; bottom: -25%; left: -45%; width: 34%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, .07), rgba(255, 255, 255, 0));
+  transform: translateX(0) skewX(-18deg);
+  animation: vp-sweep 12s ease-in-out infinite 1s;
+}
+html[data-partner="vision-plus"] .vp-icons { position: absolute; inset: 0; }
+html[data-partner="vision-plus"] .vp-ico {
+  position: absolute; left: var(--x); top: var(--y); width: var(--s); height: var(--s);
+  color: rgba(220, 213, 242, .26);
+  transform: translate3d(calc(var(--mx, 0) * var(--z) * -22px),
+                         calc(var(--my, 0) * var(--z) * -16px + var(--sy, 0) * var(--z) * -60px), 0);
+}
+html[data-partner="vision-plus"] .vp-ico > * {
+  display: block; width: 100%; height: 100%; stroke-width: 1.4;
+  animation: vp-drift var(--t) ease-in-out var(--d) infinite;
+}
+@media (max-width: 959px) {
+  html[data-partner="vision-plus"] .vp-icons { top: auto; height: 36%; }
+  html[data-partner="vision-plus"] .vp-ico--wide { display: none; }
+  html[data-partner="vision-plus"] .vp-glow { top: 74%; right: -40%; }
+  /* keep the light behind the stage, away from the copy */
+  html[data-partner="vision-plus"] .p-hero {
+    background:
+      radial-gradient(90% 40% at 60% 80%, #5A3EB3 0%, rgba(90, 62, 179, 0) 70%),
+      linear-gradient(180deg, #472F8F 0%, #3E2882 100%);
+  }
+  html[data-partner="vision-plus"] .vp-sweep {
+    -webkit-mask-image: linear-gradient(180deg, transparent 45%, #000 70%);
+    mask-image: linear-gradient(180deg, transparent 45%, #000 70%);
+  }
+}
+
+/* stage: TV, halo, floating range, two chips */
+html[data-partner="vision-plus"] .vp-stage {
+  position: relative; width: 100%; max-width: 600px; aspect-ratio: 1 / .9;
+  justify-self: center; order: 1;
+}
+html[data-partner="vision-plus"] .vp-halo {
+  position: absolute; inset: 4% 6% 16% 6%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(185, 166, 255, .7), rgba(139, 108, 240, .28) 58%, rgba(139, 108, 240, 0));
+  animation: vp-breathe 7s ease-in-out infinite;
+}
+html[data-partner="vision-plus"] .vp-layer {
+  position: absolute;
+  transform: translate3d(calc(var(--mx, 0) * var(--z) * 16px), calc(var(--my, 0) * var(--z) * 12px), 0);
+}
+html[data-partner="vision-plus"] .vp-layer img { display: block; width: 100%; height: auto; }
+html[data-partner="vision-plus"] .vp-layer--tv { left: 11%; top: 3%; width: 78%; z-index: 2; }
+html[data-partner="vision-plus"] .vp-tv { position: relative; }
+html[data-partner="vision-plus"] .vp-tv img { filter: drop-shadow(0 34px 38px rgba(14, 6, 46, .55)); }
+html[data-partner="vision-plus"] .vp-tv::after {
+  /* a light sweep across the screen, masked to the TV's own shape */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  -webkit-mask: url(img/tv-55-qled.webp) center / 100% 100% no-repeat;
+  mask: url(img/tv-55-qled.webp) center / 100% 100% no-repeat;
+  background: linear-gradient(105deg, rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, .34) 48%, rgba(255, 255, 255, 0) 58%) 130% 0 / 300% 100% no-repeat;
+  animation: vp-sheen 8s ease-in-out infinite 1.2s;
+}
+html[data-partner="vision-plus"] .vp-float img {
+  filter: drop-shadow(0 16px 18px rgba(14, 6, 46, .45));
+  animation: vp-bob var(--t) ease-in-out var(--d) infinite;
+}
+html[data-partner="vision-plus"] .vp-float--washer { right: -1%; top: 10%; width: 21%; z-index: 1; }
+html[data-partner="vision-plus"] .vp-float--fridge { left: 1%; top: 12%; width: 13%; z-index: 1; }
+html[data-partner="vision-plus"] .vp-float--sound { right: -3%; bottom: 3%; width: 46%; z-index: 3; }
+html[data-partner="vision-plus"] .vp-float--micro { left: 0; top: -1%; width: 23%; z-index: 3; }
+html[data-partner="vision-plus"] .vp-chip {
+  position: absolute; z-index: 4; display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px 7px 9px; border-radius: 999px; white-space: nowrap;
+  background: #FFFFFF; color: var(--p-ink); box-shadow: 0 10px 24px rgba(14, 6, 46, .3);
+  font-family: var(--p-font-display); font-weight: 600; font-size: .8rem; line-height: 1;
+  animation: vp-bob 6s ease-in-out infinite;
+}
+html[data-partner="vision-plus"] .vp-chip svg { width: 16px; height: 16px; color: var(--p-cosign); flex: none; }
+html[data-partner="vision-plus"] .vp-chip--a { right: 2%; top: 0; animation-delay: -2s; }
+html[data-partner="vision-plus"] .vp-chip--b { right: 6%; top: 58%; animation-delay: -4s; }
+html[data-partner="vision-plus"] .vp-chip--b svg { color: var(--p-band); }
+
+/* the example credit card becomes a ticket laid over the stage */
+html[data-partner="vision-plus"] .p-card {
+  order: 2; position: relative; z-index: 5; rotate: -3deg;
+  max-width: 300px; padding: 18px 20px 14px; border-radius: 18px;
+  box-shadow: 0 26px 50px rgba(14, 6, 46, .45), 0 0 0 1px rgba(255, 255, 255, .6) inset;
+}
+html[data-partner="vision-plus"] .p-card-top { margin-bottom: 14px; }
+html[data-partner="vision-plus"] .p-card-logo { height: 24px; }
+html[data-partner="vision-plus"] .p-card-amount { font-size: clamp(2.2rem, 9vw, 2.75rem); }
+html[data-partner="vision-plus"] .p-card-item { margin-bottom: 12px; font-size: .86rem; }
+html[data-partner="vision-plus"] .p-card-perf { margin: 0 -20px 12px; }
+html[data-partner="vision-plus"] .p-card-meta { margin-bottom: 8px; }
+html[data-partner="vision-plus"] .p-card-meta dd { font-size: .9rem; }
+html[data-partner="vision-plus"] .p-card-note { font-size: .74rem; margin: 0; }
+
+@media (max-width: 959px) {
+  html[data-partner="vision-plus"] .p-hero { padding-bottom: 48px; }
+  html[data-partner="vision-plus"] .p-hero-grid { gap: 8px; }
+  html[data-partner="vision-plus"] .vp-stage { max-width: 460px; margin-top: 8px; }
+  html[data-partner="vision-plus"] .p-card {
+    justify-self: start; margin: -104px 0 0 2px; max-width: 228px; padding: 12px 14px 10px;
+  }
+  html[data-partner="vision-plus"] .p-card-top { margin-bottom: 8px; }
+  html[data-partner="vision-plus"] .p-card-logo { height: 20px; }
+  html[data-partner="vision-plus"] .p-card-amount { font-size: 2rem; }
+  html[data-partner="vision-plus"] .p-card-item { font-size: .8rem; }
+  html[data-partner="vision-plus"] .p-card-note { font-size: .7rem; line-height: 1.35; }
+  html[data-partner="vision-plus"] .p-card-perf,
+  html[data-partner="vision-plus"] .p-card-meta { display: none; }
+  html[data-partner="vision-plus"] .p-card-item { margin-bottom: 6px; }
+  html[data-partner="vision-plus"] .vp-chip { font-size: .72rem; padding: 6px 10px 6px 8px; }
+  html[data-partner="vision-plus"] .vp-chip--b { display: none; }
+}
+@media (min-width: 960px) {
+  html[data-partner="vision-plus"] .p-hero { padding: 64px 0 72px; }
+  html[data-partner="vision-plus"] .p-hero-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 32px;
+  }
+  html[data-partner="vision-plus"] .vp-stage { grid-column: 2; grid-row: 1; justify-self: end; }
+  html[data-partner="vision-plus"] .p-card {
+    grid-column: 2; grid-row: 1; align-self: end; justify-self: start; margin: 0 0 -6px -24px;
+  }
+}
+
+/* ---------------------------------------------------------------
+   THE SWAP IN ONE LOOK
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .vp-swap { padding: 56px 0 0; }
+html[data-partner="vision-plus"] .vp-eyebrow {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 18px;
+  font-family: var(--p-font-display); font-size: .8rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--p-muted);
+}
+html[data-partner="vision-plus"] .vp-eyebrow::before { content: ""; width: 28px; height: 1px; background: currentColor; }
+html[data-partner="vision-plus"] .vp-swap-row {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px;
+}
+html[data-partner="vision-plus"] .vp-swap-card { position: relative; }
+html[data-partner="vision-plus"] .vp-swap-pic {
+  position: relative; aspect-ratio: 1 / 1; border-radius: 16px; overflow: hidden;
+  display: grid; place-items: center;
+  background: radial-gradient(closest-side, #FFFFFF, var(--p-stone));
+  border: 1px solid var(--p-line);
+  animation: vp-focus 9s var(--vp-ease) infinite;
+}
+html[data-partner="vision-plus"] .vp-swap-card--credit .vp-swap-pic { animation-delay: 3s; }
+html[data-partner="vision-plus"] .vp-swap-card--new .vp-swap-pic {
+  animation-delay: 6s; border-color: transparent;
+  background: radial-gradient(closest-side, #8B6CF0 0%, #472F8F 72%, #35226E 100%);
+}
+html[data-partner="vision-plus"] .vp-swap-pic img { width: 82%; height: auto; }
+html[data-partner="vision-plus"] .vp-swap-card--old img { filter: grayscale(1) brightness(.92) contrast(.9); opacity: .9; }
+html[data-partner="vision-plus"] .vp-swap-card--new img {
+  width: 80%; filter: drop-shadow(0 10px 14px rgba(14, 6, 46, .5));
+  animation: vp-on 9s ease-in-out infinite;
+}
+html[data-partner="vision-plus"] .vp-swap-card p {
+  margin: 10px 0 0; font-family: var(--p-font-display); font-weight: 600;
+  font-size: .86rem; line-height: 1.25; color: var(--p-ink); text-wrap: balance;
+}
+html[data-partner="vision-plus"] .vp-swap-link {
+  position: absolute; z-index: 2; top: 0; right: -22px; width: 22px; aspect-ratio: auto;
+  height: calc(100% - 3.2em); display: grid; place-items: center; color: var(--p-band);
+}
+html[data-partner="vision-plus"] .vp-swap-link svg { width: 18px; height: 18px; position: relative; z-index: 1; }
+html[data-partner="vision-plus"] .vp-beam {
+  position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(139, 108, 240, .55), rgba(139, 108, 240, 0));
+  opacity: 0; animation: vp-beam 9s ease-in-out infinite 2.4s;
+}
+html[data-partner="vision-plus"] .vp-swap-card--credit .vp-beam { animation-delay: 5.4s; }
+
+html[data-partner="vision-plus"] .vp-ticket {
+  position: relative; width: 84%; aspect-ratio: 1.55; border-radius: 12px; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: space-between; padding: 9% 9% 8%;
+  background: linear-gradient(135deg, #6A4FD0, #38236F); color: #FFFFFF; rotate: -5deg;
+  box-shadow: 0 14px 26px rgba(42, 26, 94, .35);
+}
+html[data-partner="vision-plus"] .vp-ticket::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(105deg, rgba(255, 255, 255, 0) 35%, rgba(255, 255, 255, .28) 48%, rgba(255, 255, 255, 0) 60%) 140% 0 / 300% 100% no-repeat;
+  animation: vp-sheen 9s ease-in-out infinite 3.4s;
+}
+html[data-partner="vision-plus"] .vp-ticket-logo { width: 58%; height: auto; }
+html[data-partner="vision-plus"] .vp-ticket-amt {
+  font-family: var(--p-font-display); font-weight: 600; letter-spacing: -0.03em; line-height: 1;
+  font-size: clamp(.95rem, 4.6vw, 2.1rem); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+html[data-partner="vision-plus"] .vp-ticket-amt small { font-size: .5em; letter-spacing: .04em; color: #FFFFFF; vertical-align: .5em; }
+html[data-partner="vision-plus"] .vp-ticket-sub {
+  font-size: clamp(.56rem, 2vw, .74rem); letter-spacing: .1em; text-transform: uppercase; color: #FFFFFF;
+}
+@media (min-width: 720px) {
+  html[data-partner="vision-plus"] .vp-swap-row { gap: 64px; }
+  html[data-partner="vision-plus"] .vp-swap-pic { aspect-ratio: 16 / 11; border-radius: 20px; }
+  html[data-partner="vision-plus"] .vp-swap-pic img { width: 62%; }
+  html[data-partner="vision-plus"] .vp-swap-card--new img { width: 52%; }
+  html[data-partner="vision-plus"] .vp-ticket { width: 62%; }
+  html[data-partner="vision-plus"] .vp-swap-card p { font-size: 1.08rem; margin-top: 14px; }
+  html[data-partner="vision-plus"] .vp-swap-link { right: -64px; width: 64px; height: calc(100% - 2.4em); }
+  html[data-partner="vision-plus"] .vp-swap-link svg { width: 24px; height: 24px; }
+  html[data-partner="vision-plus"] .vp-beam { width: 56px; height: 56px; margin: -28px 0 0 -28px; }
+}
+
+/* ---------------------------------------------------------------
+   STEPS: a picture tile on each, one short line
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .p-steps { padding-top: 64px; }
+html[data-partner="vision-plus"] .p-step::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: var(--vp-tile);
+  border-radius: 16px; border: 1px solid var(--p-line);
+  background-repeat: no-repeat; transition: transform .45s var(--vp-ease), box-shadow .45s var(--vp-ease);
+}
+html[data-partner="vision-plus"] .p-step::after {
+  /* the icon badge, top right of the tile */
+  content: ""; position: absolute; top: 10px; right: 10px; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--vp-badge) center / 18px no-repeat, var(--p-band);
+  box-shadow: 0 6px 14px rgba(42, 26, 94, .3);
+}
+html[data-partner="vision-plus"] .p-step:hover::before { transform: translateY(-4px); box-shadow: var(--vp-shadow); }
+html[data-partner="vision-plus"] .p-step:nth-child(1) { --vp-badge: var(--vp-w-camera); }
+html[data-partner="vision-plus"] .p-step:nth-child(1)::before {
+  /* the old TV inside a camera viewfinder */
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18' fill='none' stroke='%23472F8F' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M1.5 16.5V1.5h15'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18' fill='none' stroke='%23472F8F' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M1.5 1.5h15v15'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18' fill='none' stroke='%23472F8F' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M1.5 1.5v15h15'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18' fill='none' stroke='%23472F8F' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M16.5 1.5v15h-15'/%3E%3C/svg%3E"),
+    url(img/old-tv-32.webp),
+    radial-gradient(closest-side, #FFFFFF, var(--p-stone));
+  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px, auto 50%, 100% 100%;
+  background-position: 20% 20%, 80% 20%, 20% 82%, 80% 82%, 50% 54%, 0 0;
+  background-repeat: no-repeat;
+}
+html[data-partner="vision-plus"] .p-step:nth-child(2) { --vp-badge: var(--vp-w-ticket); }
+html[data-partner="vision-plus"] .p-step:nth-child(2)::before {
+  background-image: url(img/credit-ticket.svg), radial-gradient(closest-side, #FFFFFF, var(--p-stone));
+  background-size: auto 74%, 100% 100%; background-position: 50% 55%, 0 0;
+}
+html[data-partner="vision-plus"] .p-step:nth-child(3) { --vp-badge: var(--vp-w-wrench); }
+html[data-partner="vision-plus"] .p-step:nth-child(3)::before {
+  background-image: url(img/washer-front-load.webp), url(img/fridge-double-door.webp),
+    radial-gradient(closest-side, #FFFFFF, var(--p-stone));
+  background-size: auto 62%, auto 78%, 100% 100%; background-position: 34% 74%, 70% 72%, 0 0;
+}
+html[data-partner="vision-plus"] .p-step:nth-child(4) { --vp-badge: var(--vp-w-shopping-bag); }
+html[data-partner="vision-plus"] .p-step:nth-child(4)::before {
+  border-color: transparent;
+  background-image: url(img/tv-43-home.webp), radial-gradient(closest-side, #8B6CF0 0%, #472F8F 75%, #35226E 100%);
+  background-size: auto 80%, 100% 100%; background-position: 50% 60%, 0 0;
+}
+html[data-partner="vision-plus"] .p-step:nth-child(4)::after { background-color: var(--p-cosign); }
+html[data-partner="vision-plus"] .p-step h3 { font-size: 1.12rem; }
+html[data-partner="vision-plus"] .p-step p { font-size: .95rem; line-height: 1.45; }
+
+@media (max-width: 959px) {
+  html[data-partner="vision-plus"] .p-steps-list {
+    --vp-tile: 124px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 14px;
+  }
+  html[data-partner="vision-plus"] .p-step,
+  html[data-partner="vision-plus"] .p-step:last-child {
+    border-left: 0; margin-left: 0; padding: calc(var(--vp-tile) + 14px) 0 0;
+  }
+  html[data-partner="vision-plus"] .p-step-num {
+    left: 10px; top: 10px; width: 34px; height: 34px; font-size: .82rem; z-index: 1;
+  }
+  html[data-partner="vision-plus"] .p-step h3 { font-size: 1rem; margin-top: 0; }
+  html[data-partner="vision-plus"] .p-step p { font-size: .88rem; }
+}
+@media (min-width: 960px) {
+  html[data-partner="vision-plus"] .p-steps-list { --vp-tile: 176px; }
+  html[data-partner="vision-plus"] .p-step { padding-top: calc(var(--vp-tile) + 36px); }
+  html[data-partner="vision-plus"] .p-step-num { top: calc(var(--vp-tile) - 22px); left: 18px; z-index: 1; }
+  html[data-partner="vision-plus"] .p-steps-line { top: calc(176px - 2px); }
+}
+
+/* ---------------------------------------------------------------
+   PRODUCT RAIL: what your credit can buy
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .vp-shop { padding: 40px 0 24px; overflow: hidden; }
+html[data-partner="vision-plus"] .vp-shop-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+html[data-partner="vision-plus"] .vp-shop-head .p-h2 { margin-bottom: 18px; }
+html[data-partner="vision-plus"] .vp-shop-nav { display: flex; gap: 8px; margin-bottom: 22px; flex: none; }
+html[data-partner="vision-plus"] .vp-nav {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  border: 1.5px solid var(--p-line); background: #FFFFFF; color: var(--p-ink);
+  transition: border-color .2s ease, background-color .2s ease;
+}
+html[data-partner="vision-plus"] .vp-nav:hover { border-color: var(--p-ink); }
+html[data-partner="vision-plus"] .vp-nav:focus-visible,
+html[data-partner="vision-plus"] .vp-rail:focus-visible { outline: 3px solid var(--p-cosign); outline-offset: 3px; }
+html[data-partner="vision-plus"] .vp-nav svg { width: 18px; height: 18px; }
+html[data-partner="vision-plus"] .vp-rail {
+  --vp-edge: max(16px, calc((100% - 1180px) / 2 + 16px));
+  display: flex; gap: 16px; overflow-x: auto; overscroll-behavior-x: contain;
+  padding: 12px var(--vp-edge) 22px; scroll-padding-inline: var(--vp-edge);
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 768px) {
+  html[data-partner="vision-plus"] .vp-rail { --vp-edge: max(32px, calc((100% - 1180px) / 2 + 32px)); }
+}
+html[data-partner="vision-plus"] .vp-rail::-webkit-scrollbar { display: none; }
+html[data-partner="vision-plus"] .vp-rail-track { display: flex; gap: 16px; flex: none; list-style: none; margin: 0; padding: 0; }
+html[data-partner="vision-plus"] .vp-prod {
+  flex: none; width: 210px; padding: 10px 10px 14px; border-radius: 18px;
+  background: #FFFFFF; border: 1px solid var(--p-line);
+  transition: transform .4s var(--vp-ease), box-shadow .4s var(--vp-ease), border-color .4s ease;
+}
+html[data-partner="vision-plus"] .vp-prod:hover { transform: translateY(-6px); box-shadow: var(--vp-shadow); border-color: transparent; }
+html[data-partner="vision-plus"] .vp-prod-pic {
+  height: 176px; border-radius: 12px; padding: 16px;
+  background: radial-gradient(closest-side, #FFFFFF 0%, var(--p-stone) 100%);
+}
+html[data-partner="vision-plus"] .vp-prod--tv .vp-prod-pic {
+  background: radial-gradient(closest-side, #8B6CF0 0%, #472F8F 78%, #35226E 100%); padding: 12px;
+}
+html[data-partner="vision-plus"] .vp-prod--tall .vp-prod-pic { padding: 12px 16px; }
+html[data-partner="vision-plus"] .vp-prod--wide .vp-prod-pic { padding: 24px 14px; }
+html[data-partner="vision-plus"] .vp-prod-pic img {
+  display: block; width: 100%; height: 100%; object-fit: contain;
+  filter: drop-shadow(0 10px 12px rgba(14, 6, 46, .22));
+  transition: transform .5s var(--vp-ease);
+}
+html[data-partner="vision-plus"] .vp-prod:hover .vp-prod-pic img { transform: scale(1.05); }
+html[data-partner="vision-plus"] .vp-prod-cat {
+  margin: 12px 4px 2px; font-size: .72rem; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--p-muted);
+}
+html[data-partner="vision-plus"] .vp-prod-name {
+  margin: 0 4px; font-family: var(--p-font-display); font-weight: 600; font-size: 1rem; line-height: 1.3; color: var(--p-ink);
+}
+html[data-partner="vision-plus"] .vp-shop-note { margin: 0 auto; font-size: .9rem; color: var(--p-muted); }
+@media (max-width: 560px) {
+  html[data-partner="vision-plus"] .vp-prod { width: 172px; }
+  html[data-partner="vision-plus"] .vp-prod-pic { height: 150px; }
+  html[data-partner="vision-plus"] .vp-shop-nav { display: none; }
+}
+
+/* ---------------------------------------------------------------
+   CREDIT: four icon tiles instead of a long table
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .p-credit-grid { border-top: 0; padding-top: 24px; }
+html[data-partner="vision-plus"] .p-accepts { position: relative; padding: 18px 20px 20px; }
+html[data-partner="vision-plus"] .p-accepts::before {
+  content: ""; display: block; width: 210px; height: 28px; margin-bottom: 14px; background: var(--p-band);
+  -webkit-mask-image: var(--vp-m-tv), var(--vp-m-refrigerator), var(--vp-m-washing-machine), var(--vp-m-microwave), var(--vp-m-cooking-pot);
+  mask-image: var(--vp-m-tv), var(--vp-m-refrigerator), var(--vp-m-washing-machine), var(--vp-m-microwave), var(--vp-m-cooking-pot);
+  -webkit-mask-size: 28px 28px; mask-size: 28px 28px;
+  -webkit-mask-position: 0 0, 44px 0, 88px 0, 132px 0, 176px 0; mask-position: 0 0, 44px 0, 88px 0, 132px 0, 176px 0;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
+html[data-partner="vision-plus"] .p-table tbody {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+}
+html[data-partner="vision-plus"] .p-table tr {
+  display: block; position: relative; padding: 66px 18px 18px; border-radius: 16px;
+  background: #FFFFFF; border: 1px solid var(--p-line);
+  transition: transform .4s var(--vp-ease), box-shadow .4s var(--vp-ease);
+}
+html[data-partner="vision-plus"] .p-table tr:hover { transform: translateY(-4px); box-shadow: var(--vp-shadow); }
+html[data-partner="vision-plus"] .p-table tr::before {
+  content: ""; position: absolute; left: 16px; top: 16px; width: 38px; height: 38px; border-radius: 50%;
+  background: var(--p-stone);
+}
+html[data-partner="vision-plus"] .p-table tr::after {
+  content: ""; position: absolute; left: 25px; top: 25px; width: 20px; height: 20px; background: var(--p-band);
+  -webkit-mask: var(--vp-icon) center / 20px no-repeat; mask: var(--vp-icon) center / 20px no-repeat;
+}
+html[data-partner="vision-plus"] .p-table tr:nth-child(1) { --vp-icon: var(--vp-m-coins); }
+html[data-partner="vision-plus"] .p-table tr:nth-child(2) { --vp-icon: var(--vp-m-store); }
+html[data-partner="vision-plus"] .p-table tr:nth-child(3) { --vp-icon: var(--vp-m-calendar-clock); }
+html[data-partner="vision-plus"] .p-table tr:nth-child(4) { --vp-icon: var(--vp-m-ban); }
+html[data-partner="vision-plus"] .p-table th,
+html[data-partner="vision-plus"] .p-table td { display: block; width: auto; padding: 0; border: 0; }
+html[data-partner="vision-plus"] .p-table th { font-size: 1rem; margin-bottom: 4px; }
+html[data-partner="vision-plus"] .p-table td { font-size: .95rem; line-height: 1.45; }
+@media (max-width: 560px) {
+  html[data-partner="vision-plus"] .p-table tbody { gap: 10px; }
+  html[data-partner="vision-plus"] .p-table tr { padding: 58px 14px 14px; }
+  html[data-partner="vision-plus"] .p-table tr::before { left: 12px; top: 12px; }
+  html[data-partner="vision-plus"] .p-table tr::after { left: 21px; top: 21px; }
+  html[data-partner="vision-plus"] .p-table td { font-size: .88rem; }
+}
+
+/* ---------------------------------------------------------------
+   TV TIP before the wizard
+   --------------------------------------------------------------- */
+html[data-partner="vision-plus"] .vp-tip { padding: 8px 0 56px; }
+html[data-partner="vision-plus"] .vp-tip-card {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; align-items: center;
+  padding: 14px 18px 14px 14px; border-radius: 22px; background: var(--p-band); color: var(--p-on-ink);
+  position: relative; overflow: hidden;
+}
+html[data-partner="vision-plus"] .vp-tip-pic {
+  position: relative; aspect-ratio: 1; border-radius: 14px;
+  background: radial-gradient(closest-side, rgba(185, 166, 255, .6), rgba(139, 108, 240, 0));
+}
+html[data-partner="vision-plus"] .vp-tip-pic img { display: block; width: 100%; height: 100%; object-fit: contain; }
+html[data-partner="vision-plus"] .vp-rec {
+  position: absolute; left: 6px; top: 6px; display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: 999px; background: rgba(20, 10, 50, .85); color: #FFFFFF;
+  font-family: var(--p-font-display); font-size: .64rem; font-weight: 700; letter-spacing: .12em;
+}
+html[data-partner="vision-plus"] .vp-rec span {
+  width: 7px; height: 7px; border-radius: 50%; background: #FF5C7A; animation: vp-blink 1.6s steps(2, jump-none) infinite;
+}
+html[data-partner="vision-plus"] .vp-tip-k {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 4px;
+  font-family: var(--p-font-display); font-size: .78rem; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--p-on-ink-muted);
+}
+html[data-partner="vision-plus"] .vp-tip-k svg { width: 16px; height: 16px; }
+html[data-partner="vision-plus"] .vp-tip-t {
+  margin: 0 0 4px; font-family: var(--p-font-display); font-weight: 600; letter-spacing: -0.02em;
+  font-size: clamp(1.05rem, 3.6vw, 1.6rem); line-height: 1.2; color: var(--p-on-ink); text-wrap: balance;
+}
+html[data-partner="vision-plus"] .vp-tip-b { margin: 0; font-size: .9rem; line-height: 1.45; color: var(--p-on-ink-muted); }
+@media (min-width: 720px) {
+  html[data-partner="vision-plus"] .vp-tip-card { grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 18px 32px 18px 18px; }
+  html[data-partner="vision-plus"] .vp-tip-pic { aspect-ratio: 4 / 3; }
+  html[data-partner="vision-plus"] .vp-tip-b { font-size: 1rem; }
+}
+
+/* the wizard header sits closer to the tip above it */
+html[data-partner="vision-plus"] .evaluation-section { padding-top: 56px; }
+
+/* ---------------------------------------------------------------
+   KEYFRAMES
+   --------------------------------------------------------------- */
+@keyframes vp-breathe { 0%, 100% { opacity: .75; transform: scale(.97); } 50% { opacity: 1; transform: scale(1.03); } }
+@keyframes vp-sweep {
+  0%, 12% { transform: translateX(0) skewX(-18deg); }
+  62%, 100% { transform: translateX(460%) skewX(-18deg); }
+}
+@keyframes vp-drift {
+  0%, 100% { transform: translate(0, 0) rotate(-6deg); }
+  50% { transform: translate(10px, -16px) rotate(6deg); }
+}
+@keyframes vp-bob {
+  0%, 100% { transform: translateY(0) rotate(-1.2deg); }
+  50% { transform: translateY(-9px) rotate(1.2deg); }
+}
+@keyframes vp-sheen { 0%, 50% { background-position: 130% 0; } 85%, 100% { background-position: -30% 0; } }
+@keyframes vp-focus {
+  0%, 36%, 100% { transform: none; box-shadow: none; }
+  6%, 30% { transform: translateY(-6px); box-shadow: 0 18px 32px rgba(42, 26, 94, .2), 0 0 0 2px var(--vp-glow); }
+}
+@keyframes vp-on {
+  0%, 60% { filter: drop-shadow(0 10px 14px rgba(14, 6, 46, .5)) brightness(.62) saturate(.4); }
+  70%, 94% { filter: drop-shadow(0 10px 14px rgba(14, 6, 46, .5)) brightness(1) saturate(1); }
+  100% { filter: drop-shadow(0 10px 14px rgba(14, 6, 46, .5)) brightness(.62) saturate(.4); }
+}
+@keyframes vp-beam {
+  0%, 100% { opacity: 0; transform: translateX(-60%) scale(.6); }
+  4% { opacity: 1; }
+  10% { opacity: 0; transform: translateX(60%) scale(1); }
+}
+@keyframes vp-blink { 0% { opacity: 1; } 100% { opacity: .15; } }
+
+/* paused: tab hidden (vp-paused) or the section is off screen (vp-idle) */
+html[data-partner="vision-plus"].vp-paused [class*="vp-"],
+html[data-partner="vision-plus"].vp-paused [class*="vp-"]::after,
+html[data-partner="vision-plus"].vp-paused [class*="vp-"] > *,
+html[data-partner="vision-plus"].vp-paused [class*="vp-"] img,
+html[data-partner="vision-plus"] .vp-idle [class*="vp-"],
+html[data-partner="vision-plus"] .vp-idle [class*="vp-"]::after,
+html[data-partner="vision-plus"] .vp-idle [class*="vp-"] > *,
+html[data-partner="vision-plus"] .vp-idle [class*="vp-"] img {
+  animation-play-state: paused !important;
+}
+
+/* reduced motion: everything holds still, the page reads the same */
+@media (prefers-reduced-motion: reduce) {
+  html[data-partner="vision-plus"] [class*="vp-"],
+  html[data-partner="vision-plus"] [class*="vp-"]::before,
+  html[data-partner="vision-plus"] [class*="vp-"]::after,
+  html[data-partner="vision-plus"] [class*="vp-"] > *,
+  html[data-partner="vision-plus"] [class*="vp-"] img,
+  html[data-partner="vision-plus"] .p-step::before,
+  html[data-partner="vision-plus"] .p-table tr {
+    animation: none !important; transition: none !important;
+  }
+  html[data-partner="vision-plus"] .vp-sweep,
+  html[data-partner="vision-plus"] .vp-tv::after,
+  html[data-partner="vision-plus"] .vp-ticket::after,
+  html[data-partner="vision-plus"] .vp-beam { display: none; }
+  html[data-partner="vision-plus"] .vp-ico,
+  html[data-partner="vision-plus"] .vp-layer { transform: none !important; }
+  html[data-partner="vision-plus"] .vp-prod:hover,
+  html[data-partner="vision-plus"] .p-table tr:hover,
+  html[data-partner="vision-plus"] .p-step:hover::before,
+  html[data-partner="vision-plus"] .vp-prod:hover .vp-prod-pic img { transform: none; }
+}
+
+/* Lucide swaps each <i data-lucide> for an <svg> once the page has loaded:
+   give the placeholders the icon's size so nothing moves when it does. */
+html[data-partner="vision-plus"] .vp-chip i,
+html[data-partner="vision-plus"] .vp-tip-k i,
+html[data-partner="vision-plus"] .vp-nav i { display: inline-block; width: 16px; height: 16px; flex: none; }
+html[data-partner="vision-plus"] .vp-nav i { width: 18px; height: 18px; }
+html[data-partner="vision-plus"] .vp-swap-link i { display: block; width: 18px; height: 18px; }
+@media (min-width: 720px) {
+  html[data-partner="vision-plus"] .vp-swap-link i { width: 24px; height: 24px; }
+}

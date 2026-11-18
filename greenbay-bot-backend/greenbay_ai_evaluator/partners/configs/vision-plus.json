@@ -145,7 +145,7 @@
     "kicker": "GreenBay x Vision Plus swap",
     "headline_1": "Upgrade your Vision Plus.",
     "headline_2": "Your old one pays towards it.",
-    "lede": "Tell us about your old Vision Plus TV or appliance and we will make you a fair offer, paid as Vision Plus credit. GreenBay checks the item and buys it from you. You spend the credit on anything new from Vision Plus.",
+    "lede": "Swap your old Vision Plus TV or appliance for Vision Plus credit towards a new one. Working or not.",
     "cta_primary": "Value my old Vision Plus",
     "cta_secondary": "How the swap works",
     "run_by": "Valued and bought by GreenBay Second Life Appliances",
@@ -157,66 +157,54 @@
     "steps": [
       {
         "title": "Tell us about it",
-        "body": "Four short steps: what it is, how old it is, its condition, and a few photos. It takes about two minutes."
+        "body": "Pick the type and add a few photos. About two minutes."
       },
       {
         "title": "See your offer",
-        "body": "We value it against real resale prices and show you a figure in Vision Plus credit. Every Vision Plus item we accept is worth at least KES 500."
+        "body": "A fair figure in Vision Plus credit, never below KES 500."
       },
       {
         "title": "We check it",
-        "body": "Our team calls you to arrange a check. For fridges, washing machines and TVs of 50 inches and up, a GreenBay technician comes to you. Smaller items can be dropped at a GreenBay shop."
+        "body": "A technician visits for big items. Small ones go to a GreenBay shop."
       },
       {
         "title": "Spend it at Vision Plus",
-        "body": "Once the check is done, your credit is ready. Use it at Vision Plus within 90 days and pay the difference on your new TV or appliance."
+        "body": "Your credit is ready after the check. It lasts 90 days."
       }
     ],
-    "credit_title": "Your credit, in plain terms",
+    "credit_title": "Your credit, plainly",
     "credit_rows": [
       [
         "What you get",
-        "Vision Plus credit equal to your accepted offer, and never less than KES 500."
+        "Your accepted offer, never below KES 500."
       ],
       [
         "Where it works",
-        "With Vision Plus only, on new Vision Plus products."
-      ],
-      [
-        "When it is ready",
-        "After our team has checked your item."
+        "Vision Plus only, on new Vision Plus products."
       ],
       [
         "How long it lasts",
         "90 days from the day it is issued."
       ],
       [
-        "Splitting it",
-        "Use it across more than one purchase until it runs out."
-      ],
-      [
-        "Cash",
-        "The credit is not paid out as cash."
-      ],
-      [
-        "Who does what",
-        "GreenBay values, checks and buys your old item. Vision Plus sells and delivers the new one."
+        "Is it cash?",
+        "No. It is credit to spend, not cash."
       ]
     ],
     "accepts_title": "What we take",
-    "accepts": "Old Vision Plus TVs, fridges and freezers, cookers and ovens, microwaves, washing machines and small kitchen appliances. Working or not.",
+    "accepts": "TVs, fridges, freezers, cookers, microwaves, washing machines and small kitchen appliances. Working or not.",
     "eval_label": "Your swap",
     "eval_title": "Value your old Vision Plus",
-    "eval_sub": "Four short steps. Kay, our evaluator, keeps you company as you go.",
+    "eval_sub": "Four short steps with Kay, our evaluator.",
     "faq_title": "Questions people ask",
     "faq": [
       [
         "Does it have to be a Vision Plus?",
-        "Yes. This swap is for Vision Plus products. For other brands, GreenBay can still make you a cash offer at evaluate.greenbay.market."
+        "Yes. For other brands, GreenBay can make you a cash offer at evaluate.greenbay.market."
       ],
       [
-        "Can I swap a TV?",
-        "Yes. For TVs, a short video of the screen switched on helps us value it fairly. You can add one with your photos."
+        "Do you come to me?",
+        "For fridges, washing machines and TVs of 50 inches and up, a GreenBay technician comes to you. Smaller items can be dropped at a GreenBay shop. Our team calls you to arrange it."
       ],
       [
         "What if it is very old or not working?",
@@ -224,11 +212,11 @@
       ],
       [
         "What if the check finds something different?",
-        "Our team talks it through with you before anything is final. No credit is issued until you agree."
+        "Our team talks it through with you first. No credit is issued until you agree."
       ],
       [
-        "How do I get my credit?",
-        "Once your item has been checked, our customer team calls you with your Vision Plus credit code."
+        "How do I get and use my credit?",
+        "After the check, our team calls you with your Vision Plus credit code. Use it at Vision Plus within 90 days, across more than one purchase if you like, and pay any difference on your new item."
       ]
     ],
     "footer_legal": "GreenBay Second Life Appliances values, inspects and buys your old item. New Vision Plus products are sold and delivered by Vision Plus (Kryptonite International Limited). The Vision Plus name and logo belong to their owner.",
