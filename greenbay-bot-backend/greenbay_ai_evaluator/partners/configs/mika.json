@@ -138,69 +138,65 @@
     "kicker": "GreenBay x Mika swap",
     "headline_1": "Your old Mika still has value.",
     "headline_2": "Put it towards a new one.",
-    "lede": "Tell us about your old Mika appliance and we will make you a fair offer, paid as Mika credit. GreenBay checks the item and buys it from you. You spend the credit on anything new from Mika.",
+    "lede": "Show us your old Mika and get a fair offer, paid as Mika credit for something new.",
     "cta_primary": "Value my old Mika",
     "cta_secondary": "How the swap works",
     "run_by": "Valued and bought by GreenBay Second Life Appliances",
     "card_label": "Mika credit",
     "card_example_amount": 8200,
     "card_note": "Example only. Your offer depends on your appliance.",
-    "card_item": "Mika fridge, 4 years old",
+    "card_item": "Mika standing cooker, 6 years old",
     "steps_title": "How the swap works",
     "steps": [
       {
         "title": "Tell us about it",
-        "body": "Four short steps: what it is, how old it is, its condition, and a few photos. It takes about two minutes."
+        "body": "A few taps and some photos. About two minutes."
       },
       {
         "title": "See your offer",
-        "body": "We value it against real resale prices and show you a figure in Mika credit. Every Mika appliance we accept is worth at least KES 500."
+        "body": "Paid as Mika credit, never below KES 500."
       },
       {
         "title": "We check it",
-        "body": "Our team calls you to arrange a check. For fridges and washing machines a GreenBay technician comes to you. Smaller items can be dropped at a GreenBay shop."
+        "body": "A technician visits for fridges and washing machines. Drop smaller items at a GreenBay shop."
       },
       {
         "title": "Spend it at Mika",
-        "body": "Once the check is done, your credit is ready. Use it at Mika within 90 days and pay the difference on your new appliance."
+        "body": "Use it within 90 days. Pay the difference on your new one."
       }
     ],
-    "credit_title": "Your credit, in plain terms",
+    "credit_title": "Your credit at a glance",
     "credit_rows": [
       [
-        "What you get",
-        "Mika credit equal to your accepted offer, and never less than KES 500."
+        "Worth your offer",
+        "Never less than KES 500."
       ],
       [
-        "Where it works",
-        "With Mika only, on new Mika appliances."
+        "Mika only",
+        "On anything new from Mika."
       ],
       [
-        "When it is ready",
-        "After our team has checked your item."
+        "Ready after the check",
+        "GreenBay checks your item first."
       ],
       [
-        "How long it lasts",
-        "90 days from the day it is issued."
+        "Lasts 90 days",
+        "From the day it is issued."
       ],
       [
-        "Splitting it",
-        "Use it across more than one purchase until it runs out."
+        "Spend it in parts",
+        "Across more than one purchase."
       ],
       [
-        "Cash",
-        "The credit is not paid out as cash."
-      ],
-      [
-        "Who does what",
-        "GreenBay values, checks and buys your old appliance. Mika sells and delivers the new one."
+        "Not cash",
+        "It is not paid out as cash."
       ]
     ],
     "accepts_title": "What we take",
-    "accepts": "Old Mika fridges and freezers, cookers and ovens, microwaves, washing machines and small kitchen appliances. Working or not.",
+    "accepts": "Old Mika fridges, freezers, cookers, microwaves, washing machines and small kitchen appliances. Working or not.",
     "eval_label": "Your swap",
     "eval_title": "Value your old Mika",
-    "eval_sub": "Four short steps. Kay, our evaluator, keeps you company as you go.",
+    "eval_sub": "Four short steps with Kay, our evaluator.",
     "faq_title": "Questions people ask",
     "faq": [
       [

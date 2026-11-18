@@ -1,0 +1,54 @@
+<!-- Pictures for the four numbered steps. scene.js moves each one into its
+     step; the step's own title and line (from mika.json) carry the words.
+     Space for them is reserved in theme.css, so nothing jumps. -->
+<template id="mkStepArt">
+    <div class="mk-sa mk-sa--snap" aria-hidden="true">
+        <div class="mk-phone">
+            <img src="/app/partners/mika/img/old-mika-cooker.webp" alt="" width="480" height="600" loading="lazy" decoding="async">
+            <span class="mk-scan"></span>
+        </div>
+        <span class="mk-chip mk-chip--cam"><i data-lucide="camera"></i></span>
+    </div>
+    <div class="mk-sa mk-sa--offer" aria-hidden="true">
+        <div class="mk-ticket">
+            <img class="mk-ticket-logo" src="/app/partners/mika/mika-logo-black.png" alt="" width="72" height="30" loading="lazy">
+            <span class="mk-ticket-label">At least</span>
+            <span class="mk-ticket-amt"><small>KES</small> <span data-countup="500">500</span></span>
+        </div>
+    </div>
+    <div class="mk-sa mk-sa--check" aria-hidden="true">
+        <span class="mk-badge"><i data-lucide="wrench"></i><b>We visit</b></span>
+        <span class="mk-or">or</span>
+        <span class="mk-badge"><i data-lucide="store"></i><b>You drop off</b></span>
+    </div>
+    <div class="mk-sa mk-sa--spend" aria-hidden="true">
+        <img class="mk-spend-img" src="/app/partners/mika/img/fridge-side-by-side.webp" alt="" width="480" height="480" loading="lazy" decoding="async">
+        <span class="mk-chip mk-chip--new">New</span>
+        <span class="mk-chip mk-chip--bag"><i data-lucide="shopping-bag"></i></span>
+    </div>
+</template>
+
+<!-- What your credit can buy: Mika's own product photos on a rail that
+     drifts on its own and can be swiped or scrolled. -->
+<section class="mk-shop" aria-labelledby="mkShopTitle">
+    <div class="p-wrap mk-shop-head">
+        <h2 class="p-h2" id="mkShopTitle" data-reveal>What your credit can buy</h2>
+        <p class="mk-shop-sub" data-reveal>Anything new from Mika. Pay the difference if it costs more.</p>
+    </div>
+    <div class="mk-rail" role="region" aria-label="Mika appliances you can spend your credit on" tabindex="0">
+        <ul class="mk-rail-list">
+            <li class="mk-prod"><img src="/app/partners/mika/img/fridge-side-by-side.webp" alt="Mika side by side fridge" width="480" height="480" loading="lazy" decoding="async"><span>Fridges</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/cooker-90cm.webp" alt="Mika standing cooker" width="480" height="480" loading="lazy" decoding="async"><span>Cookers</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/kettle-red.webp" alt="Mika red kettle" width="339" height="339" loading="lazy" decoding="async"><span>Kettles</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/washing-machine.webp" alt="Mika front load washing machine" width="480" height="480" loading="lazy" decoding="async"><span>Washing machines</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/microwave.webp" alt="Mika microwave" width="480" height="480" loading="lazy" decoding="async"><span>Microwaves</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/air-fryer.webp" alt="Mika air fryer" width="343" height="343" loading="lazy" decoding="async"><span>Air fryers</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/water-dispenser.webp" alt="Mika water dispenser" width="380" height="380" loading="lazy" decoding="async"><span>Water dispensers</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/blender.webp" alt="Mika blender" width="480" height="480" loading="lazy" decoding="async"><span>Blenders</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/fridge-four-door.webp" alt="Mika four door fridge" width="378" height="378" loading="lazy" decoding="async"><span>Big fridges</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/coffee-maker.webp" alt="Mika coffee maker" width="480" height="480" loading="lazy" decoding="async"><span>Coffee makers</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/chest-freezer.webp" alt="Mika chest freezer" width="376" height="376" loading="lazy" decoding="async"><span>Freezers</span></li>
+            <li class="mk-prod"><img src="/app/partners/mika/img/stand-mixer.webp" alt="Mika stand mixer" width="470" height="470" loading="lazy" decoding="async"><span>Stand mixers</span></li>
+        </ul>
+    </div>
+</section>
