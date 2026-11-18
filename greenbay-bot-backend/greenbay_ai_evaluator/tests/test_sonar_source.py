@@ -334,10 +334,42 @@ class TestHealthProbe:
         assert len(detail) <= 300  # Pulse keeps the first 300 characters
 
     def test_parse_failure_is_distinguishable_from_a_dead_key(self, sonar):
+        # Sonar answered (key and credit work); only this item's answer was
+        # unreadable. Not an outage, but the cause is still named.
         sonar.response = _answer("Sorry, I cannot help with that.")
         ok, detail = self._probe()
+        assert ok is True
+        assert "[parse_failure]" in detail and "reachable" in detail
+
+    def test_no_price_for_the_probe_item_is_not_an_outage(self, sonar):
+        # Nov 2026: this alerted the team "AI has started failing" when Sonar
+        # simply had no current price for the probe TV.
+        sonar.response = _answer('{"new_price": null}')
+        ok, detail = self._probe()
+        assert ok is True
+        assert "[null_price]" in detail
+        assert "NO price" not in detail
+
+    @pytest.mark.parametrize("code", [401, 402, 429, 500])
+    def test_dead_key_or_no_credit_still_fails(self, sonar, code):
+        sonar.response = _Resp(code, text='{"error": {"message": "nope"}}')
+        ok, detail = self._probe()
         assert ok is False
-        assert "[parse_failure]" in detail
+        assert f"HTTP {code}" in detail
+
+    def test_timeout_still_fails(self, sonar, monkeypatch):
+        from greenbay_ai_evaluator.services import live_healthcheck_service as lhs
+        monkeypatch.setattr(mps, "sonar_price_research",
+                            lambda **k: InternetPriceResult(status=mps.LOOKUP_TIMEOUT, status_detail="no answer in 30s"))
+        ok, _ = lhs._probe_perplexity_sonar()
+        assert ok is False
+
+    def test_gemini_no_price_is_not_an_outage(self, sonar, monkeypatch):
+        from greenbay_ai_evaluator.services import live_healthcheck_service as lhs
+        monkeypatch.setattr(mps, "gemini_price_research",
+                            lambda **k: InternetPriceResult(status=mps.LOOKUP_NULL_PRICE, status_detail="no price"))
+        ok, detail = lhs._probe_gemini_search_grounding()
+        assert ok is True and "[null_price]" in detail
 
     def test_success(self, sonar):
         sonar.response = _answer('{"new_price": 42999}', citations=["https://jumia.co.ke/a"])

@@ -180,6 +180,26 @@ _PROBE_PRODUCT = dict(
 )
 
 
+def _is_provider_outage(status: str | None) -> bool:
+    """True only when the provider itself is down: bad key, no credit (HTTP
+    401/402/429...), timeout, network, or a malformed reply. A provider that
+    answered "no price for this item" (or an answer the parser could not read,
+    or a price outside the sanity band) is working: the key and credit are
+    fine, and live evaluations handle a missing price per item. Same rule as
+    market_price_service.internet_lookup_outage. Nov 2026: the probe used to
+    alert on null_price, which emailed the team that the AI was failing when
+    Sonar simply had no current Kenyan price for the probe TV."""
+    from greenbay_ai_evaluator.services.market_price_service import LOOKUP_OUTAGE_STATUSES
+    return (status or "") in LOOKUP_OUTAGE_STATUSES or not status
+
+
+def _answered_without_price(provider: str, res) -> str:
+    return (
+        f"OK — {provider} reachable and answering; no price for the probe item "
+        f"this time [{res.status}] {res.status_detail}"
+    )[:300]
+
+
 def _probe_gemini_search_grounding() -> tuple[bool, str]:
     """Probe the Gemini half of the NEW-PRICE lookup (googleSearch tool).
 
@@ -190,6 +210,8 @@ def _probe_gemini_search_grounding() -> tuple[bool, str]:
     res = gemini_price_research(**_PROBE_PRODUCT)
     if res.launch_price and res.launch_price > 0:
         return True, f"OK — grounded price KES {res.launch_price:,.0f} from {len(res.sources)} sources"
+    if not _is_provider_outage(res.status):
+        return True, _answered_without_price("Gemini search grounding", res)
     return False, (
         f"Gemini search grounding returned NO price [{res.status or 'unknown'}] "
         f"{res.status_detail} (would silently fall back to a guess)"
@@ -218,6 +240,8 @@ def _probe_perplexity_sonar() -> tuple[bool, str]:
             f"OK — Sonar grounded price KES {res.launch_price:,.0f} "
             f"({len(res.sources)} citations); dual-source cross-check ACTIVE"
         )
+    if not _is_provider_outage(res.status):
+        return True, _answered_without_price("Sonar", res)
     # Cause first: consumers (Pulse's Sentinel) keep the first 300 characters.
     return False, (
         f"Sonar returned NO price [{res.status or 'unknown'}] {res.status_detail} "
