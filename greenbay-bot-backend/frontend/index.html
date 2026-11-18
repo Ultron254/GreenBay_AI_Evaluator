@@ -40,6 +40,28 @@
         page_location: window.gbCleanUrl(window.location.href, true),
         page_referrer: window.gbCleanUrl(document.referrer, false)
       });
+      // Links from the Shopify stores arrive with Google's cross-domain
+      // linker (?_gl=1*...), a long string that carries the visitor's GA
+      // client id across. The tag must read it first, so it is stripped from
+      // the address bar only once gtag answers for the client id (or after 4s
+      // if the tag is blocked and nothing will ever read it). Campaign tags
+      // stay; nothing is reloaded.
+      (function () {
+        if (!/[?&](_gl|_ga|_gac)=/.test(window.location.search)) return;
+        var stripped = false;
+        function stripLinker() {
+          if (stripped) return;
+          stripped = true;
+          try {
+            var u = new URL(window.location.href);
+            ['_gl', '_ga', '_gac'].forEach(function (k) { u.searchParams.delete(k); });
+            var q = u.searchParams.toString();
+            window.history.replaceState(window.history.state, '', u.pathname + (q ? '?' + q : '') + u.hash);
+          } catch (e) { /* leave the URL as it is */ }
+        }
+        gtag('get', 'G-2REFLT805D', 'client_id', stripLinker);
+        setTimeout(stripLinker, 4000);
+      })();
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
