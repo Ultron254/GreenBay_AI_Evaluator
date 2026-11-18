@@ -147,15 +147,54 @@ def _config_json(cfg: PartnerConfig) -> str:
 # Files whose change must bust the browser cache (the ?v= on every asset).
 VERSIONED = ("partner.html", "index.html", "partner.css", "partner.js", "app.js", "styles.css")
 
+# Per-partner additions, all optional, all inside frontend/partners/<slug>/:
+#   theme.css             loaded after partner.css (scope rules to
+#                         html[data-partner="<slug>"])
+#   scene.js              loaded after partner.js (animations, carousels)
+#   slots/<name>.html     HTML dropped into the page at <name>, one of SLOTS
+# They are trusted repository files, written by the team, never config text
+# from elsewhere, so they are inserted as they are.
+SLOTS = ("hero_backdrop", "hero_media", "after_hero", "after_steps", "before_evaluate", "before_faq")
 
-def _asset_version() -> str:
+
+def partner_dir(slug: str) -> Path:
+    return FRONTEND_DIR / "partners" / slug
+
+
+def _partner_files(slug: str) -> list[Path]:
+    d = partner_dir(slug)
+    files = [d / "theme.css", d / "scene.js"]
+    files += sorted((d / "slots").glob("*.html")) if (d / "slots").is_dir() else []
+    return files
+
+
+def _asset_version(slug: str = "") -> str:
     newest = 0.0
-    for name in VERSIONED:
+    paths = [FRONTEND_DIR / name for name in VERSIONED] + (_partner_files(slug) if slug else [])
+    for p in paths:
         try:
-            newest = max(newest, (FRONTEND_DIR / name).stat().st_mtime)
+            newest = max(newest, p.stat().st_mtime)
         except OSError:
             pass
     return str(int(newest))
+
+
+def _slots(slug: str, version: str) -> dict[str, str]:
+    d = partner_dir(slug)
+    out = {f"slot_{name}": "" for name in SLOTS}
+    for name in SLOTS:
+        f = d / "slots" / f"{name}.html"
+        if f.is_file():
+            out[f"slot_{name}"] = f.read_text(encoding="utf-8")
+    out["slot_head"] = (
+        f'<link rel="stylesheet" href="/app/partners/{slug}/theme.css?v={version}">'
+        if (d / "theme.css").is_file() else ""
+    )
+    out["slot_scripts"] = (
+        f'<script src="/app/partners/{slug}/scene.js?v={version}"></script>'
+        if (d / "scene.js").is_file() else ""
+    )
+    return out
 
 
 @lru_cache(maxsize=16)
@@ -191,6 +230,7 @@ def _render(slug: str, version: str) -> str:
         "credit_rows_html": _rows(copy),
         "faq_html": _faq(copy),
         "wizard_html": wizard,
+        **_slots(cfg.slug, version),
     }
 
     def fill(m: re.Match) -> str:
@@ -207,4 +247,4 @@ def _render(slug: str, version: str) -> str:
 
 
 def render(slug: str) -> str:
-    return _render(slug, _asset_version())
+    return _render(slug, _asset_version(slug))

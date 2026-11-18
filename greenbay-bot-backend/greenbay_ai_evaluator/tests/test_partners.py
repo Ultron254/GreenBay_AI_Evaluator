@@ -1269,3 +1269,29 @@ class TestLiveCheck:
         failed = [label for ok, label in mod.results if not ok]
         assert failed == [], failed
         assert len(mod.results) >= 10
+
+
+class TestPartnerSlots:
+    def test_slots_render_when_present_and_vanish_when_not(self, tmp_path, monkeypatch):
+        d = tmp_path / "partners" / "mika"
+        (d / "slots").mkdir(parents=True)
+        (d / "slots" / "after_hero.html").write_text('<section id="zzSlotProbe">probe</section>')
+        (d / "theme.css").write_text("html[data-partner=mika]{}")
+        monkeypatch.setattr(pages, "partner_dir", lambda slug: tmp_path / "partners" / slug)
+        pages._render.cache_clear()
+        try:
+            html = pages._render("mika", "t1")
+        finally:
+            pages._render.cache_clear()
+        assert '<section id="zzSlotProbe">probe</section>' in html
+        assert '/app/partners/mika/theme.css?v=t1' in html and "scene.js" not in html
+        assert "{{" not in html
+        bare = pages._render("vision-plus", "t2") if not (pages.partner_dir("vision-plus") / "slots").is_dir() else None
+        if bare is not None:
+            assert "zzSlotProbe" not in bare
+        pages._render.cache_clear()
+
+    def test_every_slot_name_has_a_place_in_the_template(self):
+        template = (_FRONTEND / "partner.html").read_text(encoding="utf-8")
+        for name in pages.SLOTS + ("head", "scripts"):
+            assert "{{slot_" + name + "}}" in template, name

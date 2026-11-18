@@ -51,6 +51,7 @@
     <link rel="stylesheet" href="/app/styles.css?v={{asset_version}}">
     <link rel="stylesheet" href="/app/partner.css?v={{asset_version}}">
     <style>{{theme_css}}</style>
+    {{slot_head}}
     <link rel="icon" href="/app/greenbay-logo.png" type="image/png">
     <script type="application/json" id="gbPartnerConfig">{{config_json}}</script>
 </head>
@@ -73,6 +74,7 @@
     <main>
         <!-- 1. HERO -->
         <section class="p-hero" aria-labelledby="pHeadline">
+            {{slot_hero_backdrop}}
             <div class="p-wrap p-hero-grid">
                 <div class="p-hero-copy">
                     <p class="p-kicker" data-reveal>{{copy.kicker}}</p>
@@ -107,8 +109,11 @@
                     </dl>
                     <figcaption class="p-card-note">{{copy.card_note}}</figcaption>
                 </figure>
+                {{slot_hero_media}}
             </div>
         </section>
+
+        {{slot_after_hero}}
 
         <!-- 2. HOW IT WORKS: numbered steps on a drawn line -->
         <section class="p-steps" id="how" aria-labelledby="pStepsTitle">
@@ -122,6 +127,8 @@
                 </div>
             </div>
         </section>
+
+        {{slot_after_steps}}
 
         <!-- 3. THE CREDIT, PLAINLY -->
         <section class="p-credit" aria-labelledby="pCreditTitle">
@@ -139,8 +146,12 @@
             </div>
         </section>
 
+        {{slot_before_evaluate}}
+
         <!-- 4. THE EVALUATOR (shared wizard, re-skinned by partner tokens) -->
         {{wizard_html}}
+
+        {{slot_before_faq}}
 
         <!-- 5. QUESTIONS -->
         <section class="p-faq" aria-labelledby="pFaqTitle">
@@ -171,6 +182,7 @@
 
     <script src="/app/app.js?v={{asset_version}}"></script>
     <script src="/app/partner.js?v={{asset_version}}"></script>
+    {{slot_scripts}}
     <script>lucide.createIcons();</script>
 </body>
 
