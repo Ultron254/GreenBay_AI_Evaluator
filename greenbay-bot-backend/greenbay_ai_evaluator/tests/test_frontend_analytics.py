@@ -153,3 +153,25 @@ class TestUrlCleanerParity:
         got = json.loads(out.stdout)
         expected = [clean_attribution_url(u, keep_query=k) or "" for u, k in URL_CASES]
         assert got == expected
+
+
+class TestShopifyLinkerIsTidiedAway:
+    """Links from the Shopify stores carry ?_gl=... (GA cross-domain linker).
+    GA must read it before it leaves the address bar."""
+
+    def _head(self):
+        return _INDEX[: _INDEX.index("</script>", _INDEX.index("gtag('config'"))]
+
+    def test_linker_is_stripped_only_after_gtag_has_read_it(self):
+        head = self._head()
+        assert head.index("gtag('config'") < head.index("function stripLinker")
+        assert "gtag('get', 'G-2REFLT805D', 'client_id', stripLinker)" in head
+
+    def test_blocked_tag_still_gets_a_clean_url(self):
+        assert "setTimeout(stripLinker, 4000)" in self._head()
+
+    def test_campaign_tags_are_kept(self):
+        head = self._head()
+        body = head[head.index("function stripLinker"):]
+        assert "['_gl', '_ga', '_gac']" in body and "utm_" not in body[:600]
+        assert "replaceState" in body and "location.reload" not in body
