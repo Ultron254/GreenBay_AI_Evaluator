@@ -10,7 +10,10 @@ http://localhost:9100, so it exercises the real stack:
   4. each evaluation reached Airtable (its "Ref: xxxxxxxx" shows up in the most
      recent rows' Notes);
   5. every live service probe: vision, Gemini, Sonar, Sheets, Airtable, S3,
-     the email transport actually used (SMTP or SES), and the database.
+     the email transport actually used (SMTP or SES), and the database;
+  6. one ZZSMOKE Mika partner swap, end to end: pages, short links, a credit
+     offer, accept, check, issue, part redeem, settlement, and Pulse's read
+     routes hiding it (see partner_swap).
 
 The email itself is confirmed by the deploy step, which greps the container
 log for the "Email: sent" line the lead email writes for these evaluations.
@@ -148,9 +151,92 @@ def services() -> None:
         check(False, f"service probes: {type(e).__name__}")
 
 
+def partner_swap() -> None:
+    """One ZZSMOKE Mika swap through the whole partner flow on the live stack:
+    pages, a short link, a priced evaluation with a credit offer, accept with a
+    reference, then (admin key) check booked, passed, credit issued, part
+    redeemed, settlement, and Pulse's read routes hiding the test row. A real
+    QR code is never scanned, so partners' counts stay true. The purge that
+    follows removes the swap's partner rows."""
+    for path in ("/mika", "/vision-plus"):
+        try:
+            r = requests.get(f"{BASE}{path}", timeout=30)
+            check(r.status_code == 200 and "data-partner=" in r.text, f"partner page {path} served")
+        except Exception as e:  # noqa: BLE001
+            check(False, f"partner page {path} ({type(e).__name__})")
+    try:
+        r = requests.get(f"{BASE}/q/ZZSMOKE-NOPE", allow_redirects=False, timeout=30)
+        check(r.status_code == 302 and r.headers.get("location") == "/app/", "QR short links route")
+    except Exception as e:  # noqa: BLE001
+        check(False, f"QR short links ({type(e).__name__})")
+
+    body = {
+        "category": "refrigerator", "brand": "Mika", "model": "ZZSMOKE-E2E-PARTNER",
+        "age_years": 13, "condition_grade": "C", "condition_score": 45, "defects": [],
+        "retail_price": 40000, "retail_price_source": "category_default",
+        "seller_name": "ZZSMOKE E2E Partner", "seller_phone": "+254700000000", "country": "KE",
+        "partner": {"slug": "mika", "channel": "direct", "buy_category": "cooker_oven"},
+    }
+    data = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{BASE}/tradein/evaluate", json=body, timeout=150)
+            if r.status_code == 200:
+                data = r.json()
+                break
+            print(f"  partner attempt {attempt + 1}: HTTP {r.status_code}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  partner attempt {attempt + 1}: {type(e).__name__}", flush=True)
+        time.sleep(8)
+    if not check(data is not None and isinstance(data.get("partner"), dict), "Mika swap evaluation priced"):
+        return
+    offer = data["partner"].get("credit_offer")
+    check(offer == 500, f"Mika swap credit offer KES {offer} (a 13-year-old item gets the KES 500 nominal)")
+    sid = data.get("session_id")
+    try:
+        r = requests.post(f"{BASE}/tradein/{sid}/accept-offer", json={"accepted_amount": 500}, timeout=60)
+        ref = r.json().get("reference") if r.status_code == 200 else None
+    except Exception:  # noqa: BLE001
+        ref = None
+    if not check(bool(ref) and str(ref).startswith("MK-"), f"Mika swap accepted, reference {ref}"):
+        return
+    if not KEY:
+        check(False, "partner ops steps skipped: DASHBOARD_KEY not set in the container")
+        return
+    H = admin_headers()
+    try:
+        found = requests.get(f"{BASE}/tradein/partners/admin/credits?partner=mika",
+                             headers={**H, "X-Lookup-Query": ref}, timeout=30).json()["items"]
+        cid = found[0]["id"]
+        base = f"{BASE}/tradein/partners/admin/credits/{cid}"
+        actor = {"actor": "Deploy check"}
+        s1 = requests.post(f"{base}/start-validation", headers=H, json={**actor, "method": "drop_greenbay"}, timeout=30)
+        s2 = requests.post(f"{base}/validate", headers=H, json=actor, timeout=30)
+        s3 = requests.post(f"{base}/issue", headers=H, json=actor, timeout=30)
+        code = s3.json().get("voucher_code") if s3.status_code == 200 else None
+        check(s1.status_code == s2.status_code == 200 and bool(code) and code.startswith("MIKA-"),
+              f"Mika swap checked, passed and credit issued ({code})")
+        s4 = requests.post(f"{BASE}/tradein/partners/admin/redeem", headers=H,
+                           json={**actor, "partner": "mika", "voucher_code": code, "amount": 200,
+                                 "note": "deploy check"}, timeout=30)
+        check(s4.status_code == 200 and s4.json().get("balance") == 300, "Mika credit part redeemed (KES 300 left)")
+        month = time.strftime("%Y-%m", time.gmtime())
+        st = requests.get(f"{BASE}/tradein/partners/admin/settlement?partner=mika&month={month}",
+                          headers=H, timeout=30).json()
+        check(any(x.get("voucher_code") == code for x in st.get("redemptions", [])),
+              "Mika settlement lists the redemption")
+        leads = requests.get(f"{BASE}/tradein/partners/mika/portal/leads", headers=H, timeout=30).json()["items"]
+        check(not any(ref == x.get("ref") for x in leads), "Pulse's Mika view hides the test swap")
+        vp = requests.get(f"{BASE}/tradein/partners/vision-plus/portal/credits", headers=H, timeout=30).json()["items"]
+        check(not any(code == x.get("voucher_code") for x in vp), "Vision Plus cannot see Mika's credit")
+    except Exception as e:  # noqa: BLE001
+        check(False, f"partner ops steps ({type(e).__name__})")
+
+
 def main() -> int:
     print("=== End-to-end check ===", flush=True)
     portals()
+    partner_swap()
     refs: dict[str, str] = {}
     for country in MARKETS:
         sid = evaluate(country)

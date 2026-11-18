@@ -49,6 +49,14 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
+def is_test_row(*texts: str | None) -> bool:
+    """ZZSMOKE / ZZTEST / ZZDIAG ... rows: deploy checks and demo data.
+    Partners never see them; the purge removes them."""
+    from greenbay_ai_evaluator.services.reference_data_service import TEST_ROW_PATTERN
+
+    return bool(TEST_ROW_PATTERN.search(" ".join(t or "" for t in texts)))
+
+
 def mask_phone(phone: str | None) -> str | None:
     """254712345678 -> '0712 *** 678'. Enough for staff to match a customer
     who reads their number out; not enough to call them."""
