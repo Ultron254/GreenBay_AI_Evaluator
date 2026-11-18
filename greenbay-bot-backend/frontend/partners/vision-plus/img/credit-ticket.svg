@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200">
+  <defs>
+    <linearGradient id="t" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6A4FD0"/>
+      <stop offset="1" stop-color="#38236F"/>
+    </linearGradient>
+    <linearGradient id="s" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#FFFFFF" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="c">
+      <path d="M36 30h248a14 14 0 0 1 14 14v34a22 22 0 0 0 0 44v34a14 14 0 0 1-14 14H36a14 14 0 0 1-14-14v-34a22 22 0 0 0 0-44V44a14 14 0 0 1 14-14z"/>
+    </clipPath>
+  </defs>
+  <g transform="rotate(-6 160 100)">
+    <g clip-path="url(#c)">
+      <rect x="0" y="0" width="320" height="200" fill="url(#t)"/>
+      <rect x="40" y="-20" width="70" height="260" fill="url(#s)" transform="rotate(20 75 100)"/>
+    </g>
+    <line x1="226" y1="44" x2="226" y2="156" stroke="#FFFFFF" stroke-opacity=".45" stroke-width="2" stroke-dasharray="5 6"/>
+    <text x="52" y="86" fill="#DCD5F2" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">KES</text>
+    <text x="50" y="140" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700" letter-spacing="-2">500+</text>
+    <circle cx="262" cy="100" r="16" fill="none" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="2.5"/>
+    <path d="M254 100l6 6 11-12" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
