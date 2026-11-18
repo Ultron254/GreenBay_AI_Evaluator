@@ -74,7 +74,9 @@ def portal_summary(slug: str, days: int = Query(30, ge=1, le=3650), db: Session 
 def portal_leads(slug: str, days: int = Query(90, ge=1, le=3650), limit: int = Query(200, ge=1, le=1000),
                  db: Session = Depends(get_db), _: bool = Depends(verify_readonly_or_admin_key)):
     cfg = _partner(slug)
-    return {"items": [reports.portal_lead(vs, c) for vs, c in reports.leads(db, cfg.slug, days=days, limit=limit)]}
+    rows = reports.leads(db, cfg.slug, days=days, limit=limit)
+    return {"items": [reports.portal_lead(vs, c) for vs, c in rows
+                      if not reports.is_test_row(vs.model, vs.seller_name)]}
 
 
 @partner_portal_router.get("/partners/{slug}/portal/demand")
@@ -90,7 +92,8 @@ def portal_credits(slug: str, status: str = Query("", max_length=40), limit: int
     ledger.expire_due(db, partner_id=cfg.slug)
     db.commit()
     statuses = [s.strip() for s in status.split(",") if s.strip()] or None
-    return {"items": [reports.portal_credit(c) for c in reports.credits(db, cfg.slug, statuses=statuses, limit=limit)]}
+    rows = reports.credits(db, cfg.slug, statuses=statuses, limit=limit)
+    return {"items": [reports.portal_credit(c) for c in rows if not reports.is_test_row(c.model, c.customer_name)]}
 
 
 @partner_portal_router.get("/partners/{slug}/portal/credit-lookup")
@@ -102,7 +105,8 @@ def portal_credit_lookup(slug: str, x_lookup_query: str = Header("", alias="X-Lo
         raise HTTPException(422, "Send a voucher code, reference or phone number in X-Lookup-Query.")
     ledger.expire_due(db, partner_id=cfg.slug)
     db.commit()
-    found = ledger.find_for_partner(db, cfg.slug, query=q)
+    found = [c for c in ledger.find_for_partner(db, cfg.slug, query=q)
+             if not reports.is_test_row(c.model, c.customer_name)]
     return {"items": [reports.portal_credit(c, with_history=list(ledger.history(db, c))) for c in found[:10]]}
 
 

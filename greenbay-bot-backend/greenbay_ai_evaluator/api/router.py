@@ -1578,6 +1578,16 @@ def purge_test_records(dry_run: bool = True, _: bool = Depends(verify_admin_key)
                         out["errors"].append(f"sheet row {rownum}: {e}")
         except Exception as e:  # noqa: BLE001
             out["errors"].append(f"sheet: {e}")
+
+    # Partner ledger rows (credits, their audit trail, funnel counts) that
+    # belong to test evaluations, so a deploy check's swap leaves nothing in
+    # a partner's numbers.
+    try:
+        from greenbay_ai_evaluator.partners.cleanup import purge_partner_test_rows
+
+        out["partner"] = purge_partner_test_rows(pat, dry_run=dry_run)
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"partner: {e}")
     return out
 
 
@@ -3614,7 +3624,9 @@ def accept_offer(
         if partner_credit is not None:
             # Partner swap: one alert, labelled with the partner and reference.
             from greenbay_ai_evaluator.partners.notify import whatsapp_payload
-            alert = whatsapp_payload(partner_credit, alert) if partner_newly else None
+            from greenbay_ai_evaluator.partners.reports import is_test_row
+            alert = (whatsapp_payload(partner_credit, alert)
+                     if partner_newly and not is_test_row(vs.model, vs.seller_name) else None)
         if alert:
             notify_internal_team(alert)
     except Exception as e:

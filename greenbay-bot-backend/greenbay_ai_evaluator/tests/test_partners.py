@@ -1185,3 +1185,87 @@ class TestNotifications:
         c = _accepted(db, amount=8000, model="ZZTEST-DEMO-X")
         pnotify.notify("accepted", c)
         assert sent_emails == []
+
+
+# ---------------------------------------------------------------------------
+# live check: test rows stay out of partner views, the purge clears them, and
+# the deploy's partner swap (scripts/e2e_check.py partner_swap) works
+# ---------------------------------------------------------------------------
+class TestLiveCheck:
+    def test_test_rows_never_reach_a_partner(self, ops, db, kenya):  # noqa: F811
+        router.evaluate_trade_in(_req(partner={"slug": "mika"}, age_years=13, model="ZZSMOKE-E2E-PARTNER",
+                                      seller_name="ZZSMOKE E2E Partner"), db)
+        real = _issued(db, MIKA, amount=5000)
+        smoke = _issued(db, MIKA, amount=5000, model="ZZSMOKE-X", seller_name="ZZSMOKE Person")
+        leads = ops.get("/tradein/partners/mika/portal/leads", headers=ops.ro).json()["items"]
+        assert leads == []  # the only partner evaluation was a smoke test
+        credits = [x["voucher_code"] for x in ops.get("/tradein/partners/mika/portal/credits", headers=ops.ro).json()["items"]]
+        assert real.voucher_code in credits and smoke.voucher_code not in credits
+        hit = ops.get("/tradein/partners/mika/portal/credit-lookup",
+                      headers={**ops.ro, "X-Lookup-Query": smoke.voucher_code}).json()["items"]
+        assert hit == []
+
+    def test_purge_removes_partner_rows_of_test_evaluations(self, db, kenya):  # noqa: F811
+        from greenbay_ai_evaluator.partners.cleanup import purge_partner_test_rows
+        from greenbay_ai_evaluator.services.reference_data_service import TEST_ROW_PATTERN
+
+        smoke = router.evaluate_trade_in(_req(partner={"slug": "mika"}, age_years=13, model="ZZSMOKE-E2E-PARTNER",
+                                              seller_name="ZZSMOKE E2E Partner"), db)
+        router.accept_offer(smoke.session_id, {"accepted_amount": 500}, db)
+        real = router.evaluate_trade_in(_req(partner={"slug": "mika"}, age_years=13), db)
+        assert purge_partner_test_rows(TEST_ROW_PATTERN, dry_run=True, db=db) == {"evaluations": 1, "credits": 1}
+        assert db.query(PartnerCredit).count() == 2
+        purge_partner_test_rows(TEST_ROW_PATTERN, dry_run=False, db=db)
+        left = db.query(PartnerCredit).all()
+        assert [c.valuation_session_id for c in left] == [real.session_id]
+        assert {e.valuation_session_id for e in db.query(PartnerFunnelEvent).all()} == {real.session_id}
+        assert db.query(PartnerCreditEvent).filter(PartnerCreditEvent.credit_id != left[0].id).count() == 0
+
+    def test_no_whatsapp_alert_for_a_test_swap(self, db, kenya):  # noqa: F811
+        out = router.evaluate_trade_in(_req(partner={"slug": "mika"}, age_years=13, model="ZZSMOKE-E2E-PARTNER",
+                                            seller_name="ZZSMOKE E2E Partner"), db)
+        before = len(kenya.get("notify", []))
+        router.accept_offer(out.session_id, {"accepted_amount": 500}, db)
+        assert len(kenya.get("notify", [])) == before
+
+    def test_deploy_partner_swap_passes_against_the_app(self, db, kenya, monkeypatch, sent_emails):  # noqa: F811
+        import importlib.util
+
+        from app.database.db import get_db
+        from greenbay_ai_evaluator.partners.api import (
+            partner_api_router, partner_page_router, register_partner_pages,
+        )
+
+        monkeypatch.setenv("DASHBOARD_KEY", _ADMIN)
+        app = FastAPI()
+        app.include_router(data_api.partner_admin_router, prefix="/tradein")
+        app.include_router(data_api.partner_portal_router, prefix="/tradein")
+        app.include_router(partner_api_router, prefix="/tradein")
+        app.include_router(partner_page_router)
+        register_partner_pages(app)
+        app.include_router(router.evaluator_router, prefix="/tradein")
+        app.dependency_overrides[get_db] = lambda: db
+        tc = TestClient(app)
+
+        path = _Path(__file__).resolve().parents[2] / "scripts" / "e2e_check.py"
+        spec = importlib.util.spec_from_file_location("e2e_check_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        class _Requests:
+            @staticmethod
+            def get(url, headers=None, timeout=None, allow_redirects=True):
+                return tc.get(url.replace(mod.BASE, ""), headers=headers or {}, follow_redirects=allow_redirects)
+
+            @staticmethod
+            def post(url, json=None, headers=None, timeout=None):
+                return tc.post(url.replace(mod.BASE, ""), json=json, headers=headers or {})
+
+        monkeypatch.setattr(mod, "requests", _Requests)
+        monkeypatch.setattr(mod, "KEY", _ADMIN)
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        mod.results.clear()
+        mod.partner_swap()
+        failed = [label for ok, label in mod.results if not ok]
+        assert failed == [], failed
+        assert len(mod.results) >= 10
