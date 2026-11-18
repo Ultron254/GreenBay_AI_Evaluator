@@ -84,6 +84,7 @@ def theme_css(cfg: PartnerConfig) -> str:
     accent, accent_hover = col("accent", ink), col("accent_hover", "#2B2B2B")
     cosign, cosign_soft = col("cosign", "#0B6E40"), col("cosign_soft", "#E3EFE6")
     line, stone, muted = col("line", "#D6D0C4"), col("stone", "#E8E4DB"), col("muted", "#59554D")
+    line_strong = col("line_strong", "#8A8478")
     on_ink, on_ink_muted = col("on_ink", paper), col("on_ink_muted", "#BDB7AB")
     display = font("font_display", "system-ui, sans-serif")
     body = font("font_body", "system-ui, sans-serif")
@@ -95,23 +96,19 @@ def theme_css(cfg: PartnerConfig) -> str:
         f"--p-on-ink:{on_ink};--p-on-ink-muted:{on_ink_muted};--p-accent:{accent};"
         f"--p-accent-hover:{accent_hover};--p-cosign:{cosign};--p-cosign-soft:{cosign_soft};"
         f"--p-font-display:{display};--p-font-body:{body};--p-font-serif:{serif};--p-radius:{radius};"
-        # the shared wizard's tokens
-        f"--font-heading:{display};--font-body:{body};--heading-weight:600;--heading-tracking:-0.02em;"
-        f"--accent:{accent};--accent-hover:{accent_hover};--accent-strong:{ink};--accent-soft:{stone};"
-        f"--accent-2:{cosign};--accent-2-strong:{cosign};--label-color:{cosign};"
+        # The shared wizard's tokens (styles.css since the Nov 2026 portal
+        # redesign): surfaces, text, lines, the dark "coal" bands, the accent
+        # that fills buttons and selected chips, fonts, and the flag strips,
+        # which become the partner's band colour.
+        f"--paper:#FFFFFF;--soft:{stone};--soft-2:{line};"
+        f"--ink:{ink};--ink-2:{muted};--ink-3:{muted};--line:{line};--line-strong:{line_strong};"
+        f"--coal:{band};--coal-2:{band};--coal-line:{band};--on-coal:{on_ink};--on-coal-2:{on_ink_muted};"
+        f"--accent:{accent};--accent-ink:{accent};--accent-soft:{stone};--accent-2:{cosign};"
         f"--ring:color-mix(in srgb,{accent} 28%,transparent);"
-        f"--green-primary:{cosign};--green-dark:{cosign};--green-light:{cosign_soft};--emerald:{cosign};"
-        f"--forest:{ink};--gold:{cosign};--slate:{ink};--muted:{muted};--border:{line};"
-        f"--page-bg:{paper};--surface:#FFFFFF;--surface-tint:{stone};--line:{line};--input-border:#8A8478;"
-        f"--cream:{paper};--warm:{stone};"
-        f"--radius-card:{radius};--radius-btn:999px;--radius-chip:999px;--radius-input:10px;"
-        f"--card-shadow:0 1px 0 {line};--card-shadow-hover:0 1px 0 {line},0 10px 28px rgba(17,17,17,.08);"
-        f"--btn-shadow:none;--btn-shadow-hover:0 6px 18px rgba(17,17,17,.18);"
-        f"--chip-sel-bg:{accent};--chip-sel-fg:#FFFFFF;--chip-sel-border:{accent};"
-        f"--progress-track:{stone};--progress-fill:linear-gradient(90deg,{accent} 0%,{accent} 70%,{cosign} 100%);"
-        f"--step-num-bg:{ink};--step-num-fg:#FFFFFF;--defect-edge:{ink};"
-        # the market ornaments (flag ribbon, beadwork) give way to one quiet rule
-        f"--band-thin:{band};--band:{band};--band-h:1px;--ribbon:{band};--ribbon-h:0px;--flag-dot:{band};"
+        f"--btn-bg:{accent};--btn-bg-hover:{accent_hover};"
+        f"--grad:linear-gradient(90deg,{accent} 0%,{accent} 70%,{cosign} 100%);--grad-ink:{accent};"
+        f"--flag:{band};--flag-swatch:{band};"
+        f"--f-display:{display};--f-body:{body};"
         f"}}"
     )
 

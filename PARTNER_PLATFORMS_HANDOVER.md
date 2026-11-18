@@ -10,10 +10,10 @@ GreenBay x Mika and GreenBay x Vision Plus swap pages, built on the existing eva
 | Partner pages | `/mika`, `/vision-plus` (`frontend/partner.html`, `partner.css`, `partner.js`; the wizard itself is cut from `index.html` at serve time) |
 | QR short links | `/q/<CODE>`: logs the scan, opens the partner page with the code |
 | GreenBay ops page | `/app/partners-ops.html` (admin key, asked once per tab, sent as a header) |
-| Code | `greenbay_ai_evaluator/partners/` (config, rules, ledger, service, pages, api, data_api, reports, qr, notify), migration `alembic/versions/v6_4_0_add_partner_tables.py`, tests `tests/test_partners.py` (747 tests pass in total) |
+| Code | `greenbay_ai_evaluator/partners/` (config, rules, ledger, service, pages, api, data_api, reports, qr, notify), migration `alembic/versions/v6_4_0_add_partner_tables.py`, tests `tests/test_partners.py` (751 tests pass in total, with main's) |
 
 ## Before it goes live (in this order)
-1. **Bring in main's portal redesign.** `main` gained `8c4227a` (editorial redesign of the country portals) after this branch was cut. `app.js` conflicts, and `styles.css` and `index.html` were rewritten. Merge `origin/main` into `partners/platforms`, re-apply the partner hooks in `app.js`, check the partner pages at 360px and 1440px, and run the tests.
+1. **Main's portal redesign is merged in** (`8c4227a`, merged on 18 Nov). The partner hooks were re-applied in `app.js`, and the partner theme now maps onto the redesign's tokens (`--ink`, `--paper`, `--soft`, `--coal`, `--accent-ink`, `--btn-bg`, `--f-display`). `/mika`, `/vision-plus` and `/app/` were checked in the browser. If `main` moves again before deploy, merge it in again and re-run the tests.
 2. **Merge to `main`.** A push to `main` deploys to production, the deploy runs `alembic upgrade head` (adds `v640_partners`), and the end-to-end check runs. No new secrets are needed: emails use the existing SMTP settings, and Pulse uses its existing read-only key.
 3. **Airtable** (`Appliance Evaluations`): add `Partner`, `Partner Source`, `Partner Shop`, `QR Code`, `Buy Intent` (single line text) and `Partner Credit Offer` (number). Until they exist, those values are dropped and the rest of the row is written.
 4. **One live swap**: run a ZZSMOKE Mika evaluation through `/q/MK-WEB1`, accept, book, pass and issue it on the ops page, then redeem it. Confirm the emails arrive and the settlement shows it, then cancel or purge it.

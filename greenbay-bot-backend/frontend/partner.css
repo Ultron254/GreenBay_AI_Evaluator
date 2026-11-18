@@ -353,11 +353,6 @@
 .p-buy + .form-group .form-label,
 #step3 > .form-group > .form-label[for="priceInput"] { margin-top: 6px; }
 
-/* chat bar: on phones, only while the evaluator is on screen */
-@media (max-width: 1024px) {
-  .partner-page.p-chat-away .chat-panel:not(.expanded) { transform: translateY(110%); }
-  .partner-page .wizard-footer { padding-right: 18px; }  /* no WhatsApp bubble here */
-}
 @media (max-width: 560px) {
   .p-step { padding-left: 50px; }
   .p-motion .p-step[data-reveal] { transition-delay: 0ms; }

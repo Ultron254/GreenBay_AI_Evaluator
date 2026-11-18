@@ -176,3 +176,27 @@ class TestMarkets:
 
     def test_no_hardcoded_whatsapp_line_in_the_wizard(self, app_js: str):
         assert not re.search(r"wa\.me/\d", app_js), "use MARKET.whatsapp"
+
+
+class TestResultScreensForCustomers:
+    """Design QA, Nov 2026: what a customer sees after submitting."""
+
+    def test_expert_pricing_is_staff_only(self, app_js: str):
+        body = app_js[app_js.index("function expertPanel"):]
+        body = body[:body.index("\n}\n")]
+        assert "if (!AGENT_MODE) return ''" in body
+        assert "get('agent') === '1'" in app_js
+
+    def test_no_emoji_in_the_result_screens(self, app_js: str):
+        import re as _re
+        start = app_js.index("function showEvaluationError")
+        end = app_js.index("UTILITY FUNCTIONS")
+        assert not _re.search("[\U0001F300-\U0001FAFF\u2600-\u27BF]", app_js[start:end])
+
+    def test_header_never_claims_done_while_analysing(self, app_js: str):
+        assert "'Done!'" not in app_js
+        assert "Analysing your appliance" in app_js
+
+    def test_customers_do_not_see_internal_price_sources(self, app_js: str):
+        body = app_js[app_js.index("function showResults"):app_js.index("function submitExpertFeedback")]
+        assert "AGENT_MODE && data.price_verification" in body

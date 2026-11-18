@@ -250,6 +250,7 @@
     function show(html) {
         const el = document.getElementById('stepResults');
         if (!el) return false;
+        if (typeof setResultHeader === 'function') setResultHeader(copy.results_label || 'Your offer');
         el.innerHTML = html;
         if (typeof applyMarketCopy === 'function') { try { applyMarketCopy(); } catch (_) { /* ignore */ } }
         el.querySelectorAll('[data-countup]').forEach(countUp);
@@ -284,20 +285,7 @@
         },
     };
 
-    /* On a phone the chat bar is pinned to the bottom of the screen. On a
-       partner page it only shows while the evaluator is on screen, so it
-       never sits over the hero or the credit terms. */
-    function chatOnlyNearWizard() {
-        const section = document.getElementById('evaluate');
-        if (!section || !('IntersectionObserver' in window)) return;
-        document.body.classList.add('p-chat-away');
-        new IntersectionObserver((entries) => {
-            entries.forEach(e => document.body.classList.toggle('p-chat-away', !e.isIntersecting));
-        }, { threshold: 0.05 }).observe(section);
-    }
-
     function init() {
-        chatOnlyNearWizard();
         limitCategories();
         brandNote();
         relabelCopy();
