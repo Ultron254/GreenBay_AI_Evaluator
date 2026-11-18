@@ -73,9 +73,12 @@
 .p-lockup-partner { height: 34px; width: auto; }
 .p-lockup-gb { height: 18px; width: auto; }
 .p-lockup-x { color: var(--p-on-ink-muted); font-size: 1rem; line-height: 1; }
-.p-bar-cta { min-height: 40px; padding: 0 16px; font-size: .9rem; }
-@media (max-width: 420px) {
+.p-bar-cta { min-height: 40px; padding: 0 16px; font-size: .9rem; white-space: nowrap; }
+/* The hero button is in view on narrow screens, so the bar keeps only the lock-up. */
+@media (max-width: 560px) {
   .p-bar-cta { display: none; }
+}
+@media (max-width: 420px) {
   .p-lockup-partner { height: 30px; }
 }
 
